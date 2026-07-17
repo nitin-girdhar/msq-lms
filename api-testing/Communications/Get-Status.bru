@@ -1,0 +1,15 @@
+meta {
+  name: Get Communication Status
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/communications/status
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

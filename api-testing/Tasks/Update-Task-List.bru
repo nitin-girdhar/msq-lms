@@ -1,0 +1,22 @@
+meta {
+  name: Update Task List
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/task-lists/{{taskListId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "Sprint Board (renamed)",
+    "visibility": "team"
+  }
+}

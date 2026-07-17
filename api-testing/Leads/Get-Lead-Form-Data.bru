@@ -1,0 +1,22 @@
+meta {
+  name: Get Lead Form Data
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/form-data
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Returns the raw form submission captured at intake (crm.marketing_leads.raw_webhook_data),
+  normalized into question/answer pairs. For Meta lead-gen leads this is the field_data the
+  user filled on the Facebook/Instagram form. Response:
+  { success: true, data: { submitted_at, fields: [{ key, label, value }] } }
+}

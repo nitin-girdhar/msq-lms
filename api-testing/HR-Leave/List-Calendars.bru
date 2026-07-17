@@ -1,0 +1,15 @@
+meta {
+  name: List Holiday Calendars
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/hr/holiday-calendars
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

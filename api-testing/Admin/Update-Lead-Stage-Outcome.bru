@@ -1,0 +1,23 @@
+meta {
+  name: Update Lead-Stage-Outcome
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/lead-stage-outcome/{{leadStageOutcomeId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "No Answer (Updated)",
+    "requires_comment": true,
+    "is_active": true
+  }
+}

@@ -1,0 +1,41 @@
+meta {
+  name: Update Lead
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/leads/{{leadId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "stage_id": "{{stageId}}",
+    "outcome_id": "{{outcomeId}}",
+    "outcome_comment": "Updated via Bruno",
+    "transition_note": "Moved to next stage",
+    "first_name": "Updated Name",
+    "middle_name": "",
+    "last_name": "Sharma",
+    "phone": "9876543210",
+    "email": "updated@example.com",
+    "city": "Delhi",
+    "address_line1": "456 New Street",
+    "address_line2": null,
+    "pincode": "110001",
+    "city_id": 2,
+    "state_id": 2,
+    "country_id": 1,
+    "source_id": "{{sourceId}}",
+    "assigned_user_id": "{{userId}}",
+    "tags": ["premium", "follow-up"],
+    "metadata": {},
+    "note": "General update note"
+  }
+}

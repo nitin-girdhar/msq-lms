@@ -1,0 +1,15 @@
+meta {
+  name: Get Lead Stages
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/lookups/lead-stages
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

@@ -1,0 +1,39 @@
+meta {
+  name: Create Lead
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/leads
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "first_name": "Test Lead",
+    "phone": "9876543210",
+    "email": "testlead@example.com",
+    "city": "Mumbai",
+    "org_id": "{{orgId}}",
+    "source_id": "{{sourceId}}",
+    "campaign_id": "{{campaignId}}",
+    "assigned_user_id": "{{userId}}",
+    "middle_name": "",
+    "last_name": "Sharma",
+    "address_line1": "123 Main Street",
+    "address_line2": "Apt 4B",
+    "pincode": "400001",
+    "stage_id": "{{stageId}}",
+    "city_id": 1,
+    "state_id": 1,
+    "country_id": 1,
+    "tags": ["walk-in", "premium"],
+    "metadata": {}
+  }
+}

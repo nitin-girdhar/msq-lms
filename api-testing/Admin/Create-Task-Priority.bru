@@ -1,0 +1,23 @@
+meta {
+  name: Create Task-Priority
+  type: http
+  seq: 43
+}
+
+post {
+  url: {{baseUrl}}/lookups/task-priorities
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "critical",
+    "label": "Critical",
+    "sort_order": 5
+  }
+}

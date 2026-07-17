@@ -1,0 +1,20 @@
+meta {
+  name: Rotate API Client
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api-clients/{{apiClientId}}/rotate
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Revokes the existing key and issues a fresh one with the same binding/scopes.
+  The new `api_key` is returned once.
+}

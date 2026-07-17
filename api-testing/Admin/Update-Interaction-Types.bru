@@ -1,0 +1,22 @@
+meta {
+  name: Update Interaction-Types
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/interaction-types/{{interactionTypeId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "SMS (Updated)",
+    "is_active": true
+  }
+}

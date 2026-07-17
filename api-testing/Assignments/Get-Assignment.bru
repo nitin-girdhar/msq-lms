@@ -1,0 +1,15 @@
+meta {
+  name: Get Assignment by ID
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/assignments/{{assignmentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

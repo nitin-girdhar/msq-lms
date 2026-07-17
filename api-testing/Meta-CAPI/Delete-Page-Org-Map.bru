@@ -1,0 +1,21 @@
+meta {
+  name: Delete Page/Form Org Mapping
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/meta/page-org-map/{{mappingId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Removes a Page/Form -> org mapping — requires tenant_admin rank or
+  higher. Leads from this form will be logged as "unmapped" and skipped
+  until a new mapping is created.
+}

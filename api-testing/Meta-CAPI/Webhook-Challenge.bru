@@ -1,0 +1,22 @@
+meta {
+  name: Webhook Challenge (Verification)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/meta/webhook/{{integrationId}}?hub.mode=subscribe&hub.verify_token={{metaVerifyToken}}&hub.challenge=test_challenge_string
+  body: none
+  auth: none
+}
+
+docs {
+  Meta sends this GET request when you first subscribe to a webhook.
+  It must return the hub.challenge value with a 200 status.
+  No JWT required — this is a public endpoint.
+
+  {{integrationId}} identifies a per-tenant ext.meta_tenant_config row.
+  For a shared app covering multiple tenants, use
+  {{baseUrl}}/meta/webhook (no integrationId segment) instead — see
+  Webhook-Post-Shared.bru.
+}

@@ -1,0 +1,15 @@
+meta {
+  name: My Balances
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/hr/leave/balances
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

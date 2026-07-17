@@ -1,0 +1,22 @@
+meta {
+  name: Update Tenant-Plan-Types
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/tenant-plan-types/{{tenantPlanTypeId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Premium (Updated)",
+    "is_active": true
+  }
+}

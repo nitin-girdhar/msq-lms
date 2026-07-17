@@ -1,0 +1,37 @@
+meta {
+  name: Create Page/Form Org Mapping
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/meta/page-org-map
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "org_id": "00000000-0000-0000-0000-000000000000",
+    "page_id": "123456789",
+    "form_id": "2217695302333588",
+    "platform": "fb"
+  }
+}
+
+docs {
+  Registers which org a Meta Page+Form combination belongs to — requires
+  tenant_admin rank or higher. Required before any lead from that form can
+  be synced: the webhook resolves org_id by looking up (tenant_id, form_id)
+  here, falling back to (tenant_id, page_id) for brand-new forms on an
+  already-mapped Page.
+
+  A form belongs to exactly one Page in Meta's data model, but a Page can
+  run many forms across different orgs/campaigns — so form_id is unique
+  per mapping (uq_meta_page_form_org_map on (page_id, form_id)), while an
+  org can own many rows here (multiple pages and/or multiple forms).
+}

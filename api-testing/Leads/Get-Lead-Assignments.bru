@@ -1,0 +1,15 @@
+meta {
+  name: Get Lead Assignments
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/assignments
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

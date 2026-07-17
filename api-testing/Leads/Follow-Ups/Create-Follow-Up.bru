@@ -1,0 +1,22 @@
+meta {
+  name: Create Follow-Up
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/leads/{{leadId}}/follow-ups
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "scheduled_at": "2026-06-25T10:00:00.000Z",
+    "notes": "Follow up on pricing discussion"
+  }
+}

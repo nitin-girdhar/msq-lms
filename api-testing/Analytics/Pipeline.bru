@@ -1,0 +1,20 @@
+meta {
+  name: Get Pipeline by Stage
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/analytics/pipeline
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Admin-only. Requires rank >= 80 (org_admin/tenant_admin/super_admin);
+  lower ranks receive 403 "Access restricted to administrators".
+}

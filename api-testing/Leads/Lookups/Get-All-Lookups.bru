@@ -1,0 +1,15 @@
+meta {
+  name: Get All Lookups
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/lookups
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

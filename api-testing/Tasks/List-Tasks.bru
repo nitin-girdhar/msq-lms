@@ -1,0 +1,21 @@
+meta {
+  name: List Tasks
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/tasks?scope=own&status=todo&include_completed=false&page=1&limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Filters: assignee_id, status, priority, list_id, due_before, due_after,
+  related_entity_type + related_entity_id, q (title search), include_completed.
+  Scope: own (default) | team (rank >= 60) | org (rank >= 80).
+}

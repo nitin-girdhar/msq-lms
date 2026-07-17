@@ -1,0 +1,32 @@
+meta {
+  name: Send CRM Conversion Event (Manual)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/meta/crm-event
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "marketingLeadId": "{{leadId}}",
+    "eventName": "Lead",
+    "actionSource": "system_generated",
+    "eventSourceUrl": "https://example.com/leads"
+  }
+}
+
+docs {
+  Sends feedback to Meta CAPI. Skipped (status: SKIPPED) if this lead has
+  no linked ext.meta_leads row — i.e. it did not originate from a Meta
+  webhook. Leads created via the public API, manual entry, or any other
+  source never trigger outbound Meta events, even if the org has an active
+  Meta integration.
+}

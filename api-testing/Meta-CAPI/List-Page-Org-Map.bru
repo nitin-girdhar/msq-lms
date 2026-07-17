@@ -1,0 +1,21 @@
+meta {
+  name: List Page/Form Org Mappings
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/meta/page-org-map
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Lists all Page/Form -> org mappings for the caller's tenant. Org-level
+  users only see mappings scoped to their own org (enforced by RLS);
+  tenant admins see every mapping across the tenant.
+}

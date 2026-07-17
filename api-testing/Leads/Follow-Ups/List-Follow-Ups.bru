@@ -1,0 +1,15 @@
+meta {
+  name: List Lead Follow-Ups
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/follow-ups
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

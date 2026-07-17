@@ -1,0 +1,15 @@
+meta {
+  name: List Campaigns
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/campaigns
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

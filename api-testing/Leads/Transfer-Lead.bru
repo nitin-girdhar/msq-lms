@@ -1,0 +1,22 @@
+meta {
+  name: Transfer Lead Out
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/leads/{{leadId}}/transfer
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "target_org_id": "{{targetOrgId}}",
+    "notes": "Customer requested transfer to this branch"
+  }
+}

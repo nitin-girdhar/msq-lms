@@ -1,0 +1,21 @@
+meta {
+  name: Add Comment
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/tasks/{{taskId}}/comments
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "body": "Left a voicemail, will retry tomorrow."
+  }
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Update API Client
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api-clients/{{apiClientId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "Acme Partner - lead intake (updated)",
+    "scopes": ["leads:write", "branches:read"],
+    "org_ids": ["{{orgId}}"]
+  }
+}
+
+docs {
+  Edits name, scopes, branch bindings, and/or expiry. Never touches the key
+  itself — the raw key/hash cannot be viewed or changed here; use Rotate for a
+  new secret. For an org_admin caller, `org_ids`/`scope_all_orgs` are ignored
+  server-side (always forced to their own branch). All fields optional; only
+  the ones supplied are changed.
+}

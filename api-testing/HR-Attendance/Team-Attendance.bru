@@ -1,0 +1,19 @@
+meta {
+  name: Team Attendance (date)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/hr/attendance/team?date=2026-07-15
+  body: none
+  auth: none
+}
+
+params:query {
+  date: 2026-07-15
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

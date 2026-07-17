@@ -1,0 +1,15 @@
+meta {
+  name: List All Orgs
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/orgs/all
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

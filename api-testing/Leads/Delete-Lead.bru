@@ -1,0 +1,21 @@
+meta {
+  name: Delete Lead
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/leads/{{leadId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "comment": "Deleted via Bruno testing"
+  }
+}

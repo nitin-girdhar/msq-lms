@@ -1,0 +1,20 @@
+meta {
+  name: Clear Face Review
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{baseUrl}}/hr/attendance/face-reviews/{{attendanceEventId}}/clear
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Marks the punch's face review 'cleared' — the punch stands. Same approval
+  authority as regularizations (hr.can_approve / override).
+}

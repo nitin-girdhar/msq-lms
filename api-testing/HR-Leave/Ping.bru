@@ -1,0 +1,15 @@
+meta {
+  name: Leave Ping (module gate)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/hr/leave/ping
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

@@ -1,0 +1,15 @@
+meta {
+  name: List Marketing-Platforms
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/lookups/marketing-platforms
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Create Lead-Sources
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/lead-sources
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "referral",
+    "label": "Referral"
+  }
+}

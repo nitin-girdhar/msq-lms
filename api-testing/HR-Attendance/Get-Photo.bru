@@ -1,0 +1,15 @@
+meta {
+  name: Get Punch Photo (authenticated)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/hr/attendance/photos/{{attendanceEventId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

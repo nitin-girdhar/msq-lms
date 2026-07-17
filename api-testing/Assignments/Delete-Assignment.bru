@@ -1,0 +1,15 @@
+meta {
+  name: Delete Assignment
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/assignments/{{assignmentId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

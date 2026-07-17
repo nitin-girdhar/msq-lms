@@ -1,0 +1,19 @@
+meta {
+  name: Delete Task
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Soft delete. Allowed for the creator or rank >= 80 (org admin).
+}

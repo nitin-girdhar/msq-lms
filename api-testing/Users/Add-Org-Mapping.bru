@@ -1,0 +1,23 @@
+meta {
+  name: Add Org Mapping
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/users/{{userId}}/org-mappings
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "org_id": "{{orgId}}",
+    "role_id": "{{userRoleId}}",
+    "lead_assignment_weight": 50
+  }
+}

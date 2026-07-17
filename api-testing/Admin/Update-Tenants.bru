@@ -1,0 +1,22 @@
+meta {
+  name: Update Tenants
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/tenants/{{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "acme-fitness-updated",
+    "is_active": true
+  }
+}

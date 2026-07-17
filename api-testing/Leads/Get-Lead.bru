@@ -1,0 +1,25 @@
+meta {
+  name: Get Lead by ID
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Returns a single lead by ID regardless of is_active state (useful for viewing superseded records).
+
+  Response includes:
+    - is_active: boolean — false if superseded by a newer submission
+    - superseded_by: UUID | null — the newer lead that replaced this one
+
+  To trace the full correction chain, follow superseded_by forward until superseded_by IS NULL.
+}

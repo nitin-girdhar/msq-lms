@@ -1,0 +1,15 @@
+meta {
+  name: Get Campaign Platforms
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/campaigns/platforms
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

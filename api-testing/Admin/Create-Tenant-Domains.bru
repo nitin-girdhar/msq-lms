@@ -1,0 +1,23 @@
+meta {
+  name: Create Tenant-Domains
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/tenant-domains
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "fitness",
+    "label": "Fitness",
+    "description": "Gyms, studios, and fitness centers"
+  }
+}

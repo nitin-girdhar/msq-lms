@@ -1,0 +1,20 @@
+meta {
+  name: Get Follow-Up Pipeline (Cross-Lead)
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/follow-ups
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+params:query {
+  ~assignedRepId:
+  ~overdueOnly: true
+}

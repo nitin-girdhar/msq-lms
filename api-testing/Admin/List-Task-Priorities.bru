@@ -1,0 +1,15 @@
+meta {
+  name: List Task-Priorities
+  type: http
+  seq: 42
+}
+
+get {
+  url: {{baseUrl}}/lookups/task-priorities
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

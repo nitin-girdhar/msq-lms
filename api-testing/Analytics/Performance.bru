@@ -1,0 +1,20 @@
+meta {
+  name: Get Org Performance
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/analytics/performance
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Admin-only. Requires rank >= 80 (org_admin/tenant_admin/super_admin);
+  lower ranks receive 403 "Access restricted to administrators".
+}

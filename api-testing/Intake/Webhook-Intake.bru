@@ -1,0 +1,28 @@
+meta {
+  name: Webhook Lead Intake (Zapier/FB)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/intake/webhook
+  body: json
+  auth: none
+}
+
+headers {
+  x-api-key: {{webhookApiKey}}
+}
+
+body:json {
+  {
+    "org_id": "{{orgId}}",
+    "first_name": "Webhook Lead",
+    "last_name": "Test",
+    "email": "webhook@example.com",
+    "phone": "9998887777",
+    "city": "Mumbai",
+    "source": "facebook",
+    "campaign_id": "{{campaignId}}"
+  }
+}

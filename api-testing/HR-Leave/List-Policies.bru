@@ -1,0 +1,15 @@
+meta {
+  name: List Policies
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/hr/leave/policies
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

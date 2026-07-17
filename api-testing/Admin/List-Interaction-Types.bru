@@ -1,0 +1,15 @@
+meta {
+  name: List Interaction-Types
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/lookups/interaction-types
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

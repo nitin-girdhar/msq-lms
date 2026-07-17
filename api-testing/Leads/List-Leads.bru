@@ -1,0 +1,35 @@
+meta {
+  name: List Leads
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/leads?page=1&page_size=20
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+params:query {
+  page: 1
+  page_size: 20
+  ~status: new
+  ~search: John
+  ~assigned_user_id:
+  ~platforms: facebook,google
+}
+
+docs {
+  Returns paginated leads for the authenticated org.
+  Only active leads are returned by default (is_active = true).
+
+  Each lead includes:
+    - is_active: boolean — false if this row was superseded by a newer submission
+    - superseded_by: UUID | null — points to the newer active lead that replaced this one
+
+  To see superseded leads, query the DB directly or use a future admin filter.
+}

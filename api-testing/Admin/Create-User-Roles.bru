@@ -1,0 +1,24 @@
+meta {
+  name: Create User-Roles
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/user-roles
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "test_role",
+    "label": "Test Role",
+    "description": "A role for testing",
+    "rank": 30
+  }
+}

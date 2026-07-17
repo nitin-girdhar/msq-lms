@@ -1,0 +1,26 @@
+meta {
+  name: Create Lead-Stage-Outcome
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/lead-stage-outcome
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "stage_id": "{{leadStageId}}",
+    "name": "no_answer",
+    "label": "No Answer",
+    "description": "Prospect did not answer the call",
+    "requires_comment": false,
+    "sort_order": 1
+  }
+}

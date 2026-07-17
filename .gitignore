@@ -1,0 +1,75 @@
+# ── Dependencies ───────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── Build outputs ──────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+
+# ── Environment & secrets ──────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.staging
+# keep the example committed
+!.env.example
+
+# ── Logs ───────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Turbo cache ────────────────────────────────────────────────────────────────
+.turbo/
+
+# ── OS artefacts ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Test & coverage ────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Docker ─────────────────────────────────────────────────────────────────────
+.dockerignore
+docker-compose.override.yml
+
+# ── Next.js ────────────────────────────────────────────────────────────────────
+next-env.d.ts
+
+# ── Secrets / TLS certs ────────────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+
+# ── Claude Code / AI tooling ───────────────────────────────────────────────────
+.claude/
+
+# ── Local dev scratch ──────────────────────────────────────────────────────────
+EXISTING_WORKING_CODE/
+tmp/
+temp/
+
+# ── Misc ───────────────────────────────────────────────────────────────────────
+*.local
+crm-deploy/artifacts/db_scripts/01_init-db.sql
+crm-deploy/artifacts/.env.example
+crm-deploy/artifacts/crm-images.tar.gz
+crm-deploy/artifacts/deploy.sh
+crm-deploy/artifacts/docker-compose.yml
+ec2-deploy/deploy.sh

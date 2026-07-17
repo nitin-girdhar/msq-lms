@@ -1,0 +1,25 @@
+meta {
+  name: Send Multi-Channel (Email + WhatsApp)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/communications/send
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "subject": "Multi-Channel Test",
+    "body": "This email is part of a multi-channel send test.",
+    "email_addresses": ["recipient@example.com"],
+    "phone_numbers": ["+919876543210"],
+    "message": "This WhatsApp message is part of a multi-channel send test."
+  }
+}

@@ -1,0 +1,49 @@
+meta {
+  name: Update Field Mappings Only (Runtime Reload)
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/meta/integration
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "field_mappings": {
+      "contact": {
+        "phone": ["telefono", "phone_number"],
+        "email": ["correo", "email"]
+      },
+      "address": {
+        "city": ["ciudad", "city"],
+        "country": ["pais", "country"]
+      },
+      "professional": {
+        "job_title": ["puesto", "job_title"]
+      },
+      "demographics": {
+        "gender": ["genero", "gender"]
+      }
+    }
+  }
+}
+
+docs {
+  Updates only ext.meta_org_config.field_mappings for the caller's org —
+  no other integration fields are touched. This is the runtime-reload
+  path: the next webhook lead synced for this org immediately uses the
+  new key candidates, no service restart or redeploy required.
+
+  Run Get-Integration.bru afterward to confirm field_mappings reflects
+  this update in the response.
+
+  Requires an existing integration (run Create-Integration.bru first)
+  and ADMIN rank on the acting user.
+}

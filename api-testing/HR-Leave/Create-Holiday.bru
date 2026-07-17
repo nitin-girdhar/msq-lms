@@ -1,0 +1,23 @@
+meta {
+  name: Create Holiday
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/hr/holidays
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "calendar_id": "{{holidayCalendarId}}",
+    "holiday_date": "2026-08-15",
+    "name": "Independence Day"
+  }
+}

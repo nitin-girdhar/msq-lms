@@ -1,0 +1,21 @@
+meta {
+  name: Public Get Users (Partner API)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/public/v1/users
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiClientKey}}
+}
+
+docs {
+  Requires a key with `users:read`. Returns field-minimized users for the tenant
+  (id, full_name, email, org_id, role_label, is_active) — never password hashes or
+  internal flags. Optional ?branch_id=<uuid> to filter to one branch.
+}

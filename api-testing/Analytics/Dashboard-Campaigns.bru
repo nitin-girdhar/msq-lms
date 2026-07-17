@@ -1,0 +1,15 @@
+meta {
+  name: Get Campaign Dashboard
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/analytics/dashboard/campaigns
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

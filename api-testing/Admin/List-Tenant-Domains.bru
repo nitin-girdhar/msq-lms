@@ -1,0 +1,15 @@
+meta {
+  name: List Tenant-Domains
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/lookups/tenant-domains
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

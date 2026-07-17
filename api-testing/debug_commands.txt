@@ -1,0 +1,37 @@
+# See all running docker containers
+docker compose ps
+
+# See logs for a specific service
+docker compose logs identity-service --tail 50 -f
+
+# See which ports are listening (Windows)
+netstat -ano | findstr "400"
+netstat -ano | findstr /R ":400[0-5].*LISTENING"
+
+# Kill it by PID
+taskkill /PID 22508 /F
+
+(netstat -ano | findstr ":4000.*LISTENING") -match '\d+$'; taskkill /PID $Matches[0] /F
+
+#start only two sercies
+npx turbo dev --filter=@crm/meta-conversion-api --filter=@crm/api-gateway
+
+
+# Check if gateway is responding
+curl http://localhost:4000/health
+
+# Check individual services
+curl http://localhost:4001/health   # identity (auth + users)
+curl http://localhost:4002/health   # leads (leads + assignments + analytics + activities)
+curl http://localhost:4003/health   # meta-conversion-api
+curl http://localhost:4004/health   # notifications
+curl http://localhost:4005/health   # communication-service
+
+# Restart a single service
+docker compose restart identity-service
+
+# Rebuild and restart everything
+docker compose up --build -d
+
+# View all container logs
+docker compose logs -f --tail 100

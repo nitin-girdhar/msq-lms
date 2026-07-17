@@ -1,0 +1,27 @@
+meta {
+  name: Create Lead-Stage
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/lead-stage
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "on_hold",
+    "label": "On Hold",
+    "description": "Lead temporarily paused",
+    "sort_order": 7,
+    "followup_required": true,
+    "is_rejected": false,
+    "is_terminated": false
+  }
+}

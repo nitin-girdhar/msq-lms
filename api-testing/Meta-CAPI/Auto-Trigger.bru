@@ -1,0 +1,35 @@
+meta {
+  name: Auto-Trigger CAPI Event (Stage Change)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{metaServiceUrl}}/api/v1/capi/auto-trigger
+  body: json
+  auth: none
+}
+
+headers {
+  X-Internal-Secret: {{internalServiceSecret}}
+}
+
+body:json {
+  {
+    "marketingLeadId": "{{leadId}}",
+    "orgId": "{{orgId}}",
+    "newStageId": "{{stageId}}"
+  }
+}
+
+docs {
+  Internal-only endpoint (not exposed through api-gateway).
+  Called by leads-service on every stage change, passing newStageId.
+
+  The Meta CAPI event name is resolved server-side from newStageId via
+  ext.lead_stage_capi_event_map (joined by stage_id, not by stage name).
+  Stages with no mapping row (e.g. 'new', 'unqualified') return
+  { status: "SKIPPED" } and no event is sent to Meta.
+
+  Requires X-Internal-Secret header instead of JWT auth.
+}

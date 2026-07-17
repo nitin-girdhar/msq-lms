@@ -1,0 +1,53 @@
+meta {
+  name: Create Meta Integration
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/meta/integration
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "app_secret": "your-meta-app-secret",
+    "verify_token": "your-webhook-verify-token",
+    "pixel_id": "your-pixel-id",
+    "access_token": "your-meta-access-token",
+    "graph_api_version": "v21.0",
+    "capi_trigger_stages": [],
+    "field_mappings": {
+      "contact": {
+        "phone": ["phone", "phone_number", "mobile_number"],
+        "email": ["email"]
+      },
+      "address": {
+        "city": ["city", "town"]
+      },
+      "professional": {
+        "job_title": ["job_title", "designation"]
+      },
+      "demographics": {
+        "gender": ["gender", "sex"]
+      }
+    }
+  }
+}
+
+docs {
+  Configures the Meta App credentials for the caller's TENANT (one App per
+  tenant, shared across all of the tenant's orgs/branches) — requires
+  tenant_admin rank or higher. Individual orgs are attributed to incoming
+  leads via /meta/page-org-map, not via this integration record.
+
+  field_mappings is optional. Any category/key omitted falls back to
+  DEFAULT_FIELD_MAPPINGS in meta.config.ts. Each db column maps to an
+  ordered list of candidate Meta form field keys — the first matching
+  key in the lead's field_data wins.
+}

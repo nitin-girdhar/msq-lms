@@ -1,0 +1,20 @@
+meta {
+  name: Reports Summary (json/csv/xlsx)
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/hr/attendance/reports/summary?month=2026-07&format=json
+  body: none
+  auth: none
+}
+
+params:query {
+  month: 2026-07
+  format: json
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

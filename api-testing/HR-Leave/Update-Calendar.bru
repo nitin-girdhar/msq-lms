@@ -1,0 +1,21 @@
+meta {
+  name: Update Holiday Calendar
+  type: http
+  seq: 20
+}
+
+patch {
+  url: {{baseUrl}}/hr/holiday-calendars/{{holidayCalendarId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "is_active": true
+  }
+}

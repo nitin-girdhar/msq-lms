@@ -1,0 +1,15 @@
+meta {
+  name: Get Lead Timeline
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/timeline
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

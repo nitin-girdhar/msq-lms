@@ -1,0 +1,23 @@
+meta {
+  name: Create Follow-Up-Statuses
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/follow-up-statuses
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "snoozed",
+    "label": "Snoozed",
+    "description": "Follow-up postponed"
+  }
+}

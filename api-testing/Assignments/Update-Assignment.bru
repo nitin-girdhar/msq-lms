@@ -1,0 +1,22 @@
+meta {
+  name: Update Assignment (Reassign)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/assignments/{{assignmentId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "assigned_to": "{{userId}}",
+    "notes": "Reassigned via Bruno"
+  }
+}

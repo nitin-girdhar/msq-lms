@@ -1,0 +1,22 @@
+meta {
+  name: Update Policy (future rows only)
+  type: http
+  seq: 14
+}
+
+patch {
+  url: {{baseUrl}}/hr/leave/policies/{{leavePolicyId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "accrual_amount": 2,
+    "min_notice_days": 2
+  }
+}

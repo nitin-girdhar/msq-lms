@@ -1,0 +1,23 @@
+meta {
+  name: Get Meta Integration
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/meta/integration
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Returns the Meta App integration for the caller's TENANT (shared across
+  all of that tenant's orgs/branches). Includes field_mappings (per-tenant
+  override of Meta form field keys, or null if the tenant hasn't customized
+  any mappings — in which case DEFAULT_FIELD_MAPPINGS in meta.config.ts
+  applies).
+}

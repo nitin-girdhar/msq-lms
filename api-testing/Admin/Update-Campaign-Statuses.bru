@@ -1,0 +1,22 @@
+meta {
+  name: Update Campaign-Statuses
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/campaign-statuses/{{campaignStatusId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Paused (Updated)",
+    "is_active": true
+  }
+}

@@ -1,0 +1,59 @@
+meta {
+  name: Webhook Lead Callback (Meta, Shared App)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/meta/webhook
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "object": "page",
+    "entry": [
+      {
+        "id": "123456789",
+        "time": 1719100000,
+        "changes": [
+          {
+            "field": "leadgen",
+            "value": {
+              "leadgen_id": "989906403816053",
+              "page_id": "123456789",
+              "form_id": "2217695302333588",
+              "created_time": 1719100000
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+
+docs {
+  Same as Webhook-Post.bru, but for a Meta App shared across MULTIPLE
+  tenants — the callback URL carries no integrationId.
+
+  Requires a single ext.meta_tenant_config row with tenant_id IS NULL
+  (at most one may exist — enforced by uix_meta_tenant_config_one_shared
+  in db_scripts/01_init-db.sql). That row
+  is not manageable through the tenant-scoped integration CRUD endpoints
+  (POST/GET/PATCH /meta/integration) — insert/update it directly via SQL.
+
+  Both tenant_id AND org_id are resolved from ext.meta_page_form_org_map
+  by page_id/form_id alone (no tenant_id filter), which works because
+  (page_id, form_id) is already globally unique
+  (uq_meta_page_form_org_map). A matching row must exist or the lead is
+  logged as "unmapped" and skipped.
+
+  Everything else about the flow (HMAC verification against the shared
+  row's app_secret, Graph API fetch using the shared row's access_token,
+  field mapping, insert, pg_notify) is identical to the per-tenant path.
+}

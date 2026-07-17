@@ -1,0 +1,23 @@
+meta {
+  name: Create Task List
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/task-lists
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "Sprint Board",
+    "description": "Tasks for the current sprint",
+    "visibility": "org"
+  }
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Create Organizations
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/organizations
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "tenant_id": "{{tenantId}}",
+    "name": "Downtown Branch",
+    "legal_entity_name": "Acme Fitness Pvt Ltd",
+    "brand_name": "Acme Fitness",
+    "org_type_id": "{{orgTypeId}}",
+    "address_line1": "123 Main St",
+    "pincode": "110001",
+    "timezone": "Asia/Kolkata"
+  }
+}

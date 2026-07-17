@@ -1,0 +1,23 @@
+meta {
+  name: Update User-Roles
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/user-roles/{{userRoleId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Test Role (Updated)",
+    "rank": 35,
+    "is_active": true
+  }
+}

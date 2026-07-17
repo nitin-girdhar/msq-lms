@@ -1,0 +1,15 @@
+meta {
+  name: Delete Follow-Up
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/leads/{{leadId}}/follow-ups/{{followUpId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

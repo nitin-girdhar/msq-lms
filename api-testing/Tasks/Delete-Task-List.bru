@@ -1,0 +1,15 @@
+meta {
+  name: Delete Task List
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/task-lists/{{taskListId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

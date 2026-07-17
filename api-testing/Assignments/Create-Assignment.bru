@@ -1,0 +1,23 @@
+meta {
+  name: Create Assignment
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/assignments
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "lead_id": "{{leadId}}",
+    "assigned_to": "{{userId}}",
+    "notes": "Assigned via Bruno testing"
+  }
+}

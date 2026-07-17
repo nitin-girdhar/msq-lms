@@ -1,0 +1,89 @@
+meta {
+  name: Webhook Lead Callback (Meta)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/meta/webhook/{{integrationId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "object": "page",
+    "entry": [
+      {
+        "id": "123456789",
+        "time": 1719100000,
+        "changes": [
+          {
+            "field": "leadgen",
+            "value": {
+              "leadgen_id": "989906403816053",
+              "page_id": "123456789",
+              "form_id": "2217695302333588",
+              "created_time": 1719100000
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+
+docs {
+  Simulates a Meta Lead Ads webhook callback.
+  In production Meta signs the body with X-Hub-Signature-256.
+  In development mode (NODE_ENV=development) HMAC is skipped.
+
+  {{integrationId}} identifies the TENANT's Meta integration
+  (ext.meta_tenant_config) — one Meta App/webhook subscription per tenant,
+  shared across all of that tenant's orgs/branches. The org that a given
+  lead belongs to is no longer implied by the URL; it's resolved from the
+  page_id/form_id in this payload via ext.meta_page_form_org_map. A
+  matching row must exist (see Create-Page-Org-Map.bru) or the lead is
+  logged as "unmapped" and skipped — it will NOT land in any org's queue.
+
+  A tenant-less variant also exists: POST {{baseUrl}}/meta/webhook (no
+  integrationId segment) for a single Meta App shared across MULTIPLE
+  tenants (see Webhook-Post-Shared.bru). That path resolves against the
+  ext.meta_tenant_config row where tenant_id IS NULL, and resolves BOTH
+  tenant_id and org_id from ext.meta_page_form_org_map (page_id/form_id
+  are globally unique, not just unique per tenant).
+
+  This body only carries leadgen_id/page_id/form_id metadata — that's
+  all the real Meta webhook ever sends. The full field_data (including
+  any address/job-title/demographic answers) is fetched server-side
+  from the Graph API using the integration's access_token, so this
+  request requires a real, working access_token + a real leadgen_id to
+  exercise the full pipeline end-to-end. There is no local stub for the
+  Graph API call.
+
+  The service will:
+  1. Verify HMAC signature (skipped in dev)
+  2. Fetch lead details from Meta Graph API (field_data + reliable form_id live here)
+  3. Resolve org_id + platform via ext.meta_page_form_org_map (form_id is
+     authoritative; page_id is used only as a fallback default) — skips
+     the lead if unmapped
+  4. Resolve field keys using the tenant's field_mappings (falls back to
+     DEFAULT_FIELD_MAPPINGS in meta.config.ts when unset)
+  5. Insert into crm.marketing_leads (source = 'facebook' or 'instagram'
+     based on the resolved platform) and ext.meta_leads
+  6. Insert any address/job/demographic answers into ext.meta_lead_addresses,
+     ext.meta_lead_professional, ext.meta_lead_demographics (only the
+     tables with at least one matched field get a row)
+  7. Insert any remaining unmapped form fields into ext.meta_lead_custom_fields
+  8. Fire a crm_events pg_notify if not a duplicate
+
+  Response: { received: true, processed: N, results: [...] } — each result's
+  status is one of 'synced' | 'duplicate' | 'unmapped' | 'error'.
+
+  To inspect the extracted data after running this, query
+  ext.view_meta_leads_complete WHERE meta_lead_id = <leadgen_id>.
+}

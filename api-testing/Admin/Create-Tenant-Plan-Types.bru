@@ -1,0 +1,23 @@
+meta {
+  name: Create Tenant-Plan-Types
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/lookups/tenant-plan-types
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "premium",
+    "label": "Premium",
+    "description": "Premium subscription tier"
+  }
+}

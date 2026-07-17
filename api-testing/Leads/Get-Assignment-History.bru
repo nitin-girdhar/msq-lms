@@ -1,0 +1,15 @@
+meta {
+  name: Get Lead Assignment History
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/assignment-history
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

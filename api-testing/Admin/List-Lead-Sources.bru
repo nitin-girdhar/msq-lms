@@ -1,0 +1,15 @@
+meta {
+  name: List Lead-Sources
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/lookups/lead-sources
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

@@ -1,0 +1,15 @@
+meta {
+  name: List Activities (Audit Log)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/activities
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

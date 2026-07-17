@@ -1,0 +1,40 @@
+meta {
+  name: Update Meta Integration
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/meta/integration
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "app_secret": "updated-app-secret",
+    "verify_token": "updated-verify-token",
+    "pixel_id": "updated-pixel-id",
+    "access_token": "updated-access-token",
+    "graph_api_version": "v21.0",
+    "is_active": true,
+    "capi_trigger_stages": [],
+    "field_mappings": {
+      "contact": {
+        "phone": ["phone", "phone_number", "mobile_number"]
+      }
+    }
+  }
+}
+
+docs {
+  Updates the caller's TENANT-level Meta integration — requires tenant_admin
+  rank or higher. All fields are optional — only the ones provided are
+  updated (COALESCE semantics server-side). See
+  Update-Field-Mappings-Only.bru for an example that updates field_mappings
+  without touching credentials.
+}

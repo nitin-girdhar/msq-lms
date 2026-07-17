@@ -1,0 +1,21 @@
+meta {
+  name: Update Shift
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/hr/shifts/{{shiftId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "grace_minutes": 15
+  }
+}

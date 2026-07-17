@@ -1,0 +1,21 @@
+meta {
+  name: Get Locations
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/locations
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+params:query {
+  level: geo.countries
+  ~countryIds:
+  ~stateIds:
+}

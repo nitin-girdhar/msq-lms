@@ -1,0 +1,19 @@
+meta {
+  name: Get Lead Stage Outcomes
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/lookups/lead-stage-outcomes
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+params:query {
+  ~stage_id:
+}

@@ -1,0 +1,15 @@
+meta {
+  name: List Lead Interactions
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/interactions
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

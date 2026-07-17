@@ -1,0 +1,28 @@
+meta {
+  name: Update Page/Form Org Mapping
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/meta/page-org-map/{{mappingId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "org_id": "00000000-0000-0000-0000-000000000000",
+    "is_active": true
+  }
+}
+
+docs {
+  Reassigns a Page/Form mapping to a different org, or disables it —
+  requires tenant_admin rank or higher. Both fields are optional (COALESCE
+  semantics server-side).
+}

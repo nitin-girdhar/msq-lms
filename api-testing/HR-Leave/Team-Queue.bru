@@ -1,0 +1,15 @@
+meta {
+  name: Team Approval Queue
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/hr/leave/requests/team?status=pending
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

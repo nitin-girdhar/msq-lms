@@ -1,0 +1,32 @@
+meta {
+  name: Public Create Lead (Partner API)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/public/v1/leads
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiClientKey}}
+}
+
+body:json {
+  {
+    "first_name": "Partner",
+    "last_name": "Lead",
+    "email": "partner.lead@example.com",
+    "phone": "9812345678",
+    "source": "partner_api",
+    "branch_id": "{{orgId}}"
+  }
+}
+
+docs {
+  Authenticated by the scoped API key (leads:write). Tenant/branch come from the
+  key server-side. `branch_id` is only required for a tenant-wide key; for a
+  branch-bound key it is ignored. The body's `org_id` is never trusted.
+}

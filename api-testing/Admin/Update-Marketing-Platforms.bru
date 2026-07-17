@@ -1,0 +1,22 @@
+meta {
+  name: Update Marketing-Platforms
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/marketing-platforms/{{marketingPlatformId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Google Ads (Updated)",
+    "is_active": true
+  }
+}

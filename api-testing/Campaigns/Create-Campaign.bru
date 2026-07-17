@@ -1,0 +1,26 @@
+meta {
+  name: Create Campaign
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/campaigns
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "Test Campaign Q3",
+    "platform_name": "facebook",
+    "status_name": "active",
+    "budget": 50000,
+    "started_at": "2026-06-01",
+    "ended_at": "2026-09-30"
+  }
+}

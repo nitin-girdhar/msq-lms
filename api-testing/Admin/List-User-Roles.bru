@@ -1,0 +1,15 @@
+meta {
+  name: List User-Roles
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/lookups/user-roles
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

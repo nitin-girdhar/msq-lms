@@ -1,0 +1,22 @@
+meta {
+  name: Update Follow-Up-Statuses
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/lookups/follow-up-statuses/{{followUpStatusId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Snoozed (Updated)",
+    "is_active": true
+  }
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Update Task
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/tasks/{{taskId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "status_name": "done",
+    "note": "Completed the follow-up call"
+  }
+}
+
+docs {
+  Setting status to 'done' sets completed_at server-side. Status changes are
+  logged to task.task_status_log; the optional `note` is stored on the log row.
+}

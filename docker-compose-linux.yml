@@ -1,0 +1,272 @@
+name: crm
+
+# ── Shared environment blocks (YAML anchors) ─────────────────────────────────
+# All variables are read from .env — change DB_NAME, passwords, ports, etc. there.
+x-db-env: &db-env
+  DATABASE_URL: postgres://${DB_LEAD_SVC_USER}:${DB_LEAD_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DATABASE_URL_TENANT: postgres://${DB_TENANT_SVC_USER}:${DB_TENANT_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+
+services:
+  postgres:
+    image: postgres:18.4
+    container_name: ${DB_CONTAINER_NAME}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - ${DB_DATA_PATH}:/var/lib/postgresql
+      - ./db_scripts/01_init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  identity-service:
+    image: crm-identity-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${IDENTITY_SERVICE_PORT}
+      <<: *db-env
+    # Internal-only: reachable over the compose network, not published to host.
+    expose:
+      - "${IDENTITY_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  leads-service:
+    image: crm-leads-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${LEADS_SERVICE_PORT}
+      <<: *db-env
+      META_SERVICE_URL: http://meta-conversion-api:${META_SERVICE_PORT}
+    expose:
+      - "${LEADS_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notifications-service:
+    image: crm-notifications-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${NOTIFICATIONS_SERVICE_PORT}
+      <<: *db-env
+    expose:
+      - "${NOTIFICATIONS_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  communication-service:
+    image: crm-communication-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${COMMUNICATION_SERVICE_PORT}
+    expose:
+      - "${COMMUNICATION_SERVICE_PORT}"
+
+  meta-conversion-api:
+    image: crm-meta-conversion-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${META_SERVICE_PORT}
+      <<: *db-env
+      LEADS_SERVICE_URL: http://leads-service:${LEADS_SERVICE_PORT}
+    expose:
+      - "${META_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      leads-service:
+        condition: service_started
+
+  hr-service:
+    image: crm-hr-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${HR_SERVICE_PORT}
+      <<: *db-env
+      # Attendance punch-photo storage (local driver → Docker volume below).
+      PHOTO_STORAGE_DRIVER: ${PHOTO_STORAGE_DRIVER:-local}
+      PHOTO_STORAGE_DIR: ${PHOTO_STORAGE_DIR:-/data/attendance-photos}
+      PHOTO_MAX_BYTES: ${PHOTO_MAX_BYTES:-2097152}
+      # Face verification — in-cluster URL bypasses the CompreFace nginx.
+      FACE_DRIVER: ${FACE_DRIVER:-compreface}
+      COMPREFACE_URL: http://compreface-api:8080
+      FACE_VERIFY_TIMEOUT_MS: ${FACE_VERIFY_TIMEOUT_MS:-5000}
+    volumes:
+      - attendance-photos:${PHOTO_STORAGE_DIR:-/data/attendance-photos}
+    expose:
+      - "${HR_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      compreface-api:
+        condition: service_started
+
+  tasks-service:
+    image: crm-tasks-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${TASKS_SERVICE_PORT}
+      <<: *db-env
+    expose:
+      - "${TASKS_SERVICE_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Face verification (CompreFace, Exadel) — INTERNAL ONLY ──────────────────
+  # See docker-compose.yml for the full rationale. Own postgres + volume; only the
+  # admin UI is (optionally) published, for the one-time API-key setup. hr-service
+  # calls http://compreface-api:8080; the gateway never proxies here.
+  compreface-postgres-db:
+    image: exadel/compreface-postgres-db:1.2.0
+    container_name: compreface-postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${COMPREFACE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${COMPREFACE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${COMPREFACE_POSTGRES_DB}
+    volumes:
+      - compreface-postgres-data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+
+  compreface-core:
+    image: exadel/compreface-core:1.2.0
+    container_name: compreface-core
+    restart: unless-stopped
+    environment:
+      ML_PORT: 3000
+      UWSGI_PROCESSES: 2
+      UWSGI_THREADS: 1
+    expose:
+      - "3000"
+
+  compreface-api:
+    image: exadel/compreface-api:1.2.0
+    container_name: compreface-api
+    restart: unless-stopped
+    depends_on:
+      compreface-postgres-db:
+        condition: service_started
+      compreface-core:
+        condition: service_started
+    environment:
+      POSTGRES_USER: ${COMPREFACE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${COMPREFACE_POSTGRES_PASSWORD}
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/${COMPREFACE_POSTGRES_DB}
+      SPRING_PROFILES_ACTIVE: dev
+      API_JAVA_OPTS: -Xmx2g
+      SAVE_IMAGES_TO_DB: "true"
+      CONNECTION_TIMEOUT: 10000
+      READ_TIMEOUT: 60000
+      MAX_FILE_SIZE: 5MB
+      MAX_REQUEST_SIZE: 5MB
+    expose:
+      - "8080"
+
+  compreface-admin:
+    image: exadel/compreface-admin:1.2.0
+    container_name: compreface-admin
+    restart: unless-stopped
+    depends_on:
+      compreface-postgres-db:
+        condition: service_started
+      compreface-api:
+        condition: service_started
+    environment:
+      POSTGRES_USER: ${COMPREFACE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${COMPREFACE_POSTGRES_PASSWORD}
+      POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/${COMPREFACE_POSTGRES_DB}
+      SPRING_PROFILES_ACTIVE: dev
+      ENABLE_EMAIL_SERVER: "false"
+      ADMIN_JAVA_OPTS: -Xmx1g
+      MAX_FILE_SIZE: 5MB
+      MAX_REQUEST_SIZE: 5MB
+    expose:
+      - "8080"
+
+  compreface-ui:
+    image: exadel/compreface-fe:1.2.0
+    container_name: compreface-ui
+    restart: unless-stopped
+    depends_on:
+      compreface-api:
+        condition: service_started
+      compreface-admin:
+        condition: service_started
+    environment:
+      CLIENT_MAX_BODY_SIZE: 5M
+      PROXY_READ_TIMEOUT: 60s
+      PROXY_CONNECT_TIMEOUT: 10s
+    # Ops-only admin UI (one-time API-key setup). Remove to keep fully internal.
+    ports:
+      - "${COMPREFACE_ADMIN_UI_PORT:-8010}:80"
+
+  api-gateway:
+    image: crm-api-gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: ${GATEWAY_PORT}
+      <<: *db-env
+      IDENTITY_SERVICE_URL: http://identity-service:${IDENTITY_SERVICE_PORT}
+      LEADS_SERVICE_URL: http://leads-service:${LEADS_SERVICE_PORT}
+      META_SERVICE_URL: http://meta-conversion-api:${META_SERVICE_PORT}
+      NOTIFICATIONS_SERVICE_URL: http://notifications-service:${NOTIFICATIONS_SERVICE_PORT}
+      COMMUNICATION_SERVICE_URL: http://communication-service:${COMMUNICATION_SERVICE_PORT}
+      HR_SERVICE_URL: http://hr-service:${HR_SERVICE_PORT}
+      TASKS_SERVICE_URL: http://tasks-service:${TASKS_SERVICE_PORT}
+    ports:
+      - "${GATEWAY_PORT}:${GATEWAY_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_started
+      leads-service:
+        condition: service_started
+      meta-conversion-api:
+        condition: service_started
+      notifications-service:
+        condition: service_started
+      communication-service:
+        condition: service_started
+      hr-service:
+        condition: service_started
+      tasks-service:
+        condition: service_started
+
+  web:
+    image: crm-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "3000"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+
+volumes:
+  attendance-photos:
+  compreface-postgres-data:

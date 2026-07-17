@@ -1,0 +1,22 @@
+meta {
+  name: Update Holiday
+  type: http
+  seq: 17
+}
+
+patch {
+  url: {{baseUrl}}/hr/holidays/{{holidayId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "Independence Day (Observed)",
+    "is_optional": false
+  }
+}

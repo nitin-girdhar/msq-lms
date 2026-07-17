@@ -1,0 +1,15 @@
+meta {
+  name: Delete Campaign
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/campaigns/{{campaignId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

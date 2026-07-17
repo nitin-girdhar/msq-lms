@@ -1,0 +1,35 @@
+meta {
+  name: Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "admin@example.com",
+    "password": "Admin@123"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const cookies = res.headers['set-cookie'];
+    if (cookies) {
+      const authCookie = cookies.find(c => c.startsWith('auth_token='));
+      if (authCookie) {
+        const token = authCookie.split('=')[1].split(';')[0];
+        bru.setVar("authToken", token);
+      }
+    }
+    if (res.body.data) {
+      bru.setVar("userId", res.body.data.id);
+      bru.setVar("orgId", res.body.data.org_id);
+    }
+  }
+}

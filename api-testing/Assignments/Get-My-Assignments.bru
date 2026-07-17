@@ -1,0 +1,15 @@
+meta {
+  name: Get My Assignments
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/assignments/mine?page=1&page_size=20
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
