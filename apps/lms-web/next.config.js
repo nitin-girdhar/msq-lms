@@ -9,7 +9,7 @@
 // are deployed with `pnpm deploy --prod`, which excludes devDependencies.
 /** @type {import('next').NextConfig} */
 const config = {
-  transpilePackages: ['@platform/ui-kit', '@lms/web', '@hr/web', '@task/web'],
+  transpilePackages: ['@platform/ui-kit', '@lms/web'],
   async rewrites() {
     const apiGateway = process.env['API_GATEWAY_INTERNAL_URL'] ?? 'http://localhost:4000';
     return [

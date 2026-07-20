@@ -1,23 +1,25 @@
 <#
 .SYNOPSIS
-    Deploy the platform database (fresh install) to a PostgreSQL Docker container.
+    Deploy the LMS product database (fresh install) to a PostgreSQL Docker container.
 
 .DESCRIPTION
-    Drops and recreates the target database, then runs the full fresh-install SQL
-    sequence in order (schema/role bootstrap -> HR/Task schemas -> per-product role
-    model -> tenant scoping/entitlements). Stops immediately on any SQL error and
-    prints the full error output.
+    Drops and recreates the target database, then runs the LMS-owned fresh-install
+    SQL sequence in order. Stops immediately on any SQL error and prints the full
+    error output.
+
+    THIS REPO CANNOT BOOTSTRAP A DATABASE ALONE. db_scripts/01_init-db.sql and
+    the other files below are still schema-interleaved (contain the shared iam/
+    entity/geo/audit DDL alongside lms/marketing/ext, since splitting them
+    correctly needs a live DB to verify the cut against — see
+    docs/Phase5_Extraction_Plan.md Stage C). Practically, run msq-core's
+    db_deploy.ps1 FIRST against the same database (it creates the full schema
+    today, shared and product alike), then this script's demo-seed-only scripts
+    are additive. Do not run both scripts' 01_init-db.sql back to back against
+    a database that already has one applied — it's idempotent, but redundant.
 
     Demo/seed data (tenants, orgs, users, sample leads) is included by default via
     -IncludeDemoSeed:$true; pass -IncludeDemoSeed:$false for a clean production-shape
     bootstrap with no demo rows.
-
-    This script always DROPs and recreates the database — it is a fresh-install tool,
-    not an upgrade tool. To bring an already-deployed database (created before the
-    P1.0 crm-naming cleanup, i.e. still has schema `crm` / role `crm_service`) up to
-    the current shape without losing data, run the two migrations in
-    db_scripts/_migrations/ (15 then 16) directly against that live database instead
-    of this script — see db_scripts/_migrations/README.md.
 
 .EXAMPLE
     .\db_deploy.ps1
@@ -40,11 +42,8 @@ $ErrorActionPreference = "Stop"
 
 $ScriptsDir = $PSScriptRoot
 
-# Core fresh-install sequence. 15/16 (db_scripts/_migrations/) are deliberately
-# excluded here — they are guarded no-ops on a fresh install (01/10 already create
-# schema `lms` / role `root_service` / the 'lms' entitlement key directly); they
-# only matter when upgrading a pre-P1.0 deployment in place. See
-# db_scripts/_migrations/README.md.
+# Schema-interleaved (still contains shared iam/entity/geo/audit DDL too — see
+# the .SYNOPSIS note above). Kept for the scripts this repo actually needs.
 $CoreScripts = @(
     "01_init-db.sql",
     "01_init-lookup-data.sql"
@@ -61,16 +60,10 @@ $DemoSeedScripts = @(
 )
 
 $RemainingCoreScripts = @(
-    "10_init-hr-task-schemas.sql",
-    "11_init-leave-management.sql",
-    "12_leave_ledger_idempotency.sql",
-    "13_init-attendance.sql",
-    "14_init-tasks.sql",
     "17_init-per-product-roles.sql",
     "18_backfill-per-product-roles.sql",
     "19_init-per-product-db-grants.sql",
     "20_member-role-resolver-fn.sql",
-    "21_init-reporting-lines.sql",
     "22_tenant-scope-lookups.sql",
     "23_tenant-default-catalogs.sql",
     "24_move-api-clients-to-iam.sql",
