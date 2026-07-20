@@ -54,24 +54,24 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE task.tasks d
 SET status_id = n.id
-FROM task.task_statuses o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN task.task_statuses n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.status_id = o.id AND o.tenant_id IS NULL;
+ FROM task.task_statuses o, entity.organizations org, task.task_statuses n
+WHERE d.status_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 UPDATE task.task_status_log d
 SET old_status_id = n.id
-FROM task.task_statuses o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN task.task_statuses n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.old_status_id = o.id AND o.tenant_id IS NULL;
+ FROM task.task_statuses o, entity.organizations org, task.task_statuses n
+WHERE d.old_status_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 UPDATE task.task_status_log d
 SET new_status_id = n.id
-FROM task.task_statuses o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN task.task_statuses n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.new_status_id = o.id AND o.tenant_id IS NULL;
+ FROM task.task_statuses o, entity.organizations org, task.task_statuses n
+WHERE d.new_status_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 DELETE FROM task.task_statuses WHERE tenant_id IS NULL;
 
@@ -103,10 +103,10 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE task.tasks d
 SET priority_id = n.id
-FROM task.task_priorities o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN task.task_priorities n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.priority_id = o.id AND o.tenant_id IS NULL;
+ FROM task.task_priorities o, entity.organizations org, task.task_priorities n
+WHERE d.priority_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 DELETE FROM task.task_priorities WHERE tenant_id IS NULL;
 
@@ -140,23 +140,23 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE hr.leave_policies d
 SET leave_type_id = n.id
-FROM hr.leave_types o
-JOIN hr.leave_types n ON n.tenant_id = d.tenant_id AND n.name = o.name
-WHERE d.leave_type_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.leave_types o, hr.leave_types n
+WHERE d.leave_type_id = o.id AND o.tenant_id IS NULL
+  AND n.tenant_id = d.tenant_id AND n.name = o.name;
 
 UPDATE hr.leave_requests d
 SET leave_type_id = n.id
-FROM hr.leave_types o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN hr.leave_types n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.leave_type_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.leave_types o, entity.organizations org, hr.leave_types n
+WHERE d.leave_type_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 UPDATE hr.leave_ledger d
 SET leave_type_id = n.id
-FROM hr.leave_types o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN hr.leave_types n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.leave_type_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.leave_types o, entity.organizations org, hr.leave_types n
+WHERE d.leave_type_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 DELETE FROM hr.leave_types WHERE tenant_id IS NULL;
 
@@ -189,9 +189,9 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE hr.employee_profiles d
 SET employment_type_id = n.id
-FROM hr.employment_types o
-JOIN hr.employment_types n ON n.tenant_id = d.tenant_id AND n.name = o.name
-WHERE d.employment_type_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.employment_types o, hr.employment_types n
+WHERE d.employment_type_id = o.id AND o.tenant_id IS NULL
+  AND n.tenant_id = d.tenant_id AND n.name = o.name;
 
 DELETE FROM hr.employment_types WHERE tenant_id IS NULL;
 
@@ -225,17 +225,17 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE hr.attendance_days d
 SET status_id = n.id
-FROM hr.attendance_statuses o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN hr.attendance_statuses n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.status_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.attendance_statuses o, entity.organizations org, hr.attendance_statuses n
+WHERE d.status_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 UPDATE hr.attendance_regularizations d
 SET requested_status_id = n.id
-FROM hr.attendance_statuses o
-JOIN entity.organizations org ON org.id = d.org_id
-JOIN hr.attendance_statuses n ON n.tenant_id = org.tenant_id AND n.name = o.name
-WHERE d.requested_status_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.attendance_statuses o, entity.organizations org, hr.attendance_statuses n
+WHERE d.requested_status_id = o.id AND o.tenant_id IS NULL
+  AND org.id = d.org_id
+  AND n.tenant_id = org.tenant_id AND n.name = o.name;
 
 DELETE FROM hr.attendance_statuses WHERE tenant_id IS NULL;
 
@@ -267,9 +267,9 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE lms.member_roles d
 SET role_id = n.id
-FROM lms.roles o
-JOIN lms.roles n ON n.tenant_id = d.tenant_id AND n.name = o.name
-WHERE d.role_id = o.id AND o.tenant_id IS NULL;
+ FROM lms.roles o, lms.roles n
+WHERE d.role_id = o.id AND o.tenant_id IS NULL
+  AND n.tenant_id = d.tenant_id AND n.name = o.name;
 
 DELETE FROM lms.roles WHERE tenant_id IS NULL;
 
@@ -301,9 +301,9 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE hr.member_roles d
 SET role_id = n.id
-FROM hr.roles o
-JOIN hr.roles n ON n.tenant_id = d.tenant_id AND n.name = o.name
-WHERE d.role_id = o.id AND o.tenant_id IS NULL;
+ FROM hr.roles o, hr.roles n
+WHERE d.role_id = o.id AND o.tenant_id IS NULL
+  AND n.tenant_id = d.tenant_id AND n.name = o.name;
 
 DELETE FROM hr.roles WHERE tenant_id IS NULL;
 
@@ -335,9 +335,9 @@ WHERE g.tenant_id IS NULL;
 
 UPDATE task.member_roles d
 SET role_id = n.id
-FROM task.roles o
-JOIN task.roles n ON n.tenant_id = d.tenant_id AND n.name = o.name
-WHERE d.role_id = o.id AND o.tenant_id IS NULL;
+ FROM task.roles o, task.roles n
+WHERE d.role_id = o.id AND o.tenant_id IS NULL
+  AND n.tenant_id = d.tenant_id AND n.name = o.name;
 
 DELETE FROM task.roles WHERE tenant_id IS NULL;
 

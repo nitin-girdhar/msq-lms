@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* @platform/ui-kit's shell components (navbar, sidebar, product switcher, ...)
+   live outside this app's own tree in packages/ui/src. Tailwind v4's default
+   content auto-detection doesn't reliably pick up shared monorepo packages
+   across every route's build chunk, which silently drops their utility
+   classes from the compiled CSS. Declare the source explicitly. */
+@source "../../../packages/ui/src";
+
 * { box-sizing: border-box; }
 
 html, body {

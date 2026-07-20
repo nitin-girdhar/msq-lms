@@ -116,8 +116,8 @@ JOIN lms.follow_up_statuses n ON n.tenant_id = t.id AND n.name = g.name WHERE g.
 
 ALTER TABLE lms.lead_sources         ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES entity.tenants(id) ON DELETE CASCADE;
 ALTER TABLE lms.lead_sources         DROP CONSTRAINT IF EXISTS lead_sources_name_key;
-INSERT INTO lms.lead_sources (tenant_id, name, label, description, is_active)
-SELECT t.id, g.name, g.label, g.description, g.is_active
+INSERT INTO lms.lead_sources (tenant_id, name, label, is_active)
+SELECT t.id, g.name, g.label, g.is_active
 FROM lms.lead_sources g CROSS JOIN entity.tenants t WHERE g.tenant_id IS NULL;
 CREATE TEMP TABLE _source_map ON COMMIT DROP AS
 SELECT g.id AS old_id, t.id AS tenant_id, n.id AS new_id
@@ -149,56 +149,69 @@ JOIN marketing.campaign_statuses n ON n.tenant_id = t.id AND n.name = g.name WHE
 -- ═══════════════════════════════════════════════════════════════════
 -- marketing_leads: stage_id, outcome_id, source_id
 UPDATE lms.marketing_leads d SET stage_id = m.new_id
-FROM _stage_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.stage_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _stage_map m, entity.organizations org
+WHERE d.stage_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 UPDATE lms.marketing_leads d SET outcome_id = m.new_id
-FROM _outcome_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.outcome_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _outcome_map m, entity.organizations org
+WHERE d.outcome_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 UPDATE lms.marketing_leads d SET source_id = m.new_id
-FROM _source_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.source_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _source_map m, entity.organizations org
+WHERE d.source_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 -- lead_follow_ups: stage_id, outcome_id, status_id (follow_up_statuses)
 UPDATE lms.lead_follow_ups d SET stage_id = m.new_id
-FROM _stage_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.stage_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _stage_map m, entity.organizations org
+WHERE d.stage_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 UPDATE lms.lead_follow_ups d SET outcome_id = m.new_id
-FROM _outcome_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.outcome_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _outcome_map m, entity.organizations org
+WHERE d.outcome_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 UPDATE lms.lead_follow_ups d SET status_id = m.new_id
-FROM _follow_up_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.status_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _follow_up_map m, entity.organizations org
+WHERE d.status_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 -- lead_status_log: old/new stage + outcome
 UPDATE lms.lead_status_log d SET old_stage_id = m.new_id
-FROM _stage_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.old_stage_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _stage_map m, entity.organizations org
+WHERE d.old_stage_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 UPDATE lms.lead_status_log d SET new_stage_id = m.new_id
-FROM _stage_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.new_stage_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _stage_map m, entity.organizations org
+WHERE d.new_stage_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 UPDATE lms.lead_status_log d SET old_outcome_id = m.new_id
-FROM _outcome_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.old_outcome_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _outcome_map m, entity.organizations org
+WHERE d.old_outcome_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 UPDATE lms.lead_status_log d SET new_outcome_id = m.new_id
-FROM _outcome_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.new_outcome_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _outcome_map m, entity.organizations org
+WHERE d.new_outcome_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 -- lead_interactions: interaction_type_id
 UPDATE lms.lead_interactions d SET interaction_type_id = m.new_id
-FROM _interaction_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.interaction_type_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _interaction_map m, entity.organizations org
+WHERE d.interaction_type_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 -- ad_campaigns: platform_id, status_id (campaign)
 UPDATE marketing.ad_campaigns d SET platform_id = m.new_id
-FROM _platform_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.platform_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _platform_map m, entity.organizations org
+WHERE d.platform_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 UPDATE marketing.ad_campaigns d SET status_id = m.new_id
-FROM _campaign_status_map m JOIN entity.organizations org ON org.id = d.org_id
-WHERE d.status_id = m.old_id AND m.tenant_id = org.tenant_id;
+ FROM _campaign_status_map m, entity.organizations org
+WHERE d.status_id = m.old_id AND m.tenant_id = org.tenant_id
+  AND org.id = d.org_id;
 
 -- lead_stage_outcome self-ref: repoint any remaining global outcome's stage_id
 -- (the per-tenant copies already point at per-tenant stages; this covers nothing

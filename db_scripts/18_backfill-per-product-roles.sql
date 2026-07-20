@@ -72,6 +72,11 @@ JOIN lms.roles            lr ON lr.name = CASE ur.name
        WHEN 'super_admin'           THEN 'lms_admin'
        ELSE NULL
      END
+     -- Tenant-safe whether lms.roles is still the pre-22 global catalog (no
+     -- tenant_id column -> jsonb key lookup is NULL -> predicate always true)
+     -- or the post-22 tenant-scoped catalog (matches the org's own tenant,
+     -- avoiding an ON CONFLICT DO UPDATE double-hit when 18 is re-run after 22).
+     AND (to_jsonb(lr) ->> 'tenant_id' IS NULL OR to_jsonb(lr) ->> 'tenant_id' = o.tenant_id::text)
 WHERE uom.is_active
   -- only for orgs whose tenant is licensed for LMS
   AND EXISTS (SELECT 1 FROM entity.tenant_modules tm
@@ -96,6 +101,8 @@ FROM iam.user_org_mapping uom
 JOIN entity.organizations o  ON o.id  = uom.org_id
 JOIN iam.user_roles       ur ON ur.id = uom.role_id
 JOIN hr.roles          hrole ON hrole.name = 'hr_admin'
+     -- tenant-safe pre/post script-22 (see the lms.member_roles block above)
+     AND (to_jsonb(hrole) ->> 'tenant_id' IS NULL OR to_jsonb(hrole) ->> 'tenant_id' = o.tenant_id::text)
 WHERE uom.is_active
   AND ur.name IN ('hr_admin','org_admin','tenant_admin','super_admin')
   AND EXISTS (SELECT 1 FROM entity.tenant_modules tm
@@ -124,6 +131,8 @@ JOIN task.roles        trole ON trole.name = CASE
        WHEN ur.name IN ('org_admin','tenant_admin','super_admin') THEN 'task_admin'
        ELSE 'task_member'
      END
+     -- tenant-safe pre/post script-22 (see the lms.member_roles block above)
+     AND (to_jsonb(trole) ->> 'tenant_id' IS NULL OR to_jsonb(trole) ->> 'tenant_id' = o.tenant_id::text)
 WHERE uom.is_active
   AND EXISTS (SELECT 1 FROM entity.tenant_modules tm
               WHERE tm.tenant_id = o.tenant_id AND tm.module = 'tasks' AND tm.is_active)

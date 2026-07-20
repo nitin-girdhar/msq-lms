@@ -35,7 +35,11 @@ END $$;
 -- 2. Role rename. RLS policies `TO crm_service` and all grants follow the
 --    role's OID automatically — no policy/grant needs re-issuing.
 DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_service') THEN
+  -- Rename only when the source exists AND the target does not. On a fresh
+  -- install (01 creates root_service directly) or a shared cluster that already
+  -- has root_service, this is a no-op instead of colliding on the target name.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crm_service')
+     AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'root_service') THEN
     ALTER ROLE crm_service RENAME TO root_service;
   END IF;
 END $$;
