@@ -1,0 +1,15 @@
+meta {
+  name: List Task-Roles
+  type: http
+  seq: 61
+}
+
+get {
+  url: {{baseUrl}}/lookups/task-roles?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

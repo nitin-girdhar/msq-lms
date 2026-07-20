@@ -1,4 +1,4 @@
-.PHONY: dev dev-infra dev-services stop build install migrate migrate-leave migrate-attendance accrue-leave accrue-leave-cycle-end resolve-attendance seed-admin seed-data lint typecheck test clean clean-all help db-shell build-docker up down logs
+.PHONY: dev dev-infra dev-services stop build install migrate migrate-leave migrate-attendance accrue-leave accrue-leave-cycle-end resolve-attendance seed-admin seed-data lint typecheck test clean clean-all help db-shell build-docker up down logs ship
 
 # ── Variables ──────────────────────────────────────────────────────────────────
 COMPOSE := docker compose
@@ -20,8 +20,8 @@ dev: install dev-infra ## Start the full stack locally (Postgres + all services 
 dev-infra: ## Start Postgres in Docker and wait until healthy
 	$(COMPOSE) up -d --wait postgres
 
-dev-services: install ## Start all backend services and the API gateway
-	$(PNPM) turbo dev --filter='!web' --concurrency 12
+dev-services: install ## Start all backend services and the API gateway (excludes web apps)
+	$(PNPM) turbo dev --filter='!./apps/*' --concurrency 12
 
 # ── Database ───────────────────────────────────────────────────────────────────
 # DB commands run psql inside the Postgres container (no local psql required).
@@ -74,6 +74,9 @@ build: install ## Build all packages and services
 
 build-docker: ## Build all Docker images
 	$(COMPOSE) build
+
+ship: ## Build + package Docker images for offline shipping (see scripts/docker-load.md)
+	scripts/docker-ship.sh $(SERVICES)
 
 # ── Code Quality ───────────────────────────────────────────────────────────────
 lint: ## Lint all workspaces

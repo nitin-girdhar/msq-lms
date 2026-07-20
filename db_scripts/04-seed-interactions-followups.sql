@@ -8,20 +8,20 @@
 --
 -- For every lead inserted by seed-03 (tagged raw_webhook_data->>'seed_batch'
 -- = 'bulk_500'):
---   - 1 to 4 crm.lead_interactions (call/whatsapp/email/in_person/sms, etc.)
+--   - 1 to 4 lms.lead_interactions (call/whatsapp/email/in_person/sms, etc.)
 --     with realistic notes and occurred_at timestamps after the lead's
 --     created_at.
---   - 0 to 2 crm.lead_follow_ups. Distribution:
+--   - 0 to 2 lms.lead_follow_ups. Distribution:
 --       'new'/'contacting' leads lean towards 'pending' (future-dated)
 --       'qualified' leads often have one 'completed' + one 'pending'
 --       'converted'/'unqualified'/'transferred_out' mostly 'completed'
 --         or 'missed', rarely 'pending'
 --     completed_at is only ever set when status = 'completed', and left
---     NULL otherwise, satisfying crm.check_follow_up_completion().
+--     NULL otherwise, satisfying lms.check_follow_up_completion().
 --
--- Note: audit.marketing_leads_history and crm.lead_assignment_log are NOT
+-- Note: audit.marketing_leads_history and lms.lead_assignment_log are NOT
 -- hand-written here — they are populated automatically by the existing
--- audit.audit_marketing_leads_changes / crm.log_lead_assignment triggers whenever
+-- audit.audit_marketing_leads_changes / lms.log_lead_assignment triggers whenever
 -- a lead row is updated. Since seed-03 only INSERTs leads (no UPDATEs),
 -- those audit tables will stay empty for the bulk-seeded leads unless
 -- you subsequently update a lead's stage/assignment through the app —
@@ -95,7 +95,7 @@ DECLARE
 BEGIN
   FOR v_lead IN
     SELECT ml.id AS lead_id, ml.org_id, ml.created_at, oref.org_seq
-    FROM crm.marketing_leads ml
+    FROM lms.marketing_leads ml
     JOIN _io_org_ref oref ON oref.org_uuid = ml.org_id
     WHERE ml.raw_webhook_data->>'seed_batch' = 'bulk_500'
   LOOP
@@ -111,7 +111,7 @@ BEGIN
       PERFORM set_config('app.current_user_id', v_actor_id::TEXT, TRUE);
 
       v_itype_name := (ARRAY['call','whatsapp','email','sms','in_person','video_call','chat'])[1 + floor(random()*7)::INT];
-      SELECT id INTO v_itype_id FROM crm.interaction_types WHERE name = v_itype_name;
+      SELECT id INTO v_itype_id FROM lms.interaction_types WHERE name = v_itype_name;
 
       v_notes := v_notes_pool[1 + floor(random() * array_length(v_notes_pool,1))::INT];
 
@@ -125,7 +125,7 @@ BEGIN
         CURRENT_TIMESTAMP
       );
 
-      INSERT INTO crm.lead_interactions
+      INSERT INTO lms.lead_interactions
         (org_id, lead_id, user_id, interaction_type_id, notes, duration_seconds, occurred_at)
       VALUES
         (v_lead.org_id, v_lead.lead_id, v_actor_id, v_itype_id, v_notes, v_duration, v_occurred_at);
@@ -164,9 +164,9 @@ DECLARE
 BEGIN
   FOR v_lead IN
     SELECT ml.id AS lead_id, ml.org_id, ml.created_at, oref.org_seq, ls.name AS stage_name
-    FROM crm.marketing_leads ml
+    FROM lms.marketing_leads ml
     JOIN _io_org_ref oref ON oref.org_uuid = ml.org_id
-    JOIN crm.lead_stage ls ON ls.id = ml.stage_id
+    JOIN lms.lead_stage ls ON ls.id = ml.stage_id
     WHERE ml.raw_webhook_data->>'seed_batch' = 'bulk_500'
   LOOP
     PERFORM set_config('app.current_org_id', v_lead.org_id::TEXT, TRUE);
@@ -205,7 +205,7 @@ BEGIN
         ELSE -- transferred_out
           CASE WHEN v_status_roll < 0.60 THEN 'completed' ELSE 'missed' END
       END;
-      SELECT id INTO v_status_id FROM crm.follow_up_statuses WHERE name = v_status_name;
+      SELECT id INTO v_status_id FROM lms.follow_up_statuses WHERE name = v_status_name;
 
       IF v_status_name = 'completed' THEN
         -- scheduled in the past, completed shortly after
@@ -227,7 +227,7 @@ BEGIN
 
       v_notes := v_notes_pool[1 + floor(random() * array_length(v_notes_pool,1))::INT];
 
-      INSERT INTO crm.lead_follow_ups
+      INSERT INTO lms.lead_follow_ups
         (org_id, lead_id, assigned_user_id, status_id, scheduled_at, completed_at, notes)
       VALUES
         (v_lead.org_id, v_lead.lead_id, v_assigned_user, v_status_id, v_scheduled_at, v_completed_at, v_notes);
@@ -240,12 +240,12 @@ COMMIT;
 -- ============================================================
 -- Sanity checks (run manually after this script if you want to verify)
 -- ============================================================
--- SELECT COUNT(*) FROM crm.lead_interactions li
--- JOIN crm.marketing_leads ml ON ml.id = li.lead_id
+-- SELECT COUNT(*) FROM lms.lead_interactions li
+-- JOIN lms.marketing_leads ml ON ml.id = li.lead_id
 -- WHERE ml.raw_webhook_data->>'seed_batch' = 'bulk_500';
 --
--- SELECT fs.name AS status, COUNT(*) FROM crm.lead_follow_ups lf
--- JOIN crm.follow_up_statuses fs ON fs.id = lf.status_id
--- JOIN crm.marketing_leads ml ON ml.id = lf.lead_id
+-- SELECT fs.name AS status, COUNT(*) FROM lms.lead_follow_ups lf
+-- JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id
+-- JOIN lms.marketing_leads ml ON ml.id = lf.lead_id
 -- WHERE ml.raw_webhook_data->>'seed_batch' = 'bulk_500'
 -- GROUP BY fs.name;

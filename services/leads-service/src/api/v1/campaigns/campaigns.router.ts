@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../../middleware/auth.middleware.js';
+import { requireModule } from '../../../middleware/require-module.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
 import { CampaignsController } from './campaigns.controller.js';
 import { createCampaignBodySchema, updateCampaignBodySchema } from './campaigns.schema.js';
@@ -7,12 +8,14 @@ import { createCampaignBodySchema, updateCampaignBodySchema } from './campaigns.
 const ctrl = new CampaignsController();
 
 export async function campaignsRouter(app: FastifyInstance) {
-  app.get('/campaigns', { preHandler: [authenticate] }, ctrl.list);
-  app.get('/campaigns/:id', { preHandler: [authenticate] }, ctrl.getById);
-  app.post('/campaigns', { preHandler: [authenticate, validate({ body: createCampaignBodySchema })] }, ctrl.create);
-  app.patch('/campaigns/:id', { preHandler: [authenticate, validate({ body: updateCampaignBodySchema })] }, ctrl.update);
-  app.delete('/campaigns/:id', { preHandler: [authenticate] }, ctrl.delete);
+  const gate = [authenticate, requireModule('lms')] as const;
 
-  app.get('/campaigns/platforms', { preHandler: [authenticate] }, ctrl.listPlatforms);
-  app.get('/campaigns/statuses', { preHandler: [authenticate] }, ctrl.listStatuses);
+  app.get('/campaigns', { preHandler: [...gate] }, ctrl.list);
+  app.get('/campaigns/:id', { preHandler: [...gate] }, ctrl.getById);
+  app.post('/campaigns', { preHandler: [...gate, validate({ body: createCampaignBodySchema })] }, ctrl.create);
+  app.patch('/campaigns/:id', { preHandler: [...gate, validate({ body: updateCampaignBodySchema })] }, ctrl.update);
+  app.delete('/campaigns/:id', { preHandler: [...gate] }, ctrl.delete);
+
+  app.get('/campaigns/platforms', { preHandler: [...gate] }, ctrl.listPlatforms);
+  app.get('/campaigns/statuses', { preHandler: [...gate] }, ctrl.listStatuses);
 }

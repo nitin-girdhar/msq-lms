@@ -247,7 +247,7 @@ BEGIN
       (SELECT id FROM iam.user_roles WHERE name = 'read_only'), NULL, v_password_hash, TRUE, FALSE)
     ON CONFLICT (email) DO UPDATE SET mobile = EXCLUDED.mobile, manager_id = EXCLUDED.manager_id, password_hash = EXCLUDED.password_hash;
 
-    -- Seed iam.user_org_mapping so the crm.check_lead_fk_org_scope trigger and RLS work.
+    -- Seed iam.user_org_mapping so the lms.check_lead_fk_org_scope trigger and RLS work.
     INSERT INTO iam.user_org_mapping (user_id, org_id, role_id, granted_by, is_active)
     SELECT u.id, v_org.org_uuid, u.role_id, v_admin_id, TRUE
     FROM iam.users u

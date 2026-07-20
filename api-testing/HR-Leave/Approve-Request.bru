@@ -19,3 +19,10 @@ body:json {
     "comment": "Approved"
   }
 }
+
+docs {
+  Only a user who is an assignee at the request's current pending level (per the
+  hr.reporting_lines-derived chain, see Apply-Leave docs) may approve/reject. This chain
+  is independent of the LMS assignment hierarchy — reassigning a lead or changing a rep's
+  LMS lead never changes who can approve their leave.
+}

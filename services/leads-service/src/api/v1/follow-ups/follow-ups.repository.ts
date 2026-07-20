@@ -140,7 +140,7 @@ export async function updateFollowUp(
 export async function deleteFollowUp(ctx: RoleTxContext, followUpId: string) {
   return withRoleTx(ctx, async (tx) => {
     await tx.execute(sql`
-      UPDATE crm.lead_follow_ups
+      UPDATE lms.lead_follow_ups
       SET is_deleted = TRUE, deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
       WHERE id = ${followUpId} AND org_id = ${ctx.org_id}
     `);

@@ -21,7 +21,7 @@ where users.manager_id is null
 where email = 'komal.hegde@fitclass.in'
 
 select *
-from crm.marketing_leads
+from lms.marketing_leads
 
 
 select *
@@ -46,14 +46,14 @@ from public.test
 ALTER ROLE lead_svc WITH PASSWORD 'lead_svc_pwd';
 ALTER ROLE tenant_dash_svc WITH PASSWORD 'tenant_dash_svc_pwd';
 
-ALTER ROLE crm_service WITH PASSWORD 'crm_service_pwd';
+ALTER ROLE root_service WITH PASSWORD 'crm_service_pwd';
 
 
 select *
-from ext.api_clients
+from iam.api_clients
 
 select *
-from ext.api_client_orgs
+from iam.api_client_orgs
 
 select *
 from ext.meta_tenant_config

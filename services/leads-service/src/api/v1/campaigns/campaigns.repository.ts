@@ -18,7 +18,7 @@ export async function listCampaigns(ctx: RoleTxContext) {
       FROM marketing.ad_campaigns ac
       JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
       JOIN marketing.campaign_statuses cs ON cs.id = ac.status_id
-      LEFT JOIN crm.marketing_leads ml ON ml.campaign_id = ac.id
+      LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id
       WHERE NOT ac.is_deleted AND ac.org_id = ${ctx.org_id}
       GROUP BY ac.id, mp.name, cs.name, cs.id, mp.id
       ORDER BY ac.created_at DESC
@@ -35,7 +35,7 @@ export async function getCampaignById(ctx: RoleTxContext, campaignId: string) {
       FROM marketing.ad_campaigns ac
       JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
       JOIN marketing.campaign_statuses cs ON cs.id = ac.status_id
-      LEFT JOIN crm.marketing_leads ml ON ml.campaign_id = ac.id
+      LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id
       WHERE NOT ac.is_deleted AND ac.org_id = ${ctx.org_id} AND ac.id = ${campaignId}
       GROUP BY ac.id, mp.name, cs.name, cs.id, mp.id
     `)) as Array<Record<string, unknown>>;

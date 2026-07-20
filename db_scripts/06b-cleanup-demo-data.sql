@@ -11,11 +11,11 @@
 -- Run AFTER this:  06c-cleanup-demo-data-post.sql (as sa).
 --
 -- entity.tenants / entity.organizations / iam.users / marketing.ad_campaigns /
--- crm.marketing_leads / crm.lead_interactions / crm.lead_follow_ups all carry
+-- lms.marketing_leads / lms.lead_interactions / lms.lead_follow_ups all carry
 -- a BEFORE DELETE trigger (public.soft_delete_row()) that normally converts
 -- DELETE into an UPDATE is_deleted=TRUE. It only performs a real hard delete
--- when current_user = 'crm_service' — so this script sets that role itself
--- right after BEGIN, regardless of which login (postgres/sa/crm_service) ran
+-- when current_user = 'root_service' — so this script sets that role itself
+-- right after BEGIN, regardless of which login (postgres/sa/root_service) ran
 -- it. Don't skip or remove that SET ROLE line.
 --
 -- Run this as ONE transaction via psql (not a GUI tool that may execute
@@ -31,8 +31,8 @@
 BEGIN;
 
 -- Superusers (postgres/sa) can assume any role without its password; if
--- connected directly as crm_service this is a harmless no-op.
-SET ROLE crm_service;
+-- connected directly as root_service this is a harmless no-op.
+SET ROLE root_service;
 
 -- ============================================================
 -- Target scope: the two demo tenants seeded by script 02.
@@ -52,7 +52,7 @@ INSERT INTO _target_users (id)
 
 CREATE TEMP TABLE _target_leads (id UUID) ON COMMIT DROP;
 INSERT INTO _target_leads (id)
-  SELECT id FROM crm.marketing_leads WHERE org_id IN (SELECT id FROM _target_orgs);
+  SELECT id FROM lms.marketing_leads WHERE org_id IN (SELECT id FROM _target_orgs);
 
 CREATE TEMP TABLE _target_meta_leads (id UUID) ON COMMIT DROP;
 INSERT INTO _target_meta_leads (id)
@@ -94,23 +94,23 @@ DELETE FROM audit.audit_log
 --    the two demo orgs, and the leads.org_id-scoped deletes below wouldn't
 --    catch that.
 -- ============================================================
-DELETE FROM crm.lead_interactions WHERE user_id          IN (SELECT id FROM _target_users);
-DELETE FROM crm.lead_follow_ups   WHERE assigned_user_id IN (SELECT id FROM _target_users);
+DELETE FROM lms.lead_interactions WHERE user_id          IN (SELECT id FROM _target_users);
+DELETE FROM lms.lead_follow_ups   WHERE assigned_user_id IN (SELECT id FROM _target_users);
 
 -- ============================================================
 -- 4. Leads and everything that cascades from them:
---    crm.lead_interactions, crm.lead_follow_ups, crm.lead_assignment_log,
---    crm.lead_status_log (all ON DELETE CASCADE via lead_id).
+--    lms.lead_interactions, lms.lead_follow_ups, lms.lead_assignment_log,
+--    lms.lead_status_log (all ON DELETE CASCADE via lead_id).
 -- ============================================================
-DELETE FROM crm.lead_links WHERE source_org_id IN (SELECT id FROM _target_orgs)
+DELETE FROM lms.lead_links WHERE source_org_id IN (SELECT id FROM _target_orgs)
                                OR dest_org_id   IN (SELECT id FROM _target_orgs);
-DELETE FROM crm.marketing_leads WHERE id IN (SELECT id FROM _target_leads);
+DELETE FROM lms.marketing_leads WHERE id IN (SELECT id FROM _target_leads);
 
 -- ============================================================
 -- 5. Org-scoped data with no lead dependency.
 -- ============================================================
 DELETE FROM marketing.ad_campaigns WHERE org_id IN (SELECT id FROM _target_orgs);
-DELETE FROM ext.api_client_orgs    WHERE org_id IN (SELECT id FROM _target_orgs);
+DELETE FROM iam.api_client_orgs    WHERE org_id IN (SELECT id FROM _target_orgs);
 
 -- ============================================================
 -- 6. Users (cascades iam.user_org_mapping, iam.token_blocklist via
@@ -133,4 +133,4 @@ COMMIT;
 -- ============================================================
 -- SELECT count(*) FROM entity.tenants      WHERE id IN ('a1000000-0000-0000-0000-000000000001','a3000000-0000-0000-0000-000000000001');
 -- SELECT count(*) FROM entity.organizations WHERE tenant_id IN ('a1000000-0000-0000-0000-000000000001','a3000000-0000-0000-0000-000000000001');
--- SELECT count(*) FROM crm.marketing_leads; -- should be 0 if this was the only demo data
+-- SELECT count(*) FROM lms.marketing_leads; -- should be 0 if this was the only demo data

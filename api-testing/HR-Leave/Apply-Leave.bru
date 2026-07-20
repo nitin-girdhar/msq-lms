@@ -24,3 +24,14 @@ body:json {
     "reason": "Family function"
   }
 }
+
+docs {
+  Creates the request's approver chain by walking hr.reporting_lines upward from the
+  requester (see resolveApprovers / buildApproverChain), effective as of today. This tree
+  is independent of the LMS lead-assignment hierarchy (iam.vw_user_team_members /
+  iam.users.manager_id) — a rep's LMS lead/manager has no bearing on who approves their
+  leave. iam.users.manager_id only seeded the initial hr.reporting_lines rows via backfill.
+
+  If the requester has no resolvable HR reporting line, level 1 falls back to a
+  deterministic org_admin/hr_admin for the org.
+}

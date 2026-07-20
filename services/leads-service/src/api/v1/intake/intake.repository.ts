@@ -1,8 +1,7 @@
-import { eq, and, sql } from 'drizzle-orm';
-import { withServiceTx, resolveAutoAssignedUser } from '@crm/db';
+import { and, sql } from 'drizzle-orm';
+import { withServiceTx } from '@crm/db';
+import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
 import {
-  leadStageTable,
-  leadSourcesTable,
   marketingLeadsTable,
   leadLinksTable,
 } from '@crm/db/schema';
@@ -58,21 +57,28 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
   if (!data.phone && !data.email) throw new BadRequestError('At least one of phone or email is required');
 
   return withServiceTx(async (tx) => {
-    const [defaultStage] = await tx
-      .select({ id: leadStageTable.id })
-      .from(leadStageTable)
-      .where(eq(leadStageTable.name, 'new'))
-      .limit(1);
-    if (!defaultStage) throw new Error('Lead stage "new" not found');
+    // lms.lead_stage / lms.lead_sources are tenant-scoped (N-6 Half B). This is a
+    // BYPASSRLS service tx (gateway-less intake), so RLS can't auto-scope — resolve
+    // the 'new' stage / named source for the LEAD's tenant explicitly (via org_id),
+    // never a global `WHERE name=` that would pick an arbitrary tenant's row.
+    const stageRows = (await tx.execute(sql`
+      SELECT id FROM lms.lead_stage
+      WHERE name = 'new'
+        AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ${data.org_id}::uuid)
+      LIMIT 1
+    `)) as Array<{ id: string }>;
+    const defaultStage = stageRows[0];
+    if (!defaultStage) throw new Error('Lead stage "new" not found for this tenant');
 
     let sourceId: string | null = data.source_id ?? null;
     if (!sourceId && data.source) {
-      const [src] = await tx
-        .select({ id: leadSourcesTable.id })
-        .from(leadSourcesTable)
-        .where(eq(leadSourcesTable.name, String(data.source)))
-        .limit(1);
-      sourceId = src?.id ?? null;
+      const srcRows = (await tx.execute(sql`
+        SELECT id FROM lms.lead_sources
+        WHERE name = ${String(data.source)}
+          AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ${data.org_id}::uuid)
+        LIMIT 1
+      `)) as Array<{ id: string }>;
+      sourceId = srcRows[0]?.id ?? null;
     }
 
     // Dedup: check for existing active lead with same phone in this org.
@@ -82,7 +88,7 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
 
     if (data.phone) {
       const rows = (await tx.execute(sql`
-        SELECT id FROM crm.marketing_leads
+        SELECT id FROM lms.marketing_leads
         WHERE org_id = ${data.org_id}::uuid
           AND phone = ${data.phone}
           AND is_active = true
@@ -95,7 +101,7 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
     // Dedup by email only if no phone match found
     if (!existingLeadId && data.email) {
       const rows = (await tx.execute(sql`
-        SELECT id FROM crm.marketing_leads
+        SELECT id FROM lms.marketing_leads
         WHERE org_id = ${data.org_id}::uuid
           AND email = ${data.email}
           AND is_active = true
@@ -113,7 +119,7 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
     // (The unique index on (org_id, phone) WHERE is_active = true requires this ordering.)
     if (existingLeadId) {
       await tx.execute(sql`
-        UPDATE crm.marketing_leads
+        UPDATE lms.marketing_leads
         SET is_active = false, updated_at = NOW()
         WHERE id = ${existingLeadId}::uuid
       `);
@@ -163,7 +169,7 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
 
       // Point the superseded lead forward
       await tx.execute(sql`
-        UPDATE crm.marketing_leads
+        UPDATE lms.marketing_leads
         SET superseded_by = ${newLeadId}::uuid
         WHERE id = ${existingLeadId}::uuid
       `);

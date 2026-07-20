@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/lookups/campaign-statuses
+  url: {{baseUrl}}/lookups/campaign-statuses?tenant_id={{tenantId}}
   body: json
   auth: none
 }

@@ -5,7 +5,7 @@ meta {
 }
 
 patch {
-  url: {{baseUrl}}/lookups/campaign-statuses/{{campaignStatusId}}
+  url: {{baseUrl}}/lookups/campaign-statuses/{{campaignStatusId}}?tenant_id={{tenantId}}
   body: json
   auth: none
 }

@@ -1,5 +1,5 @@
 import type { FastifyReply } from 'fastify';
-import { getRulesForTenant, canViewUnassignedLeads } from '@crm/permissions';
+import { getRulesForTenant, canViewUnassignedLeads } from '@lms/authz';
 import type { LeadEvent } from '../transport/types.js';
 
 export interface ConnectedClient {

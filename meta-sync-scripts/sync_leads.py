@@ -10,13 +10,13 @@ already has leads sitting in Meta, (c) periodic reconciliation via cron.
 For each active org->form mapping in ext.meta_page_form_org_map, pages
 through GET /{form_id}/leads and, for every lead not already present in
 ext.meta_leads (deduped on meta_lead_id, same as the webhook path):
-  1. writes the canonical crm.marketing_leads row via common.lead_writer
+  1. writes the canonical lms.marketing_leads row via common.lead_writer
      (bare SQL port of intake.repository.ts::createWebhookLead, including
      dedup/auto-assign/lead_links and, when known, campaign_id)
   2. writes ext.meta_leads + address/professional/demographics/custom_fields
      children, mirroring lead-sync.service.ts exactly
 
-No internal CRM HTTP API is called — DB (crm_service role) + Graph API only.
+No internal CRM HTTP API is called — DB (root_service role) + Graph API only.
 
 Because Meta's /{form-id}/leads edge doesn't reliably support server-side
 "since" filtering, pagination stops early once a run of consecutive

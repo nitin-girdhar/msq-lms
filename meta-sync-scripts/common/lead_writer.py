@@ -5,7 +5,7 @@ Ports, statement-for-statement:
   packages/db/src/assignment.ts (resolveAutoAssignedUser)
 
 No HTTP call to leads-service is made — this runs the same queries directly
-against Postgres using the crm_service (RLS-bypass) role, inside the caller's
+against Postgres using the root_service (RLS-bypass) role, inside the caller's
 transaction/cursor, so it's atomic with the ext.meta_leads insert that
 follows it.
 """
@@ -43,8 +43,8 @@ def resolve_auto_assigned_user(cur, org_id: str) -> Optional[str]:
     cur.execute(
         """
         SELECT ml.assigned_user_id, COUNT(*) AS open_count
-        FROM crm.marketing_leads ml
-        JOIN crm.lead_stage ls ON ls.id = ml.stage_id
+        FROM lms.marketing_leads ml
+        JOIN lms.lead_stage ls ON ls.id = ml.stage_id
         WHERE ml.org_id = %(org_id)s
           AND ml.is_active
           AND NOT ml.is_deleted
@@ -93,7 +93,7 @@ def create_lead(
     {id, is_duplicate, existing_lead_id}, matching the TS return shape.
 
     created_at: pass the lead's real originating timestamp for backfilled
-    leads (e.g. ext.meta_leads.lead_created_at) so crm.marketing_leads.created_at
+    leads (e.g. ext.meta_leads.lead_created_at) so lms.marketing_leads.created_at
     reflects when the lead actually happened, not when this script ran. A
     live webhook-created lead correctly omits this (created_at defaults to
     NOW(), which IS accurate there since it's processed in near-real-time)."""
@@ -102,7 +102,7 @@ def create_lead(
     if not phone and not email:
         raise ValueError("At least one of phone or email is required")
 
-    cur.execute("SELECT id FROM crm.lead_stage WHERE name = 'new' LIMIT 1")
+    cur.execute("SELECT id FROM lms.lead_stage WHERE name = 'new' LIMIT 1")
     stage_row = cur.fetchone()
     if not stage_row:
         raise RuntimeError('Lead stage "new" not found')
@@ -110,7 +110,7 @@ def create_lead(
 
     source_id: Optional[str] = None
     if source:
-        cur.execute("SELECT id FROM crm.lead_sources WHERE name = %s LIMIT 1", (source,))
+        cur.execute("SELECT id FROM lms.lead_sources WHERE name = %s LIMIT 1", (source,))
         src_row = cur.fetchone()
         source_id = src_row["id"] if src_row else None
 
@@ -119,7 +119,7 @@ def create_lead(
     if phone:
         cur.execute(
             """
-            SELECT id FROM crm.marketing_leads
+            SELECT id FROM lms.marketing_leads
             WHERE org_id = %(org_id)s AND phone = %(phone)s
               AND is_active = true AND NOT is_deleted
             LIMIT 1
@@ -132,7 +132,7 @@ def create_lead(
     if not existing_lead_id and email:
         cur.execute(
             """
-            SELECT id FROM crm.marketing_leads
+            SELECT id FROM lms.marketing_leads
             WHERE org_id = %(org_id)s AND email = %(email)s
               AND is_active = true AND NOT is_deleted
             LIMIT 1
@@ -146,7 +146,7 @@ def create_lead(
 
     if existing_lead_id:
         cur.execute(
-            "UPDATE crm.marketing_leads SET is_active = false, updated_at = NOW() WHERE id = %s",
+            "UPDATE lms.marketing_leads SET is_active = false, updated_at = NOW() WHERE id = %s",
             (existing_lead_id,),
         )
 
@@ -154,7 +154,7 @@ def create_lead(
 
     cur.execute(
         """
-        INSERT INTO crm.marketing_leads (
+        INSERT INTO lms.marketing_leads (
             org_id, first_name, last_name, phone, email, city, address_line1,
             pincode, stage_id, source_id, campaign_id, assigned_user_id,
             metadata, raw_webhook_data, created_at, updated_at
@@ -190,13 +190,13 @@ def create_lead(
     if existing_lead_id:
         cur.execute(
             """
-            INSERT INTO crm.lead_links (source_lead_id, source_org_id, dest_lead_id, dest_org_id, link_type, status)
+            INSERT INTO lms.lead_links (source_lead_id, source_org_id, dest_lead_id, dest_org_id, link_type, status)
             VALUES (%(existing)s, %(org_id)s, %(new)s, %(org_id)s, 'merge', 'completed')
             """,
             {"existing": existing_lead_id, "new": new_lead_id, "org_id": org_id},
         )
         cur.execute(
-            "UPDATE crm.marketing_leads SET superseded_by = %s WHERE id = %s",
+            "UPDATE lms.marketing_leads SET superseded_by = %s WHERE id = %s",
             (new_lead_id, existing_lead_id),
         )
 

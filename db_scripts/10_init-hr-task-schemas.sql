@@ -43,15 +43,15 @@ GRANT app_user TO task_svc;
 -- ── Schema USAGE grants ────────────────────────────────────────────
 -- New schemas usable by the standard subject roles + service superuser,
 -- matching the "GRANT USAGE ON SCHEMA ..." block in 01_init-db.sql.
-GRANT USAGE ON SCHEMA hr   TO app_user, tenant_admin, crm_service;
-GRANT USAGE ON SCHEMA task TO app_user, tenant_admin, crm_service;
+GRANT USAGE ON SCHEMA hr   TO app_user, tenant_admin, root_service;
+GRANT USAGE ON SCHEMA task TO app_user, tenant_admin, root_service;
 
 -- New service roles need USAGE on every schema they touch (they SET ROLE
 -- app_user at runtime, but still connect as themselves first).
 DO $$
 DECLARE s TEXT;
 BEGIN
-  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','crm','marketing','audit','ext','hr','task'] LOOP
+  FOREACH s IN ARRAY ARRAY['public','geo','entity','iam','lms','marketing','audit','ext','hr','task'] LOOP
     EXECUTE format('GRANT USAGE ON SCHEMA %I TO hr_svc, task_svc', s);
   END LOOP;
 END; $$;
@@ -63,17 +63,17 @@ BEGIN
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO task_svc', v_db);
 END; $$;
 
--- crm_service: unrestricted on the two new schemas + default privileges for
+-- root_service: unrestricted on the two new schemas + default privileges for
 -- future tables. app_user / tenant_admin get SELECT-by-default (explicit DML
 -- grants are declared per-table below, like every operational table in 01).
 DO $$
 DECLARE s TEXT;
 BEGIN
   FOREACH s IN ARRAY ARRAY['hr','task'] LOOP
-    EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA %I TO crm_service', s);
-    EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I TO crm_service', s);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON TABLES    TO crm_service', s);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON SEQUENCES TO crm_service', s);
+    EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA %I TO root_service', s);
+    EXECUTE format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I TO root_service', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON TABLES    TO root_service', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT ALL PRIVILEGES ON SEQUENCES TO root_service', s);
     EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON TABLES TO app_user', s);
     EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON TABLES TO tenant_admin', s);
   END LOOP;
@@ -83,13 +83,13 @@ END; $$;
 -- ===================================================================
 -- entity.tenant_modules — per-tenant module entitlements (§4.4)
 -- Gates which platform modules (crm | leave | attendance | tasks) a tenant
--- has licensed. Only crm_service writes; tenant_admin + app_user read (so a
+-- has licensed. Only root_service writes; tenant_admin + app_user read (so a
 -- service can check entitlement for its current org's tenant).
 -- ===================================================================
 CREATE TABLE IF NOT EXISTS entity.tenant_modules (
   id          UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   tenant_id   UUID    NOT NULL REFERENCES entity.tenants(id) ON DELETE CASCADE,
-  module      TEXT    NOT NULL CHECK (module IN ('crm','leave','attendance','tasks')),
+  module      TEXT    NOT NULL CHECK (module IN ('lms','leave','attendance','tasks')),
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
   enabled_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT CLOCK_TIMESTAMP(),
@@ -117,7 +117,7 @@ CREATE POLICY tenant_isolation_policy ON entity.tenant_modules
 
 -- app_user: SELECT rows for the tenant owning their current org. app_user
 -- sessions never set app.current_tenant_id (see withRoleTx), so tenant is
--- derived from the current org — same convention as ext.api_clients in 01.
+-- derived from the current org — same convention as iam.api_clients in 01.
 CREATE POLICY org_isolation_policy ON entity.tenant_modules
   AS PERMISSIVE FOR SELECT TO app_user
   USING (
@@ -129,16 +129,16 @@ CREATE POLICY org_isolation_policy ON entity.tenant_modules
 
 GRANT SELECT          ON entity.tenant_modules TO app_user;
 GRANT SELECT          ON entity.tenant_modules TO tenant_admin;
-GRANT ALL PRIVILEGES  ON entity.tenant_modules TO crm_service;
+GRANT ALL PRIVILEGES  ON entity.tenant_modules TO root_service;
 
--- Seed: every existing tenant gets an active 'crm' entitlement.
+-- Seed: every existing tenant gets an active 'lms' entitlement.
 INSERT INTO entity.tenant_modules (tenant_id, module)
-SELECT id, 'crm' FROM entity.tenants
+SELECT id, 'lms' FROM entity.tenants
 ON CONFLICT (tenant_id, module) DO NOTHING;
 
 
 -- ===================================================================
--- HR GLOBAL LOOKUP TABLES  (UUID PKs, same shape as crm.lead_stage — no RLS)
+-- HR GLOBAL LOOKUP TABLES  (UUID PKs, same shape as lms.lead_stage — no RLS)
 -- Managed globally (admin-service slugs); readable by every subject role.
 -- ===================================================================
 
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS hr.attendance_statuses (
 -- ── Lookup grants ──────────────────────────────────────────────────
 GRANT SELECT         ON hr.employment_types, hr.leave_types, hr.leave_request_statuses, hr.attendance_statuses TO app_user;
 GRANT SELECT         ON hr.employment_types, hr.leave_types, hr.leave_request_statuses, hr.attendance_statuses TO tenant_admin;
-GRANT ALL PRIVILEGES ON hr.employment_types, hr.leave_types, hr.leave_request_statuses, hr.attendance_statuses TO crm_service;
+GRANT ALL PRIVILEGES ON hr.employment_types, hr.leave_types, hr.leave_request_statuses, hr.attendance_statuses TO root_service;
 
 -- ── Lookup seed data ───────────────────────────────────────────────
 INSERT INTO hr.employment_types (name, label) VALUES
@@ -282,7 +282,7 @@ CREATE POLICY tenant_isolation_policy ON hr.departments AS PERMISSIVE FOR ALL TO
 GRANT SELECT, INSERT, UPDATE ON hr.departments TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.departments TO tenant_admin;
 REVOKE DELETE                ON hr.departments FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.departments TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.departments TO root_service;
 
 -- ── hr.designations ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS hr.designations (
@@ -338,7 +338,7 @@ CREATE POLICY tenant_isolation_policy ON hr.designations AS PERMISSIVE FOR ALL T
 GRANT SELECT, INSERT, UPDATE ON hr.designations TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.designations TO tenant_admin;
 REVOKE DELETE                ON hr.designations FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.designations TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.designations TO root_service;
 
 
 -- ===================================================================
@@ -403,7 +403,7 @@ CREATE OR REPLACE FUNCTION hr.soft_delete_employee_profile()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE v_user_id UUID;
 BEGIN
-  IF current_user = 'crm_service' THEN RETURN OLD; END IF;
+  IF current_user = 'root_service' THEN RETURN OLD; END IF;
   BEGIN
     v_user_id := NULLIF(current_setting('app.current_user_id', true), '')::uuid;
   EXCEPTION WHEN OTHERS THEN v_user_id := NULL; END;
@@ -475,7 +475,7 @@ CREATE POLICY self_read_policy ON hr.employee_profiles AS PERMISSIVE FOR SELECT 
 GRANT SELECT, INSERT, UPDATE ON hr.employee_profiles TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.employee_profiles TO tenant_admin;
 REVOKE DELETE                ON hr.employee_profiles FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.employee_profiles TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.employee_profiles TO root_service;
 
 
 -- ===================================================================

@@ -1,0 +1,15 @@
+meta {
+  name: List Lms-Roles
+  type: http
+  seq: 55
+}
+
+get {
+  url: {{baseUrl}}/lookups/lms-roles?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

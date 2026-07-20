@@ -1,0 +1,22 @@
+meta {
+  name: Update Lms-Role
+  type: http
+  seq: 57
+}
+
+patch {
+  url: {{baseUrl}}/lookups/lms-roles/{{lmsRoleId}}?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Regional Manager (Updated)",
+    "is_active": true
+  }
+}

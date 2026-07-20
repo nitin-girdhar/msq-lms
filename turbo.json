@@ -6,7 +6,15 @@
       "dependsOn": ["^build"],
       "inputs": ["src/**", "tsconfig.json", "package.json"],
       "outputs": ["dist/**", ".next/**"],
-      "env": ["NEXT_PUBLIC_API_URL", "API_GATEWAY_INTERNAL_URL"]
+      "env": [
+        "NEXT_PUBLIC_API_URL",
+        "API_GATEWAY_INTERNAL_URL",
+        "NEXT_PUBLIC_PASSWORD_MIN_LENGTH",
+        "NEXT_PUBLIC_AUTH_URL",
+        "NEXT_PUBLIC_LMS_URL",
+        "NEXT_PUBLIC_HR_URL",
+        "NEXT_PUBLIC_TASK_URL"
+      ]
     },
     "dev": {
       "dependsOn": ["^build"],
@@ -15,6 +23,10 @@
     },
     "lint": {
       "dependsOn": ["^build"]
+    },
+    "//#depcruise": {
+      "inputs": ["packages/**/src/**", "services/**/src/**", "apps/**/src/**", ".dependency-cruiser.cjs"],
+      "cache": true
     },
     "typecheck": {
       "dependsOn": ["^build"]

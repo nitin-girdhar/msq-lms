@@ -1,0 +1,27 @@
+meta {
+  name: HR Employees - Ungated (non-breaking check)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/hr/employees
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Regression guard for the gateway's HR exclusions. /hr/employees* and /hr/modules
+  are intentionally NOT product-gated (employee profiles + entitlement discovery
+  were always available), so this must NOT return PRODUCT_NOT_ENABLED regardless
+  of whether the tenant has leave/attendance active. Expect the normal 200 (or the
+  service's own role/authz response) — never a 403 from the product gate.
+}
+
+assert {
+  res.status: eq 200
+}

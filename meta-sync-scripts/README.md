@@ -17,7 +17,7 @@ Use these scripts to:
 ## No new APIs, no new secrets
 
 These scripts make **zero HTTP calls to any internal CRM service**. They
-connect directly to Postgres as the `crm_service` role (the same
+connect directly to Postgres as the `root_service` role (the same
 RLS-bypass service role the Node services use) and talk to
 `graph.facebook.com` directly. The only two secrets involved are ones that
 already exist in this repo's infra:
@@ -55,7 +55,7 @@ Run in this order (or all together via `run_all.py`):
 | Script | What it does |
 |---|---|
 | `sync_forms.py` | Discovers Lead Ads forms on every Page already referenced in `ext.meta_page_form_org_map`, caches them in `ext.meta_forms`, and auto-creates a mapping row for a newly-seen form when its Page already has an unambiguous org mapping. Forms with no page fallback are logged as needing a manual mapping. |
-| `sync_campaigns.py` | Finds every `(org, meta campaign_id)` pair seen in `ext.meta_leads` that isn't yet in `marketing.ad_campaigns`, resolves name/status via the Graph API, upserts it, and backfills `crm.marketing_leads.campaign_id` on any already-existing Meta leads missing it. |
+| `sync_campaigns.py` | Finds every `(org, meta campaign_id)` pair seen in `ext.meta_leads` that isn't yet in `marketing.ad_campaigns`, resolves name/status via the Graph API, upserts it, and backfills `lms.marketing_leads.campaign_id` on any already-existing Meta leads missing it. |
 | `sync_leads.py` | The main puller — pages through `GET /{form_id}/leads` for every active mapping, skips anything already in `ext.meta_leads` (dedup on `meta_lead_id`), and writes new leads through the same logic `intake.repository.ts::createWebhookLead` uses (dedup by phone/email, weighted auto-assign, `campaign_id` when resolvable), then the `ext.meta_leads` + child rows. |
 | `run_all.py` | Runs the three in order (forms → campaigns → leads) — the single entry point for a cron job. |
 

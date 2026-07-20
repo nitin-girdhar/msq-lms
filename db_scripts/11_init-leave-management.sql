@@ -12,7 +12,7 @@
 --             guarded DO blocks / DROP+CREATE for triggers & policies).
 -- Style, guard patterns, trigger recipe and RLS mirror db_scripts/01 and 10.
 -- Operational tables use the marketing.ad_campaigns recipe; append-only logs
--- (leave_ledger, leave_request_status_log) mirror crm.lead_status_log.
+-- (leave_ledger, leave_request_status_log) mirror lms.lead_status_log.
 -- No existing table, trigger or policy is modified except the note below:
 --   hr.leave_ledger.leave_request_id FK depends on hr.leave_requests, so
 --   leave_requests DDL is emitted before leave_ledger.
@@ -85,7 +85,7 @@ CREATE POLICY tenant_isolation_policy ON hr.holiday_calendars AS PERMISSIVE FOR 
 GRANT SELECT, INSERT, UPDATE ON hr.holiday_calendars TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.holiday_calendars TO tenant_admin;
 REVOKE DELETE                ON hr.holiday_calendars FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.holiday_calendars TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.holiday_calendars TO root_service;
 
 
 -- ── hr.holidays ────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ CREATE POLICY tenant_isolation_policy ON hr.holidays AS PERMISSIVE FOR ALL TO te
 GRANT SELECT, INSERT, UPDATE ON hr.holidays TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.holidays TO tenant_admin;
 REVOKE DELETE                ON hr.holidays FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.holidays TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.holidays TO root_service;
 
 
 -- ===================================================================
@@ -247,7 +247,7 @@ GRANT SELECT                 ON hr.leave_policies TO app_user;
 REVOKE INSERT, UPDATE, DELETE ON hr.leave_policies FROM app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.leave_policies TO tenant_admin;
 REVOKE DELETE                ON hr.leave_policies FROM tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.leave_policies TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.leave_policies TO root_service;
 
 
 -- ===================================================================
@@ -297,7 +297,7 @@ GRANT SELECT                 ON hr.hr_settings TO app_user;
 REVOKE INSERT, UPDATE, DELETE ON hr.hr_settings FROM app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.hr_settings TO tenant_admin;
 REVOKE DELETE                ON hr.hr_settings FROM tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.hr_settings TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.hr_settings TO root_service;
 
 -- Seed one tenant-wide default row (month 4) per existing tenant.
 INSERT INTO hr.hr_settings (tenant_id, org_id, leave_cycle_start_month)
@@ -411,10 +411,10 @@ CREATE POLICY self_policy ON hr.leave_requests AS PERMISSIVE FOR ALL TO app_user
 GRANT SELECT, INSERT, UPDATE ON hr.leave_requests TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.leave_requests TO tenant_admin;
 REVOKE DELETE                ON hr.leave_requests FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.leave_requests TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.leave_requests TO root_service;
 
 
--- ── hr.leave_request_status_log — append-only (mirrors crm.lead_status_log) ──
+-- ── hr.leave_request_status_log — append-only (mirrors lms.lead_status_log) ──
 CREATE TABLE IF NOT EXISTS hr.leave_request_status_log (
   id             UUID    PRIMARY KEY DEFAULT public.gen_uuidv7(),
   org_id         UUID    NOT NULL REFERENCES entity.organizations(id)     ON DELETE RESTRICT,
@@ -478,14 +478,14 @@ CREATE POLICY tenant_isolation_policy ON hr.leave_request_status_log AS PERMISSI
 GRANT SELECT                  ON hr.leave_request_status_log TO app_user;
 GRANT SELECT                  ON hr.leave_request_status_log TO tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON hr.leave_request_status_log FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES          ON hr.leave_request_status_log TO crm_service;
+GRANT ALL PRIVILEGES          ON hr.leave_request_status_log TO root_service;
 
 
 -- ===================================================================
 -- 3. hr.leave_ledger — append-only source of truth for balances (§4.2)
 --    SELECT-only for app_user (own rows) + tenant_admin (tenant scope);
---    INSERT only via the service path (crm_service / hr-service), exactly as
---    crm.lead_status_log locks down its privileges. leave_request_id FK is
+--    INSERT only via the service path (root_service / hr-service), exactly as
+--    lms.lead_status_log locks down its privileges. leave_request_id FK is
 --    valid now that hr.leave_requests exists above.
 -- ===================================================================
 CREATE TABLE IF NOT EXISTS hr.leave_ledger (
@@ -529,7 +529,7 @@ CREATE POLICY tenant_isolation_policy ON hr.leave_ledger AS PERMISSIVE FOR SELEC
 GRANT SELECT                  ON hr.leave_ledger TO app_user;
 GRANT SELECT                  ON hr.leave_ledger TO tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON hr.leave_ledger FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES          ON hr.leave_ledger TO crm_service;
+GRANT ALL PRIVILEGES          ON hr.leave_ledger TO root_service;
 
 
 -- ===================================================================
@@ -589,7 +589,7 @@ CREATE POLICY approver_policy ON hr.leave_request_approvals AS PERMISSIVE FOR AL
 GRANT SELECT, INSERT, UPDATE ON hr.leave_request_approvals TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.leave_request_approvals TO tenant_admin;
 REVOKE DELETE                ON hr.leave_request_approvals FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.leave_request_approvals TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.leave_request_approvals TO root_service;
 
 
 -- ===================================================================
@@ -733,7 +733,7 @@ WHERE lrs.name = 'approved'
   AND NOT lr.is_deleted;
 
 GRANT SELECT ON hr.vw_leave_balances, hr.vw_leave_requests_enriched, hr.vw_team_leave_calendar
-  TO app_user, tenant_admin, crm_service;
+  TO app_user, tenant_admin, root_service;
 
 
 -- ===================================================================

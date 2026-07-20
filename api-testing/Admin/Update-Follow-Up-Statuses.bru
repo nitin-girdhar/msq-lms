@@ -5,7 +5,7 @@ meta {
 }
 
 patch {
-  url: {{baseUrl}}/lookups/follow-up-statuses/{{followUpStatusId}}
+  url: {{baseUrl}}/lookups/follow-up-statuses/{{followUpStatusId}}?tenant_id={{tenantId}}
   body: json
   auth: none
 }

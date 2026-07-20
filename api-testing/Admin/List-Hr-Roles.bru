@@ -1,0 +1,15 @@
+meta {
+  name: List Hr-Roles
+  type: http
+  seq: 58
+}
+
+get {
+  url: {{baseUrl}}/lookups/hr-roles?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

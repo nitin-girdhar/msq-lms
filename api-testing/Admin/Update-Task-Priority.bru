@@ -1,0 +1,22 @@
+meta {
+  name: Update Task-Priority
+  type: http
+  seq: 44
+}
+
+patch {
+  url: {{baseUrl}}/lookups/task-priorities/{{taskPriorityId}}?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Critical (Updated)",
+    "is_active": true
+  }
+}

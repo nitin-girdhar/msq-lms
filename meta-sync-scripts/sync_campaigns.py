@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Resolve Meta campaign metadata for campaign_ids seen in ext.meta_leads,
-and attribute them onto marketing.ad_campaigns / crm.marketing_leads.
+and attribute them onto marketing.ad_campaigns / lms.marketing_leads.
 
 Today ext.meta_leads.campaign_id is a raw Meta numeric id that nothing ever
-resolves into crm.marketing_leads.campaign_id, so the "Campaign" field on
+resolves into lms.marketing_leads.campaign_id, so the "Campaign" field on
 the lead edit screen always shows "-" for Meta-sourced leads. This script
 closes that gap:
 
@@ -13,10 +13,10 @@ closes that gap:
   2. Calls GET /{campaign-id} on the Graph API for each to get name/status.
   3. Upserts marketing.ad_campaigns (idempotent — ON CONFLICT on
      (org_id, meta_campaign_id)).
-  4. Backfills crm.marketing_leads.campaign_id for any already-existing
+  4. Backfills lms.marketing_leads.campaign_id for any already-existing
      Meta-sourced leads that are missing it.
 
-No internal CRM HTTP API is called — DB (crm_service role) + Graph API only.
+No internal CRM HTTP API is called — DB (root_service role) + Graph API only.
 """
 
 import argparse
@@ -130,7 +130,7 @@ def backfill_lead_campaign_ids(cur, org_id: str, meta_campaign_id: int, ad_campa
         # leads *would* be backfilled once the campaign is really synced.
         cur.execute(
             """
-            SELECT ml.id FROM crm.marketing_leads ml
+            SELECT ml.id FROM lms.marketing_leads ml
             JOIN ext.meta_leads mtl ON mtl.marketing_lead_id = ml.id
             WHERE ml.org_id = %(org_id)s AND mtl.campaign_id = %(meta_campaign_id)s AND ml.campaign_id IS NULL
             """,
@@ -150,7 +150,7 @@ def backfill_lead_campaign_ids(cur, org_id: str, meta_campaign_id: int, ad_campa
 
     cur.execute(
         """
-        UPDATE crm.marketing_leads ml
+        UPDATE lms.marketing_leads ml
         SET campaign_id = %(ad_campaign_id)s, updated_at = NOW()
         FROM ext.meta_leads mtl
         WHERE mtl.marketing_lead_id = ml.id

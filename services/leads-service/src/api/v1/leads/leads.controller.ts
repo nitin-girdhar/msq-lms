@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, TransferLeadInput } from '@crm/validation';
-import { RANKS, getRulesForTenant, checkTransferLeadAccess } from '@crm/permissions';
+import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, TransferLeadInput } from '@lms/validation';
+import { LMS_RANKS, getRulesForTenant, checkTransferLeadAccess } from '@lms/authz';
 import { ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import * as service from './leads.service.js';
 import type { ListLeadsQuery } from './leads.schema.js';
@@ -72,7 +72,7 @@ export class LeadsController {
 
   delete = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can delete leads');
+    if (rank < LMS_RANKS.ADMIN) throw new ForbiddenError('Only admins can delete leads');
     const { id } = request.params as { id: string };
     const comment = ((request.body as { comment?: string } | null)?.comment ?? '').trim();
     if (!comment) throw new BadRequestError('A deletion reason comment is required');

@@ -2,6 +2,9 @@
   "name": "@crm/meta-conversion-api",
   "version": "0.0.1",
   "private": true,
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch --env-file ../../.env src/server.ts",
@@ -11,8 +14,8 @@
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
   "dependencies": {
+    "@platform/authz": "workspace:*",
     "@crm/db": "workspace:*",
-    "@crm/permissions": "workspace:*",
     "@crm/service-auth": "workspace:*",
     "axios": "^1.7.2",
     "drizzle-orm": "^0.44.0",

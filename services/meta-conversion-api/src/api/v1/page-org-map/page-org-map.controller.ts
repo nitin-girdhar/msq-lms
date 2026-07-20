@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { RANKS } from '@crm/permissions';
+import { RANKS } from '@platform/authz';
 import { parseAuthContext } from '../../../lib/auth-context.js';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as pageOrgMapService from '../../../services/page-org-map.service.js';

@@ -73,7 +73,7 @@ docs {
      the lead if unmapped
   4. Resolve field keys using the tenant's field_mappings (falls back to
      DEFAULT_FIELD_MAPPINGS in meta.config.ts when unset)
-  5. Insert into crm.marketing_leads (source = 'facebook' or 'instagram'
+  5. Insert into lms.marketing_leads (source = 'facebook' or 'instagram'
      based on the resolved platform) and ext.meta_leads
   6. Insert any address/job/demographic answers into ext.meta_lead_addresses,
      ext.meta_lead_professional, ext.meta_lead_demographics (only the

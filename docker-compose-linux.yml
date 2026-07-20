@@ -254,16 +254,50 @@ services:
       tasks-service:
         condition: service_started
 
-  web:
-    image: crm-web
+  # P4.3: one image per product, shared SSO cookie. See docker-compose.yml for
+  # the topology notes. These consume prebuilt images shipped to the server.
+  auth-web:
+    image: crm-auth-web
     restart: unless-stopped
     env_file: .env
     environment:
       PORT: "3000"
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
       API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
     ports:
       - "3000:3000"
+    depends_on:
+      - api-gateway
+
+  lms-web:
+    image: crm-lms-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api-gateway
+
+  hr-web:
+    image: crm-hr-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3002:3002"
+    depends_on:
+      - api-gateway
+
+  todo-web:
+    image: crm-todo-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3003:3003"
     depends_on:
       - api-gateway
 

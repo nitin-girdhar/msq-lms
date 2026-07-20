@@ -23,9 +23,9 @@ For each form found:
     multiple orgs (e.g. one tenant's several branches all on one Facebook
     Page) is never auto-mapped — every new form on it is left unmapped and
     logged, since guessing which branch it belongs to risks routing one
-    org's leads into another's CRM.
+    org's leads into another's lms.
 
-Nothing here calls any internal CRM HTTP API — DB (crm_service role) and
+Nothing here calls any internal CRM HTTP API — DB (root_service role) and
 graph.facebook.com only.
 """
 

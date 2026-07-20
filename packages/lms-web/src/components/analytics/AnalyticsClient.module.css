@@ -1,0 +1,14 @@
+.container { display: flex; flex-direction: column; gap: 24px; }
+.title { font-size: 22px; font-weight: 700; }
+.loading { color: var(--color-text-muted); padding: 24px 0; }
+.section { display: flex; flex-direction: column; gap: 16px; }
+.sectionTitle { font-size: 16px; font-weight: 700; border-bottom: 1px solid var(--color-border); padding-bottom: 8px; }
+.subTitle { font-size: 14px; font-weight: 600; margin: 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 4px; }
+.cardLabel { font-size: 12px; color: var(--color-text-muted); font-weight: 500; text-transform: uppercase; }
+.cardValue { font-size: 28px; font-weight: 800; }
+.pipeline { display: flex; flex-direction: column; gap: 8px; }
+.table { width: 100%; border-collapse: collapse; background: var(--color-surface); border-radius: 8px; overflow: hidden; }
+.table th { background: var(--color-bg); font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--color-text-muted); padding: 10px 16px; text-align: left; }
+.table td { padding: 11px 16px; border-top: 1px solid var(--color-border); font-size: 14px; }

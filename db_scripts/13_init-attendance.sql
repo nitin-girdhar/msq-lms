@@ -101,7 +101,7 @@ CREATE POLICY tenant_isolation_policy ON hr.attendance_rules AS PERMISSIVE FOR A
 GRANT SELECT, INSERT, UPDATE ON hr.attendance_rules TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.attendance_rules TO tenant_admin;
 REVOKE DELETE                ON hr.attendance_rules FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.attendance_rules TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.attendance_rules TO root_service;
 
 
 -- ===================================================================
@@ -168,7 +168,7 @@ CREATE POLICY tenant_isolation_policy ON hr.shifts AS PERMISSIVE FOR ALL TO tena
 GRANT SELECT, INSERT, UPDATE ON hr.shifts TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.shifts TO tenant_admin;
 REVOKE DELETE                ON hr.shifts FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.shifts TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.shifts TO root_service;
 
 
 -- ===================================================================
@@ -247,7 +247,7 @@ CREATE POLICY self_policy ON hr.shift_assignments AS PERMISSIVE FOR SELECT TO ap
 GRANT SELECT, INSERT, UPDATE ON hr.shift_assignments TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.shift_assignments TO tenant_admin;
 REVOKE DELETE                ON hr.shift_assignments FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.shift_assignments TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.shift_assignments TO root_service;
 
 
 -- ===================================================================
@@ -308,7 +308,7 @@ CREATE POLICY tenant_isolation_policy ON hr.attendance_events AS PERMISSIVE FOR 
 GRANT SELECT, INSERT          ON hr.attendance_events TO app_user;
 GRANT SELECT                  ON hr.attendance_events TO tenant_admin;
 REVOKE UPDATE, DELETE         ON hr.attendance_events FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES          ON hr.attendance_events TO crm_service;
+GRANT ALL PRIVILEGES          ON hr.attendance_events TO root_service;
 
 
 -- ===================================================================
@@ -367,7 +367,7 @@ CREATE POLICY tenant_isolation_policy ON hr.attendance_days AS PERMISSIVE FOR SE
 GRANT SELECT                  ON hr.attendance_days TO app_user;
 GRANT SELECT                  ON hr.attendance_days TO tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON hr.attendance_days FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES          ON hr.attendance_days TO crm_service;
+GRANT ALL PRIVILEGES          ON hr.attendance_days TO root_service;
 
 
 -- ===================================================================
@@ -448,7 +448,7 @@ CREATE POLICY self_policy ON hr.attendance_regularizations AS PERMISSIVE FOR ALL
 GRANT SELECT, INSERT, UPDATE ON hr.attendance_regularizations TO app_user;
 GRANT SELECT, INSERT, UPDATE ON hr.attendance_regularizations TO tenant_admin;
 REVOKE DELETE                ON hr.attendance_regularizations FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON hr.attendance_regularizations TO crm_service;
+GRANT ALL PRIVILEGES         ON hr.attendance_regularizations TO root_service;
 
 
 -- ===================================================================
@@ -522,7 +522,7 @@ LEFT JOIN hr.attendance_statuses st ON st.id = ad.status_id
 WHERE ep.is_active AND NOT ep.is_deleted;
 
 GRANT SELECT ON hr.vw_attendance_monthly_summary, hr.vw_org_attendance_today
-  TO app_user, tenant_admin, crm_service;
+  TO app_user, tenant_admin, root_service;
 
 
 -- ===================================================================

@@ -1,0 +1,24 @@
+meta {
+  name: Create Task-Role
+  type: http
+  seq: 62
+}
+
+post {
+  url: {{baseUrl}}/lookups/task-roles?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "task_observer",
+    "label": "Task Observer",
+    "rank": 10,
+    "sort_order": 10
+  }
+}

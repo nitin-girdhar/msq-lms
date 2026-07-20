@@ -1,6 +1,7 @@
 import { sql, and, eq, asc, isNull } from 'drizzle-orm';
-import { withRoleTx, withServiceTx, resolveAutoAssignedUser } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@crm/db';
 import type { RoleTxContext } from '@crm/db';
+import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
 import {
   leadStageTable,
   leadStageOutcomeTable,
@@ -10,8 +11,8 @@ import {
   leadFollowUpsTable,
   interactionTypesTable,
 } from '@crm/db/schema';
-import { RANKS } from '@crm/permissions';
-import type { CreateLeadInput, UpdateLeadInput } from '@crm/validation';
+import { RANKS } from '@platform/authz';
+import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 
 function coerceTags(val: unknown): string[] {
   if (!val) return [];
@@ -56,7 +57,7 @@ export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
 
     const rows = (await tx.execute(sql`
       SELECT *, COUNT(*) OVER () AS total_count
-      FROM crm.vw_dashboard_leads
+      FROM lms.vw_dashboard_leads
       ${where ? sql`WHERE ${where}` : sql``}
       ORDER BY created_at DESC
       LIMIT ${page_size} OFFSET ${offset}
@@ -99,7 +100,7 @@ export async function getLeadById(ctx: RoleTxContext, leadId: string) {
     // cross-org list (e.g. leads-history) that isn't their current session org.
     const rows = (await tx.execute(sql`
       SELECT *
-      FROM crm.vw_dashboard_leads
+      FROM lms.vw_dashboard_leads
       WHERE lead_id = ${leadId} AND NOT is_deleted
     `)) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
@@ -113,7 +114,7 @@ export async function getLeadFormData(ctx: RoleTxContext, leadId: string) {
     // org/tenant access; no explicit org_id filter for the same reason as getLeadById.
     const rows = (await tx.execute(sql`
       SELECT raw_webhook_data, created_at
-      FROM crm.marketing_leads
+      FROM lms.marketing_leads
       WHERE id = ${leadId} AND NOT is_deleted
     `)) as Array<{ raw_webhook_data: Record<string, unknown> | null; created_at: string | Date }>;
     return rows[0] ?? null;
@@ -146,7 +147,7 @@ export async function getLeadTimeline(ctx: RoleTxContext, leadId: string) {
         scheduled_at      AS "scheduledAt",
         completed_at      AS "completedAt",
         interaction_type  AS "interactionType"
-      FROM crm.vw_lead_followup_timeline
+      FROM lms.vw_lead_followup_timeline
       WHERE lead_id = ${leadId}
       ORDER BY event_at DESC
     `)) as Array<Record<string, unknown>>;
@@ -157,9 +158,9 @@ export async function getLeadInteractions(ctx: RoleTxContext, leadId: string) {
   return withRoleTx(ctx, async (tx) => {
     return (await tx.execute(sql`
       SELECT li.*, u.full_name AS user_name, it.name AS interaction_type_name
-      FROM crm.lead_interactions li
+      FROM lms.lead_interactions li
       JOIN iam.users u ON u.id = li.user_id
-      LEFT JOIN crm.interaction_types it ON it.id = li.interaction_type_id
+      LEFT JOIN lms.interaction_types it ON it.id = li.interaction_type_id
       WHERE li.lead_id = ${leadId} AND NOT li.is_deleted
       ORDER BY li.occurred_at DESC
     `)) as Array<Record<string, unknown>>;
@@ -174,7 +175,7 @@ export async function getLeadAssignmentHistory(ctx: RoleTxContext, leadId: strin
              assigned_to_name, assigned_to_email,
              previous_assignee_name,
              action, note, assigned_at, held_for
-      FROM crm.vw_lead_assignment_timeline
+      FROM lms.vw_lead_assignment_timeline
       WHERE lead_id = ${leadId}
       ORDER BY assigned_at DESC
     `)) as Array<Record<string, unknown>>;
@@ -185,9 +186,9 @@ export async function getLeadFollowUps(ctx: RoleTxContext, leadId: string) {
   return withRoleTx(ctx, async (tx) => {
     return (await tx.execute(sql`
       SELECT lf.*, u.full_name AS assigned_user_name, fs.name AS status_name, fs.label AS status_label
-      FROM crm.lead_follow_ups lf
+      FROM lms.lead_follow_ups lf
       JOIN iam.users u ON u.id = lf.assigned_user_id
-      JOIN crm.follow_up_statuses fs ON fs.id = lf.status_id
+      JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id
       WHERE lf.lead_id = ${leadId} AND NOT lf.is_deleted
       ORDER BY lf.scheduled_at DESC
     `)) as Array<Record<string, unknown>>;
@@ -216,7 +217,7 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
 
     // One row per lead. marketing_leads.scheduled_at/stage_id are the authoritative "current"
     // pointer (kept in sync on every follow-up create/reschedule/complete), so overdue/upcoming
-    // is derived from them directly. crm.lead_follow_ups is append-only history — the lateral
+    // is derived from them directly. lms.lead_follow_ups is append-only history — the lateral
     // join below only pulls its most recent row for display (id/status/notes), never to decide
     // whether the lead has an open follow-up.
     return (await tx.execute(sql`
@@ -237,25 +238,25 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
         li.created_at                     AS "lastInteractionAt",
         it.name                          AS "lastInteractionType",
         lf.notes                         AS "notes"
-      FROM crm.marketing_leads ml
-      JOIN crm.lead_stage lstg ON lstg.id = ml.stage_id
+      FROM lms.marketing_leads ml
+      JOIN lms.lead_stage lstg ON lstg.id = ml.stage_id
       JOIN iam.users u ON u.id = ml.assigned_user_id
       LEFT JOIN LATERAL (
         SELECT lf2.*
-        FROM crm.lead_follow_ups lf2
+        FROM lms.lead_follow_ups lf2
         WHERE lf2.lead_id = ml.id AND NOT lf2.is_deleted
         ORDER BY lf2.created_at DESC
         LIMIT 1
       ) lf ON true
-      LEFT JOIN crm.follow_up_statuses fs ON fs.id = lf.status_id
+      LEFT JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id
       LEFT JOIN LATERAL (
         SELECT li2.created_at, li2.interaction_type_id
-        FROM crm.lead_interactions li2
+        FROM lms.lead_interactions li2
         WHERE li2.lead_id = ml.id
         ORDER BY li2.created_at DESC
         LIMIT 1
       ) li ON true
-      LEFT JOIN crm.interaction_types it ON it.id = li.interaction_type_id
+      LEFT JOIN lms.interaction_types it ON it.id = li.interaction_type_id
       WHERE ${where}
       ORDER BY (ml.scheduled_at < NOW()) DESC, ml.scheduled_at ASC
     `)) as Array<Record<string, unknown>>;
@@ -304,7 +305,7 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
     // Target org for the new lead. Defaults to the actor's own org; tenant_admin
     // may target any org within its tenant. The DB enforces this via the
     // org_isolation_policy / tenant_isolation_policy RLS WITH CHECK on
-    // crm.marketing_leads — an unauthorized org_id is rejected at insert time,
+    // lms.marketing_leads — an unauthorized org_id is rejected at insert time,
     // it is never trusted on the basis of the request body alone.
     const targetOrgId = data.org_id ?? ctx.org_id;
 
@@ -454,7 +455,7 @@ export async function deleteLead(ctx: RoleTxContext, leadId: string, comment: st
       notes: `Deletion reason: ${comment}`,
     });
     await tx.execute(sql`
-      UPDATE crm.marketing_leads
+      UPDATE lms.marketing_leads
       SET is_deleted = TRUE, deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
       WHERE id = ${leadId} AND org_id = ${ctx.org_id}
     `);
@@ -473,7 +474,7 @@ export async function transferLead(
       SELECT id, org_id, first_name, middle_name, last_name, phone, email,
              address_line1, address_line2, pincode, city, city_id, state_id,
              country_id, source_id, campaign_id, tags, metadata, raw_webhook_data
-      FROM crm.marketing_leads
+      FROM lms.marketing_leads
       WHERE id = ${sourceLeadId}::uuid
         AND org_id = ${ctx.org_id}::uuid
         AND NOT is_deleted
@@ -497,21 +498,21 @@ export async function transferLead(
     if (!targetOrgRows[0]) throw new Error('Target org not found or not in the same tenant');
     const targetOrgName = targetOrgRows[0].name;
 
-    // Stage lookups
-    const [newStageRow] = await tx
-      .select({ id: leadStageTable.id })
-      .from(leadStageTable)
-      .where(eq(leadStageTable.name, 'new'))
-      .limit(1);
-
-    const [transferredOutStageRow] = await tx
-      .select({ id: leadStageTable.id })
-      .from(leadStageTable)
-      .where(eq(leadStageTable.name, 'transferred_out'))
-      .limit(1);
+    // Stage lookups — lms.lead_stage is tenant-scoped (N-6 Half B) and this is a
+    // BYPASSRLS service tx (transfer spans two orgs), so resolve stages for the
+    // lead's tenant explicitly. Source and target orgs share a tenant (checked
+    // above), so the source org's tenant is authoritative for both the new lead's
+    // 'new' stage and the source lead's 'transferred_out' stage.
+    const stageRows = (await tx.execute(sql`
+      SELECT name, id FROM lms.lead_stage
+      WHERE name IN ('new', 'transferred_out')
+        AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ${ctx.org_id}::uuid)
+    `)) as Array<{ name: string; id: string }>;
+    const newStageRow = stageRows.find((r) => r.name === 'new');
+    const transferredOutStageRow = stageRows.find((r) => r.name === 'transferred_out');
 
     if (!newStageRow || !transferredOutStageRow) {
-      throw new Error('Required lead stages not found');
+      throw new Error('Required lead stages not found for this tenant');
     }
 
     const autoAssignedUserId = await resolveAutoAssignedUser(tx, targetOrgId);

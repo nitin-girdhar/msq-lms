@@ -1,48 +1,20 @@
+# Self-contained image built from a `pnpm deploy` output.
+# See docs/Platform_Architecture_Decisions.md (D5) and scripts/docker-ship.sh /
+# scripts/docker-load.md for how to ship and run this image.
+# Build from the repo root: `docker build -f services/meta-conversion-api/Dockerfile .`
 FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.0
-WORKDIR /app
+WORKDIR /repo
 
-FROM base AS deps
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/types/package.json packages/types/
-COPY packages/auth-constants/package.json packages/auth-constants/
-COPY packages/permissions/package.json packages/permissions/
-COPY packages/db/package.json packages/db/
-COPY packages/validation/package.json packages/validation/
-COPY packages/service-auth/package.json packages/service-auth/
-COPY services/meta-conversion-api/package.json services/meta-conversion-api/
-RUN echo "shamefully-hoist=true" > .npmrc
+FROM base AS builder
+COPY . .
 RUN pnpm install --frozen-lockfile
-
-FROM deps AS builder
-COPY tsconfig.base.json ./
-COPY packages/ packages/
-COPY services/meta-conversion-api/ services/meta-conversion-api/
-RUN pnpm --filter @crm/auth-constants build
-RUN pnpm --filter @crm/types build
-RUN pnpm --filter @crm/permissions build
-RUN pnpm --filter @crm/db build
-RUN pnpm --filter @crm/validation build
-RUN pnpm --filter @crm/service-auth build
-RUN pnpm --filter @crm/meta-conversion-api build
+RUN pnpm --filter @crm/meta-conversion-api... build
+RUN pnpm --filter @crm/meta-conversion-api deploy --prod /app
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/packages/types/dist ./packages/types/dist
-COPY --from=builder /app/packages/auth-constants/dist ./packages/auth-constants/dist
-COPY --from=builder /app/packages/permissions/dist ./packages/permissions/dist
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-COPY --from=builder /app/packages/validation/dist ./packages/validation/dist
-COPY --from=builder /app/packages/service-auth/dist ./packages/service-auth/dist
-COPY --from=builder /app/services/meta-conversion-api/dist ./services/meta-conversion-api/dist
-COPY packages/types/package.json ./packages/types/
-COPY packages/auth-constants/package.json ./packages/auth-constants/
-COPY packages/permissions/package.json ./packages/permissions/
-COPY packages/db/package.json ./packages/db/
-COPY packages/validation/package.json ./packages/validation/
-COPY packages/service-auth/package.json ./packages/service-auth/
-COPY services/meta-conversion-api/package.json ./services/meta-conversion-api/
+COPY --from=builder /app /app
 EXPOSE 4003
-CMD ["node", "services/meta-conversion-api/dist/server.js"]
+CMD ["node", "dist/server.js"]

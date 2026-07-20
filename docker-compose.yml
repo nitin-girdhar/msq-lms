@@ -7,6 +7,36 @@ x-db-env: &db-env
   DATABASE_URL_TENANT: postgres://${DB_TENANT_SVC_USER}:${DB_TENANT_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
 
+# Per-product DB logins (P1.2/D8) — read/write only their own schema + read-only
+# iam/entity/geo (db_scripts/19_init-per-product-db-grants.sql). DB_PRODUCT_SCOPED_LOGIN
+# tells @platform/db to skip SET ROLE app_user, which would otherwise undo the isolation.
+x-db-env-lms: &db-env-lms
+  DATABASE_URL: postgres://${DB_LMS_SVC_USER}:${DB_LMS_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+
+# Browser-facing build args shared by all four web images (P4.3). The
+# NEXT_PUBLIC_* origins bake into each bundle; override in .env to simulate the
+# *.app.com subdomain topology (see the caddy service).
+x-web-public-args: &web-public-args
+  NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
+  API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+  NEXT_PUBLIC_PASSWORD_MIN_LENGTH: ${NEXT_PUBLIC_PASSWORD_MIN_LENGTH:-12}
+  NEXT_PUBLIC_AUTH_URL: ${NEXT_PUBLIC_AUTH_URL:-http://localhost:3000}
+  NEXT_PUBLIC_LMS_URL: ${NEXT_PUBLIC_LMS_URL:-http://localhost:3001}
+  NEXT_PUBLIC_HR_URL: ${NEXT_PUBLIC_HR_URL:-http://localhost:3002}
+  NEXT_PUBLIC_TASK_URL: ${NEXT_PUBLIC_TASK_URL:-http://localhost:3003}
+  DB_PRODUCT_SCOPED_LOGIN: "true"
+
+x-db-env-hr: &db-env-hr
+  DATABASE_URL: postgres://${DB_HR_SVC_USER}:${DB_HR_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DB_PRODUCT_SCOPED_LOGIN: "true"
+
+x-db-env-task: &db-env-task
+  DATABASE_URL: postgres://${DB_TASK_SVC_USER}:${DB_TASK_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  DB_PRODUCT_SCOPED_LOGIN: "true"
+
 services:
   postgres:
     image: postgres:18.4
@@ -52,7 +82,7 @@ services:
     env_file: .env
     environment:
       PORT: ${LEADS_SERVICE_PORT}
-      <<: *db-env
+      <<: *db-env-lms
       META_SERVICE_URL: http://meta-conversion-api:${META_SERVICE_PORT}
     expose:
       - "${LEADS_SERVICE_PORT}"
@@ -94,7 +124,7 @@ services:
     env_file: .env
     environment:
       PORT: ${META_SERVICE_PORT}
-      <<: *db-env
+      <<: *db-env-lms
       LEADS_SERVICE_URL: http://leads-service:${LEADS_SERVICE_PORT}
     expose:
       - "${META_SERVICE_PORT}"
@@ -127,7 +157,7 @@ services:
     env_file: .env
     environment:
       PORT: ${HR_SERVICE_PORT}
-      <<: *db-env
+      <<: *db-env-hr
       # Attendance punch-photo storage (local driver → Docker volume below).
       PHOTO_STORAGE_DRIVER: ${PHOTO_STORAGE_DRIVER:-local}
       PHOTO_STORAGE_DIR: ${PHOTO_STORAGE_DIR:-/data/attendance-photos}
@@ -156,7 +186,7 @@ services:
     env_file: .env
     environment:
       PORT: ${TASKS_SERVICE_PORT}
-      <<: *db-env
+      <<: *db-env-task
     expose:
       - "${TASKS_SERVICE_PORT}"
     depends_on:
@@ -298,23 +328,68 @@ services:
       tasks-service:
         condition: service_started
 
-  web:
+  # ── Web apps (P4.3: one image per product, shared SSO) ────────────────────────
+  # Each product UI is its own image. On localhost the browser shares the
+  # fc_session cookie across ports (cookies ignore the port), so a login at
+  # auth-web (3000) authenticates lms/hr/todo (3001-3003) with no re-login —
+  # exactly the SSO behavior the subdomain deployment gets from COOKIE_DOMAIN.
+  # The *_URL build args are the browser-facing origins baked into each bundle;
+  # override them (and set COOKIE_DOMAIN + the caddy profile) to simulate the
+  # real *.app.com topology. See the `caddy` service below and x-web-public-args.
+  auth-web:
     build:
       context: .
-      dockerfile: apps/web/Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
-        API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
-        NEXT_PUBLIC_PASSWORD_MIN_LENGTH: ${NEXT_PUBLIC_PASSWORD_MIN_LENGTH:-12}
+      dockerfile: apps/auth-web/Dockerfile
+      args: *web-public-args
     restart: unless-stopped
     env_file: .env
     environment:
       PORT: "3000"
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
       API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
-      NEXT_PUBLIC_PASSWORD_MIN_LENGTH: ${NEXT_PUBLIC_PASSWORD_MIN_LENGTH:-12}
     ports:
       - "3000:3000"
+    depends_on:
+      - api-gateway
+
+  lms-web:
+    build:
+      context: .
+      dockerfile: apps/lms-web/Dockerfile
+      args: *web-public-args
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api-gateway
+
+  hr-web:
+    build:
+      context: .
+      dockerfile: apps/hr-web/Dockerfile
+      args: *web-public-args
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3002:3002"
+    depends_on:
+      - api-gateway
+
+  todo-web:
+    build:
+      context: .
+      dockerfile: apps/todo-web/Dockerfile
+      args: *web-public-args
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
+    ports:
+      - "3003:3003"
     depends_on:
       - api-gateway
 
@@ -332,9 +407,29 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:${GATEWAY_PORT}}
       API_GATEWAY_INTERNAL_URL: http://api-gateway:${GATEWAY_PORT}
     ports:
-      - "3001:3001"
+      - "3005:3001"
     depends_on:
       - api-gateway
+
+  # Optional reverse proxy that fronts the four web apps on *.app.localhost
+  # subdomains, faithfully simulating the production *.app.com topology (one
+  # shared parent-domain cookie). Enable with `--profile sso-proxy` AND set in
+  # .env: COOKIE_DOMAIN=.app.localhost, the NEXT_PUBLIC_*_URL to the http://
+  # *.app.localhost origins, then rebuild. Add nothing to /etc/hosts — browsers
+  # resolve *.localhost to loopback automatically.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["sso-proxy"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - auth-web
+      - lms-web
+      - hr-web
+      - todo-web
 
 volumes:
   attendance-photos:

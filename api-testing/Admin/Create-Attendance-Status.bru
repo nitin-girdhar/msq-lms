@@ -1,0 +1,23 @@
+meta {
+  name: Create Attendance-Status
+  type: http
+  seq: 53
+}
+
+post {
+  url: {{baseUrl}}/lookups/attendance-statuses?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "on_leave",
+    "label": "On Leave",
+    "description": "Approved leave for the day"
+  }
+}

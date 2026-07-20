@@ -5,7 +5,7 @@ meta {
 }
 
 patch {
-  url: {{baseUrl}}/lookups/interaction-types/{{interactionTypeId}}
+  url: {{baseUrl}}/lookups/interaction-types/{{interactionTypeId}}?tenant_id={{tenantId}}
   body: json
   auth: none
 }

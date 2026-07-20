@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { CreateFollowUpInput } from '@crm/validation';
+import type { CreateFollowUpInput } from '@lms/validation';
 import * as service from './follow-ups.service.js';
 import type { UpdateFollowUpBody } from './follow-ups.schema.js';
 

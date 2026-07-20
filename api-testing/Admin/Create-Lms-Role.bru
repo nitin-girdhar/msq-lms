@@ -1,0 +1,24 @@
+meta {
+  name: Create Lms-Role
+  type: http
+  seq: 56
+}
+
+post {
+  url: {{baseUrl}}/lookups/lms-roles?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "regional_manager",
+    "label": "Regional Manager",
+    "rank": 65,
+    "sort_order": 65
+  }
+}

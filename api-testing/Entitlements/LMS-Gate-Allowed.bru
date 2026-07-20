@@ -1,0 +1,26 @@
+meta {
+  name: LMS Gate - Allowed
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/leads
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Happy path for the entitlement gate. With the acting tenant's `lms` product
+  active in entity.tenant_modules (every tenant is backfilled by db_scripts/15),
+  the gateway productGuard and leads-service requireModule('lms') both pass and
+  the request reaches leads-service.
+}
+
+assert {
+  res.status: eq 200
+}

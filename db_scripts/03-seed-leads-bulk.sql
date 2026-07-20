@@ -21,7 +21,7 @@
 --   - metadata differs by tenant: fitness goals for FitClass orgs,
 --     stay preferences for ITC Hotels orgs.
 --   - outcome_id is only ever set to an outcome row matching the
---     lead's own stage_id, satisfying crm.check_lead_stage_outcome().
+--     lead's own stage_id, satisfying lms.check_lead_stage_outcome().
 --   - outcome_comment is populated whenever the chosen outcome has
 --     requires_comment = TRUE, satisfying the same trigger.
 -- ===================================================================
@@ -181,7 +181,7 @@ BEGIN
         WHEN v_stage_roll < 0.97 THEN 'unqualified'
         ELSE 'transferred_out'
       END;
-      SELECT id INTO v_stage_id FROM crm.lead_stage WHERE name = v_stage_name;
+      SELECT id INTO v_stage_id FROM lms.lead_stage WHERE name = v_stage_name;
 
       -- ── Outcome: only for stages that have outcome rows defined,
       --     and only ~60% of the time even then (some leads sit in a
@@ -193,7 +193,7 @@ BEGIN
       IF v_stage_name IN ('contacting','qualified','converted','unqualified','transferred_out')
          AND random() < 0.60 THEN
         SELECT lso.id, lso.requires_comment INTO v_outcome_id, v_outcome_requires_comment
-        FROM crm.lead_stage_outcome lso
+        FROM lms.lead_stage_outcome lso
         WHERE lso.stage_id = v_stage_id
         ORDER BY random() LIMIT 1;
 
@@ -215,7 +215,7 @@ BEGIN
         WHERE ac.org_id = v_org.org_uuid AND mp.name = v_platform_name
         ORDER BY random() LIMIT 1;
       ELSE
-        SELECT id INTO v_source_id FROM crm.lead_sources WHERE name =
+        SELECT id INTO v_source_id FROM lms.lead_sources WHERE name =
           CASE v_platform_name
             WHEN 'whatsapp' THEN 'whatsapp'
             WHEN 'referral' THEN 'referral'
@@ -263,7 +263,7 @@ BEGIN
         ELSE        ARRAY['high_value','trial_requested']
       END;
 
-      INSERT INTO crm.marketing_leads (
+      INSERT INTO lms.marketing_leads (
         id, org_id, first_name, last_name, phone, email,
         city_id, state_id, country_id,
         campaign_id, source_id, stage_id, outcome_id, outcome_comment,
@@ -287,11 +287,11 @@ COMMIT;
 -- Sanity check (run manually after this script if you want to verify)
 -- ============================================================
 -- SELECT o.name, COUNT(*) AS lead_count
--- FROM crm.marketing_leads ml JOIN entity.organizations o ON o.id = ml.org_id
+-- FROM lms.marketing_leads ml JOIN entity.organizations o ON o.id = ml.org_id
 -- WHERE ml.raw_webhook_data->>'seed_batch' = 'bulk_500'
 -- GROUP BY o.name ORDER BY o.name;
 --
--- SELECT ls.name AS stage, COUNT(*) FROM crm.marketing_leads ml
--- JOIN crm.lead_stage ls ON ls.id = ml.stage_id
+-- SELECT ls.name AS stage, COUNT(*) FROM lms.marketing_leads ml
+-- JOIN lms.lead_stage ls ON ls.id = ml.stage_id
 -- WHERE ml.raw_webhook_data->>'seed_batch' = 'bulk_500'
 -- GROUP BY ls.name ORDER BY COUNT(*) DESC;

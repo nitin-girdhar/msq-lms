@@ -1,14 +1,14 @@
 -- ===================================================================
 -- CRM Monorepo — Tasks / To-Do (Phase 3, DB layer)
 -- Adds the complete task.* model:
---   Global lookups task.task_statuses / task.task_priorities (crm.lead_stage
+--   Global lookups task.task_statuses / task.task_priorities (lms.lead_stage
 --   shape, no RLS), org-scoped task.task_lists, task.tasks (+ append-only
 --   task.task_status_log via trigger + completed_at consistency trigger),
 --   append-only task.task_comments, and the dashboard views
 --   (task.vw_my_tasks / task.vw_team_tasks).
 -- Prerequisite: 01_init-db.sql + 01_init-lookup-data.sql + 10_init-hr-task-schemas.sql
 --               (task schema, task_svc login role, schema USAGE + default
---                privileges for app_user/tenant_admin/crm_service on the task schema).
+--                privileges for app_user/tenant_admin/root_service on the task schema).
 -- Idempotent: safe to re-run (IF NOT EXISTS / ON CONFLICT DO NOTHING /
 --             guarded DO blocks / DROP+CREATE for triggers & policies).
 -- Style, guard patterns, trigger recipe and RLS mirror db_scripts/10, 11 and 13.
@@ -32,7 +32,7 @@
 
 
 -- ===================================================================
--- 1. GLOBAL LOOKUP TABLES  (UUID PKs, same shape as crm.lead_stage — no RLS)
+-- 1. GLOBAL LOOKUP TABLES  (UUID PKs, same shape as lms.lead_stage — no RLS)
 --    Managed globally (admin-service /lookups slugs); readable by every subject
 --    role. task schema USAGE + default SELECT privileges already granted in 10.
 -- ===================================================================
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS task.task_priorities (
 -- ── Lookup grants ──────────────────────────────────────────────────
 GRANT SELECT         ON task.task_statuses, task.task_priorities TO app_user;
 GRANT SELECT         ON task.task_statuses, task.task_priorities TO tenant_admin;
-GRANT ALL PRIVILEGES ON task.task_statuses, task.task_priorities TO crm_service;
+GRANT ALL PRIVILEGES ON task.task_statuses, task.task_priorities TO root_service;
 
 -- ── Lookup seed data ───────────────────────────────────────────────
 INSERT INTO task.task_statuses (name, label, is_terminal, sort_order) VALUES
@@ -154,7 +154,7 @@ CREATE POLICY tenant_isolation_policy ON task.task_lists AS PERMISSIVE FOR ALL T
 GRANT SELECT, INSERT, UPDATE ON task.task_lists TO app_user;
 GRANT SELECT, INSERT, UPDATE ON task.task_lists TO tenant_admin;
 REVOKE DELETE                ON task.task_lists FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON task.task_lists TO crm_service;
+GRANT ALL PRIVILEGES         ON task.task_lists TO root_service;
 
 
 -- ===================================================================
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS task.tasks (
 );
 
 -- completed_at ↔ status consistency (auto-managed, mirrors the intent of
--- crm.check_follow_up_completion). Sets completed_at when the task enters the
+-- lms.check_follow_up_completion). Sets completed_at when the task enters the
 -- terminal 'done' status and clears it on any transition away from 'done'. Runs
 -- BEFORE so the value lands on the same row write.
 CREATE OR REPLACE FUNCTION task.set_task_completion()
@@ -296,7 +296,7 @@ CREATE POLICY tenant_isolation_policy ON task.tasks AS PERMISSIVE FOR ALL TO ten
 GRANT SELECT, INSERT, UPDATE ON task.tasks TO app_user;
 GRANT SELECT, INSERT, UPDATE ON task.tasks TO tenant_admin;
 REVOKE DELETE                ON task.tasks FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES         ON task.tasks TO crm_service;
+GRANT ALL PRIVILEGES         ON task.tasks TO root_service;
 
 
 -- ===================================================================
@@ -336,7 +336,7 @@ CREATE POLICY tenant_isolation_policy ON task.task_status_log AS PERMISSIVE FOR 
 GRANT SELECT                  ON task.task_status_log TO app_user;
 GRANT SELECT                  ON task.task_status_log TO tenant_admin;
 REVOKE INSERT, UPDATE, DELETE ON task.task_status_log FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES          ON task.task_status_log TO crm_service;
+GRANT ALL PRIVILEGES          ON task.task_status_log TO root_service;
 
 
 -- ===================================================================
@@ -379,7 +379,7 @@ CREATE POLICY tenant_isolation_policy ON task.task_comments AS PERMISSIVE FOR SE
 GRANT SELECT, INSERT          ON task.task_comments TO app_user;
 GRANT SELECT                  ON task.task_comments TO tenant_admin;
 REVOKE UPDATE, DELETE         ON task.task_comments FROM app_user, tenant_admin;
-GRANT ALL PRIVILEGES          ON task.task_comments TO crm_service;
+GRANT ALL PRIVILEGES          ON task.task_comments TO root_service;
 
 
 -- ===================================================================
@@ -431,7 +431,7 @@ LEFT JOIN iam.users            ua ON ua.id = t.assignee_id
 LEFT JOIN iam.users            uc ON uc.id = t.created_by
 WHERE NOT t.is_deleted;
 
-GRANT SELECT ON task.vw_tasks_enriched TO app_user, tenant_admin, crm_service;
+GRANT SELECT ON task.vw_tasks_enriched TO app_user, tenant_admin, root_service;
 
 
 -- ===================================================================

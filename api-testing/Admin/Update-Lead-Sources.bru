@@ -5,7 +5,7 @@ meta {
 }
 
 patch {
-  url: {{baseUrl}}/lookups/lead-sources/{{leadSourceId}}
+  url: {{baseUrl}}/lookups/lead-sources/{{leadSourceId}}?tenant_id={{tenantId}}
   body: json
   auth: none
 }

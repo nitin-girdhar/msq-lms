@@ -8,4 +8,4 @@
 --   psql -U sa -d <db> -v ON_ERROR_STOP=1 -f 06c-cleanup-demo-data-post.sql
 -- ===================================================================
 
-ALTER TABLE crm.marketing_leads ENABLE TRIGGER trg_marketing_leads_audit;
+ALTER TABLE lms.marketing_leads ENABLE TRIGGER trg_marketing_leads_audit;

@@ -1,0 +1,15 @@
+meta {
+  name: List Employment-Types
+  type: http
+  seq: 49
+}
+
+get {
+  url: {{baseUrl}}/lookups/employment-types?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

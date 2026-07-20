@@ -1,6 +1,6 @@
 import type { RoleTxContext } from '@crm/db';
-import type { CreateAssignmentInput, UpdateAssignmentInput } from '@crm/validation';
-import { canAssignToUser, RANKS, getRulesForTenant, getLeadsHistoryAssignedToScope } from '@crm/permissions';
+import type { CreateAssignmentInput, UpdateAssignmentInput } from '@lms/validation';
+import { LMS_RANKS, canAssignToUser, getRulesForTenant, getLeadsHistoryAssignedToScope } from '@lms/authz';
 import type { LeadsHistoryFilters } from './assignments.repository.js';
 import { BadRequestError, ForbiddenError, NotFoundError, ConflictError } from '../../../lib/errors.js';
 import { logActivity } from '@crm/audit-log';
@@ -24,7 +24,7 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
 }
 
 export async function createAssignment(ctx: RoleTxContext, actorRank: number, data: CreateAssignmentInput) {
-  if (actorRank < RANKS.SSE) throw new ForbiddenError('Insufficient permissions to create assignments');
+  if (actorRank < LMS_RANKS.SSE) throw new ForbiddenError('Insufficient permissions to create assignments');
 
   const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
   if (!targetUser || !targetUser['is_active']) {
@@ -33,7 +33,7 @@ export async function createAssignment(ctx: RoleTxContext, actorRank: number, da
 
   const targetRank = Number(targetUser['rank'] ?? 0);
   if (!canAssignToUser(actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
-    const reason = targetRank >= RANKS.ADMIN
+    const reason = targetRank >= LMS_RANKS.ADMIN
       ? 'Admin iam.users cannot be lead assignees'
       : ctx.user_id === String(targetUser['id'])
         ? 'You cannot assign a lead to yourself'
@@ -79,7 +79,7 @@ export async function createAssignment(ctx: RoleTxContext, actorRank: number, da
 }
 
 export async function reassignLead(ctx: RoleTxContext, actorRank: number, leadId: string, data: UpdateAssignmentInput) {
-  if (actorRank < RANKS.SSE) throw new ForbiddenError('Insufficient permissions to reassign');
+  if (actorRank < LMS_RANKS.SSE) throw new ForbiddenError('Insufficient permissions to reassign');
 
   const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
   if (!targetUser || !targetUser['is_active']) {
@@ -117,7 +117,7 @@ export async function reassignLead(ctx: RoleTxContext, actorRank: number, leadId
 }
 
 export async function unassignLead(ctx: RoleTxContext, actorRank: number, leadId: string) {
-  if (actorRank < RANKS.ADMIN) throw new ForbiddenError('Only admins can remove assignments');
+  if (actorRank < LMS_RANKS.ADMIN) throw new ForbiddenError('Only admins can remove assignments');
   const result = await repo.unassignLead(ctx, leadId);
   if (!result) throw new NotFoundError('Assignment not found');
   await logActivity({ action_type: 'assignment_removed', performed_by: ctx.user_id, lead_id: leadId, org_id: ctx.org_id });
@@ -149,7 +149,7 @@ export async function listLeadsHistory(
   params: LeadsHistoryParams,
 ) {
   const rules = getRulesForTenant(ctx.tenant_id);
-  const scope = getLeadsHistoryAssignedToScope(rules, rank);
+  const scope = getLeadsHistoryAssignedToScope(rules, rank, ctx.role);
 
   const filters: LeadsHistoryFilters = {
     dateFrom: params.dateFrom,

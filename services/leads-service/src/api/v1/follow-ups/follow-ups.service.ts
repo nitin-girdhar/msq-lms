@@ -1,5 +1,5 @@
 import type { RoleTxContext } from '@crm/db';
-import type { CreateFollowUpInput } from '@crm/validation';
+import type { CreateFollowUpInput } from '@lms/validation';
 import { NotFoundError } from '../../../lib/errors.js';
 import { logActivity } from '@crm/audit-log';
 import { publishEvent } from '../../../events/publisher.js';

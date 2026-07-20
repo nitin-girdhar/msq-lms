@@ -18,7 +18,7 @@ async function resolveTenantId(orgId: string): Promise<string> {
 export async function getOrgPerformanceSnapshot(orgId: string, userId: string) {
   return withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => {
     const rows = (await tx.execute(sql`
-      SELECT * FROM crm.vw_org_performance_snapshot WHERE org_id = ${orgId}::uuid
+      SELECT * FROM lms.vw_org_performance_snapshot WHERE org_id = ${orgId}::uuid
     `)) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
   });
@@ -28,7 +28,7 @@ export async function getTenantDashboard(orgId: string, userId: string) {
   const tenantId = await resolveTenantId(orgId);
   return withRoleTx({ role: 'tenant_admin', org_id: orgId, tenant_id: tenantId, user_id: userId }, async (tx) => {
     return (await tx.execute(sql`
-      SELECT * FROM crm.vw_tenant_full_dashboard WHERE tenant_id = ${tenantId}::uuid
+      SELECT * FROM lms.vw_tenant_full_dashboard WHERE tenant_id = ${tenantId}::uuid
     `)) as Array<Record<string, unknown>>;
   });
 }
@@ -46,8 +46,8 @@ export async function getPipelineByStage(orgId: string, userId: string) {
   return withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => {
     return (await tx.execute(sql`
       SELECT ls.name AS stage, ls.label AS stage_label, COUNT(ml.id)::INT AS count
-      FROM crm.lead_stage ls
-      LEFT JOIN crm.marketing_leads ml
+      FROM lms.lead_stage ls
+      LEFT JOIN lms.marketing_leads ml
         ON ml.stage_id = ls.id AND ml.org_id = ${orgId}::uuid AND NOT ml.is_deleted
       GROUP BY ls.id, ls.name, ls.label
       ORDER BY ls.sort_order

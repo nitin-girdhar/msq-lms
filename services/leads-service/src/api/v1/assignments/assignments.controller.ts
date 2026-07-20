@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { CreateAssignmentInput, UpdateAssignmentInput } from '@crm/validation';
+import type { CreateAssignmentInput, UpdateAssignmentInput } from '@lms/validation';
 import * as service from './assignments.service.js';
 import type { ListAssignmentsQuery, LeadsHistoryQuery } from './assignments.schema.js';
 

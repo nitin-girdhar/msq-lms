@@ -26,7 +26,7 @@ export async function triggerCapiEvent(input: CapiTriggerInput): Promise<CapiTri
     // Get the marketing lead data (for PII fields)
     const leadResult = await tx.execute(
       sql`SELECT id, org_id, first_name, last_name, phone, email
-          FROM crm.marketing_leads WHERE id = ${input.marketingLeadId} LIMIT 1`,
+          FROM lms.marketing_leads WHERE id = ${input.marketingLeadId} LIMIT 1`,
     );
     const lead = (leadResult as unknown as Array<{
       id: string; org_id: string; first_name: string | null;

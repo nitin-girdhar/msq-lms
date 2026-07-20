@@ -144,7 +144,7 @@ export async function syncLeadToDatabase(
 
   const leadCreatedAt = lead.created_time ? new Date(lead.created_time * 1000) : new Date();
 
-  // Delegate crm.marketing_leads creation to the leads-service intake endpoint.
+  // Delegate lms.marketing_leads creation to the leads-service intake endpoint.
   // This is the single canonical path for lead creation — dedup, auto-assign, and
   // lead_links for superseded leads are all handled there.
   //

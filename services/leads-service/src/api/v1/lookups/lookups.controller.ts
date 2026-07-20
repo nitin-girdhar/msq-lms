@@ -2,8 +2,9 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import * as repo from './lookups.repository.js';
 
 export class LookupsController {
-  getLookups = async (_request: FastifyRequest, reply: FastifyReply) => {
-    const data = await repo.getLookups();
+  getLookups = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id } = request.auth;
+    const data = await repo.getLookups({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data });
   };
 

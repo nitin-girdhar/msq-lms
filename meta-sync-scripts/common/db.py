@@ -1,6 +1,6 @@
 """Postgres connection helper.
 
-Connects as the crm_service role (DATABASE_URL_SERVICE) — the same
+Connects as the root_service role (DATABASE_URL_SERVICE) — the same
 BYPASSRLS service role the Node services use via withServiceTx(). Because
 RLS is bypassed, every query in this package passes org_id/tenant_id
 explicitly rather than relying on session GUCs.

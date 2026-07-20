@@ -24,9 +24,9 @@ const ASSIGNMENT_SELECT = sql`
     ls.name             AS lead_stage,
     ml.updated_at       AS assigned_at,
     COUNT(*) OVER ()    AS total_count
-  FROM crm.marketing_leads ml
+  FROM lms.marketing_leads ml
   JOIN entity.organizations o ON o.id = ml.org_id
-  JOIN crm.lead_stage ls ON ls.id = ml.stage_id
+  JOIN lms.lead_stage ls ON ls.id = ml.stage_id
   JOIN iam.users u ON u.id = ml.assigned_user_id
   LEFT JOIN iam.user_roles ur ON ur.id = u.role_id
   WHERE NOT ml.is_deleted AND ml.assigned_user_id IS NOT NULL
@@ -72,9 +72,9 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
              ur.name AS assigned_rep_role,
              ml.full_name AS lead_full_name, ml.phone AS lead_phone, ml.email AS lead_email,
              ml.org_id, ls.name AS lead_stage, ml.updated_at AS assigned_at
-      FROM crm.marketing_leads ml
+      FROM lms.marketing_leads ml
       JOIN entity.organizations o ON o.id = ml.org_id
-      JOIN crm.lead_stage ls ON ls.id = ml.stage_id
+      JOIN lms.lead_stage ls ON ls.id = ml.stage_id
       JOIN iam.users u ON u.id = ml.assigned_user_id
       LEFT JOIN iam.user_roles ur ON ur.id = u.role_id
       WHERE NOT ml.is_deleted AND ml.assigned_user_id IS NOT NULL AND ml.id = ${id}::uuid
@@ -102,7 +102,7 @@ export async function assignLead(ctx: RoleTxContext, data: {
 }) {
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
-      UPDATE crm.marketing_leads
+      UPDATE lms.marketing_leads
       SET assigned_user_id = ${data.assigned_to}::uuid
       WHERE id = ${data.lead_id}::uuid AND assigned_user_id IS NULL AND NOT is_deleted
       RETURNING id, assigned_user_id, org_id, updated_at
@@ -118,11 +118,11 @@ export async function reassignLead(ctx: RoleTxContext, data: {
 }) {
   return withRoleTx(ctx, async (tx) => {
     const [before] = (await tx.execute(sql`
-      SELECT assigned_user_id FROM crm.marketing_leads WHERE id = ${data.lead_id}::uuid AND NOT is_deleted
+      SELECT assigned_user_id FROM lms.marketing_leads WHERE id = ${data.lead_id}::uuid AND NOT is_deleted
     `)) as Array<{ assigned_user_id: string | null }>;
 
     const rows = (await tx.execute(sql`
-      UPDATE crm.marketing_leads
+      UPDATE lms.marketing_leads
       SET assigned_user_id = ${data.assigned_to}::uuid
       WHERE id = ${data.lead_id}::uuid AND NOT is_deleted
       RETURNING id, assigned_user_id, org_id, updated_at
@@ -135,7 +135,7 @@ export async function reassignLead(ctx: RoleTxContext, data: {
 export async function unassignLead(ctx: RoleTxContext, leadId: string) {
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
-      UPDATE crm.marketing_leads
+      UPDATE lms.marketing_leads
       SET assigned_user_id = NULL
       WHERE id = ${leadId}::uuid AND NOT is_deleted
       RETURNING id, org_id
@@ -212,12 +212,12 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
         ml.updated_at       AS assigned_at,
         ml.is_active, ml.superseded_by,
         COUNT(*) OVER ()    AS total_count
-      FROM crm.marketing_leads ml
+      FROM lms.marketing_leads ml
       JOIN entity.organizations o   ON o.id  = ml.org_id
-      JOIN crm.lead_stage ls        ON ls.id = ml.stage_id
+      JOIN lms.lead_stage ls        ON ls.id = ml.stage_id
       JOIN iam.users u              ON u.id  = ml.assigned_user_id
       LEFT JOIN iam.user_roles ur   ON ur.id = u.role_id
-      LEFT JOIN crm.lead_stage_outcome lso ON lso.id = ml.outcome_id
+      LEFT JOIN lms.lead_stage_outcome lso ON lso.id = ml.outcome_id
       WHERE ${where}
       ORDER BY ml.created_at DESC
       LIMIT ${filters.pageSize} OFFSET ${offset}

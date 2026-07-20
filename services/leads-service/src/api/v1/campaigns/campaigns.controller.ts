@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { RANKS } from '@crm/permissions';
+import { LMS_RANKS } from '@lms/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './campaigns.service.js';
 import type { CreateCampaignBody, UpdateCampaignBody } from './campaigns.schema.js';
@@ -20,7 +20,7 @@ export class CampaignsController {
 
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can create campaigns');
+    if (rank < LMS_RANKS.ADMIN) throw new ForbiddenError('Only admins can create campaigns');
     const data = request.body as CreateCampaignBody;
     const result = await service.createCampaign({ org_id, user_id, role, tenant_id }, data);
     return reply.status(201).send({ success: true, data: { id: result.id } });
@@ -28,7 +28,7 @@ export class CampaignsController {
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can update campaigns');
+    if (rank < LMS_RANKS.ADMIN) throw new ForbiddenError('Only admins can update campaigns');
     const { id } = request.params as { id: string };
     const data = request.body as UpdateCampaignBody;
     await service.updateCampaign({ org_id, user_id, role, tenant_id }, id, data);
@@ -37,7 +37,7 @@ export class CampaignsController {
 
   delete = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (rank < RANKS.ADMIN) throw new ForbiddenError('Only admins can delete campaigns');
+    if (rank < LMS_RANKS.ADMIN) throw new ForbiddenError('Only admins can delete campaigns');
     const { id } = request.params as { id: string };
     await service.deleteCampaign({ org_id, user_id, role, tenant_id }, id);
     return reply.status(204).send();

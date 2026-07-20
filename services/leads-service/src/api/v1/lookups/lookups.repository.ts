@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@crm/db';
+import type { RoleTxContext } from '@crm/db';
 import {
   leadSourcesTable,
   marketingPlatformsTable,
@@ -12,8 +13,11 @@ import {
 } from '@crm/db/schema';
 import { asc, eq } from 'drizzle-orm';
 
-export async function getLookups() {
-  return withServiceTx(async (tx) => {
+// These 5 lookups are tenant-scoped (N-6 Half B). Read them under withRoleTx so
+// RLS scopes rows to the caller's tenant (via current org) — a withServiceTx
+// (BYPASSRLS) read would leak every tenant's catalog into the dropdown.
+export async function getLookups(ctx: RoleTxContext) {
+  return withRoleTx(ctx, async (tx) => {
     const [sources, platforms, interaction_types, stages, campaign_statuses] = await Promise.all([
       tx.select({ id: leadSourcesTable.id, name: leadSourcesTable.name }).from(leadSourcesTable).orderBy(asc(leadSourcesTable.name)),
       tx.select({ id: marketingPlatformsTable.id, name: marketingPlatformsTable.name, description: marketingPlatformsTable.description }).from(marketingPlatformsTable).orderBy(asc(marketingPlatformsTable.name)),

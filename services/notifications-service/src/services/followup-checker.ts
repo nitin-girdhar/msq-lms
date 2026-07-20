@@ -11,7 +11,7 @@ interface FollowUpLead {
   lead_name: string;
 }
 
-// crm.marketing_leads.scheduled_at is the single source of truth for a lead's next follow-up
+// lms.marketing_leads.scheduled_at is the single source of truth for a lead's next follow-up
 // due time (kept in sync on every create/reschedule/complete). This poller only ever reads it —
 // overdue vs. due-soon is a pure comparison against NOW(), never a row mutation.
 const notifiedDueKeys = new Set<string>();
@@ -43,8 +43,8 @@ async function checkFollowUps(): Promise<void> {
         ml.org_id,
         COALESCE(o.tenant_id::text, '') AS tenant_id,
         COALESCE(ml.full_name, ml.first_name || ' ' || ml.last_name, 'Unknown') AS lead_name
-      FROM crm.marketing_leads ml
-      JOIN crm.lead_stage lstg ON lstg.id = ml.stage_id
+      FROM lms.marketing_leads ml
+      JOIN lms.lead_stage lstg ON lstg.id = ml.stage_id
       JOIN entity.organizations o ON o.id = ml.org_id
       WHERE lstg.followup_required
         AND ml.scheduled_at IS NOT NULL

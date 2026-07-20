@@ -1,5 +1,5 @@
 import type { RoleTxContext } from '@crm/db';
-import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, CreateFollowUpInput } from '@crm/validation';
+import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, CreateFollowUpInput } from '@lms/validation';
 import { AppError, NotFoundError, ForbiddenError } from '../../../lib/errors.js';
 import { logActivity } from '@crm/audit-log';
 import { publishEvent } from '../../../events/publisher.js';

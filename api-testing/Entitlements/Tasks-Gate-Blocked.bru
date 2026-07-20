@@ -1,0 +1,27 @@
+meta {
+  name: Tasks Gate - Blocked (403)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/tasks/mine
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  For a tenant without an active `tasks` module row, the gateway maps /tasks* ->
+  product 'task' and returns 403 before proxying (parity with tasks-service's own
+  requireModule('tasks')). Run as a tenant that has NOT enabled the tasks module.
+}
+
+assert {
+  res.status: eq 403
+  res.body.error: eq PRODUCT_NOT_ENABLED
+  res.body.product: eq task
+}

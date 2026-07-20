@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { resolveMemberRole } from '@crm/db';
 import { parseAuthContext } from '../lib/auth-context.js';
 import { connectionManager } from '../connections/manager.js';
 import { config } from '../config/index.js';
@@ -8,6 +9,12 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
   app.get('/notifications/stream', async (request, reply) => {
     const ctx = parseAuthContext(request, reply);
     if (!ctx) return;
+
+    // P1.3: resolve the LMS product rank server-side for lead-event visibility
+    // filtering (canViewUnassignedLeads). Non-LMS members resolve to -1 and simply
+    // won't receive LMS unassigned-lead broadcasts. When other products emit
+    // notifications, they'll resolve their own product rank the same way.
+    const { rank } = await resolveMemberRole('lms', ctx.user_id, ctx.org_id);
 
     const connId = randomUUID();
 
@@ -41,7 +48,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       orgId: ctx.org_id,
       tenantId: ctx.tenant_id,
       role: ctx.role,
-      rank: ctx.rank,
+      rank,
       reply,
       keepaliveTimer,
     });
