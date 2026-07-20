@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@platform/authz": "workspace:*",
-    "@crm/db": "workspace:*",
-    "@crm/service-auth": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/service-auth": "workspace:*",
     "axios": "^1.7.2",
     "drizzle-orm": "^0.44.0",
     "fastify": "^5.2.1",

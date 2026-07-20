@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx, toTextArrayLiteral } from '@crm/db';
+import { withServiceTx, toTextArrayLiteral } from '@platform/db';
 import { BadRequestError } from '../../../lib/errors.js';
 
 export interface ReassignOrgLeadsParams {

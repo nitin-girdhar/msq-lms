@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SessionUser, UserRole } from '@crm/types';
+import type { SessionUser, UserRole } from '@platform/types';
 import { RANKS } from '@platform/authz';
 import { users as usersApi } from '@platform/ui-kit';
 import { Modal } from '@platform/ui-kit';

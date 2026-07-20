@@ -1,7 +1,7 @@
 import { asc, and, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { lmsRolesTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { lmsRolesTable } from '@platform/db/schema';
 
 type LmsRoleInsert = typeof lmsRolesTable.$inferInsert;
 type LmsRoleUpdate = Partial<LmsRoleInsert>;

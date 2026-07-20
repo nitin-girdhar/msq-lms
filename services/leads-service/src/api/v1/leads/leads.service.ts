@@ -1,7 +1,7 @@
-import type { RoleTxContext } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
 import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, CreateFollowUpInput } from '@lms/validation';
 import { AppError, NotFoundError, ForbiddenError } from '../../../lib/errors.js';
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { publishEvent } from '../../../events/publisher.js';
 import { fireCapiAutoTrigger } from '../../../lib/meta-capi-trigger.js';
 import * as repo from './leads.repository.js';

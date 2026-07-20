@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SessionUser, UserRole } from '@crm/types';
-import { ROLES, ROLE_RANK } from '@crm/auth-constants';
+import type { SessionUser, UserRole } from '@platform/types';
+import { ROLES, ROLE_RANK } from '@platform/auth-constants';
 import { canCreateUser } from '@/src/lib/permissions';
 import { Modal, users as usersApi } from '@platform/ui-kit';
 import RoleSelector from './RoleSelector';

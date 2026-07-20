@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
+import { withServiceTx } from '@platform/db';
 import { getIntegrationByTenantId } from './integration.service.js';
 import { sendCapiEvent } from './meta-api.service.js';
 import { buildCapiPayload } from './capi-payload.builder.js';

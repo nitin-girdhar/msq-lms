@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
 import {
   leadSourcesTable,
   marketingPlatformsTable,
@@ -10,7 +10,7 @@ import {
   citiesTable,
   statesTable,
   countriesTable,
-} from '@crm/db/schema';
+} from '@platform/db/schema';
 import { asc, eq } from 'drizzle-orm';
 
 // These 5 lookups are tenant-scoped (N-6 Half B). Read them under withRoleTx so

@@ -1,5 +1,5 @@
-import type { UserRole } from '@crm/auth-constants';
-import { ROLE_TIERS } from '@crm/auth-constants';
+import type { UserRole } from '@platform/auth-constants';
+import { ROLE_TIERS } from '@platform/auth-constants';
 
 export interface NavItem {
   id: string;

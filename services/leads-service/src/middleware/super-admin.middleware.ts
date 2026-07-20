@@ -1,7 +1,7 @@
 import type { FastifyRequest } from 'fastify';
-import { readAuthContext } from '@crm/service-auth';
+import { readAuthContext } from '@platform/service-auth';
 import { platformRank } from '@platform/authz';
-import type { PlatformRole } from '@crm/types';
+import type { PlatformRole } from '@platform/types';
 import { UnauthorizedError, ForbiddenError } from '../lib/errors.js';
 
 const INTERNAL_SECRET = process.env['INTERNAL_SERVICE_SECRET'];
@@ -11,7 +11,7 @@ const INTERNAL_SECRET = process.env['INTERNAL_SERVICE_SECRET'];
 // (a platform super_admin manages any tenant's config but holds no product role);
 // it gates purely on platform_role. `rank` is the coarse PLATFORM rank, not a
 // product rank. The target tenant is carried per-route as `?tenant_id=`, and the
-// write itself is RLS-pinned to that tenant (see @crm/db withTenantConfigTx +
+// write itself is RLS-pinned to that tenant (see @platform/db withTenantConfigTx +
 // db_scripts/25), so this can only ever touch the selected tenant's rows.
 export async function authenticateSuperAdmin(request: FastifyRequest): Promise<void> {
   const result = readAuthContext(request.headers, INTERNAL_SECRET);

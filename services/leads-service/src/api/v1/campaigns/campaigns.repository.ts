@@ -1,11 +1,11 @@
 import { sql, eq, and, asc } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext, DrizzleTx } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import type { RoleTxContext, DrizzleTx } from '@platform/db';
 import {
   adCampaignsTable,
   marketingPlatformsTable,
   campaignStatusesTable,
-} from '@crm/db/schema';
+} from '@platform/db/schema';
 import { BadRequestError } from '../../../lib/errors.js';
 import type { CreateCampaignBody, UpdateCampaignBody } from './campaigns.schema.js';
 

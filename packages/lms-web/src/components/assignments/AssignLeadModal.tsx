@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { SessionUser } from "@crm/types";
+import type { SessionUser } from "@platform/types";
 import type { AssignmentView } from '../../types/leads';
 import { assignments as assignmentsApi, leads as leadsApi, lead_sources as leadSourcesApi } from '../../lib/api/client';
 import { useOrgs } from '../../hooks/useOrgs';

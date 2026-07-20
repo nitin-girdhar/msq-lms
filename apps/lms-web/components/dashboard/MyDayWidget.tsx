@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { PlatformModule } from '@platform/ui-kit/server';
 import { myDayApi } from './myDayApi';
 

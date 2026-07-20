@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { followUpStatusesTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { followUpStatusesTable } from '@platform/db/schema';
 
 type FollowUpStatusInsert = typeof followUpStatusesTable.$inferInsert;
 type FollowUpStatusUpdate = Partial<FollowUpStatusInsert>;

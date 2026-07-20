@@ -5,8 +5,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, GridReadyEvent, GridSizeChangedEvent, ICellRendererParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
-import type { SessionUser } from '@crm/types';
-import { ROLES, ROLE_LABELS, ROLE_RANK } from '@crm/auth-constants';
+import type { SessionUser } from '@platform/types';
+import { ROLES, ROLE_LABELS, ROLE_RANK } from '@platform/auth-constants';
 import { RANKS } from '@platform/authz';
 import { canCreateUser } from '@/src/lib/permissions';
 import {

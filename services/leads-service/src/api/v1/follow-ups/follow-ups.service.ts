@@ -1,7 +1,7 @@
-import type { RoleTxContext } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
 import type { CreateFollowUpInput } from '@lms/validation';
 import { NotFoundError } from '../../../lib/errors.js';
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { publishEvent } from '../../../events/publisher.js';
 import * as repo from './follow-ups.repository.js';
 import type { UpdateFollowUpBody } from './follow-ups.schema.js';

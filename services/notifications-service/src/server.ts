@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import { closeAllPools } from '@crm/db';
+import { closeAllPools } from '@platform/db';
 import { config } from './config/index.js';
 import { streamRoutes } from './routes/stream.js';
 import { PgNotifyTransport } from './transport/pg-notify.transport.js';

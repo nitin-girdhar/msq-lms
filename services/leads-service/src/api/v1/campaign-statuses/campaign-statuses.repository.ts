@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { campaignStatusesTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { campaignStatusesTable } from '@platform/db/schema';
 
 type CampaignStatusInsert = typeof campaignStatusesTable.$inferInsert;
 type CampaignStatusUpdate = Partial<CampaignStatusInsert>;

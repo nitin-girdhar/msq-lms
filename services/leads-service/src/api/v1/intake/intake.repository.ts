@@ -1,10 +1,10 @@
 import { and, sql } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
+import { withServiceTx } from '@platform/db';
 import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
 import {
   marketingLeadsTable,
   leadLinksTable,
-} from '@crm/db/schema';
+} from '@platform/db/schema';
 import { BadRequestError } from '../../../lib/errors.js';
 
 export interface WebhookLeadData {

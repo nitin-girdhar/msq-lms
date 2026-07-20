@@ -5,7 +5,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import type { ColDef, GridReadyEvent, ICellRendererParams, RowClassParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../types/leads';
 import type { StageOutcome, UpdatePayload } from '../types/leads';
 import type { CardFilter } from './dashboard/LeadDashboardShell';

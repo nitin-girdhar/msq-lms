@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
-import { closeAllPools } from '@crm/db';
+import { closeAllPools } from '@platform/db';
 
 const app = Fastify({
   logger: {

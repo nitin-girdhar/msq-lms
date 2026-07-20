@@ -1,9 +1,9 @@
 import { sql } from 'drizzle-orm';
-import type { DrizzleTx } from '@crm/db';
+import type { DrizzleTx } from '@platform/db';
 
 // LMS auto-assignment eligibility bounds, on the iam.user_roles ladder this
 // query reads. Inlined (not imported from @lms/authz) because this file used
-// to live in the platform-shared @crm/db package (dependency-cruiser wall);
+// to live in the platform-shared @platform/db package (dependency-cruiser wall);
 // moved into leads-service (P-1) since it's pure LMS business logic. Values
 // match the LMS scale: read_only (0) .. lms_admin (80).
 const LMS_RANK_READ_ONLY = 0;

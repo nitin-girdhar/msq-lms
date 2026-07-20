@@ -1,4 +1,4 @@
-import { pgListen } from '@crm/db';
+import { pgListen } from '@platform/db';
 import type { EventTransport, LeadEvent } from './types.js';
 
 const CHANNEL = 'crm_events';

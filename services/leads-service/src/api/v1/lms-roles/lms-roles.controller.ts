@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { RANKS } from '@platform/authz';
-import type { RoleTxContext } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './lms-roles.service.js';
 import type {

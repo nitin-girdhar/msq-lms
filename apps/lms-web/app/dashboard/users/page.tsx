@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { buildLoginUrl } from '@platform/ui-kit';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { LMS_RANKS } from '@lms/authz';
 import { getServerSession, GATEWAY_URL } from '@platform/ui-kit/server';
 import UsersClient from '@/components/users/UsersClient';

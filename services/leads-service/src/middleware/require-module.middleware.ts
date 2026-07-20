@@ -1,5 +1,5 @@
 import type { FastifyRequest } from 'fastify';
-import { getActiveTenantModules } from '@crm/db';
+import { getActiveTenantModules } from '@platform/db';
 import { ForbiddenError } from '../lib/errors.js';
 
 export type PlatformModule = 'lms' | 'leave' | 'attendance' | 'tasks';
@@ -23,7 +23,7 @@ async function resolveActiveModules(request: FastifyRequest): Promise<Set<string
 // Defense-in-depth: the gateway also gates the LMS routes centrally, but leads-
 // service enforces its own 'lms' entitlement so a call that bypasses the gateway
 // is still rejected. Mirrors hr-service / tasks-service requireModule; the shared
-// getActiveTenantModules helper lives in @crm/db and reads via RLS for the caller.
+// getActiveTenantModules helper lives in @platform/db and reads via RLS for the caller.
 export function requireModule(module: PlatformModule) {
   return async (request: FastifyRequest): Promise<void> => {
     const modules = await resolveActiveModules(request);

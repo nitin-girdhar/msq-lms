@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { leadStageOutcomeTable, leadStageTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { leadStageOutcomeTable, leadStageTable } from '@platform/db/schema';
 
 type LeadStageOutcomeInsert = typeof leadStageOutcomeTable.$inferInsert;
 type LeadStageOutcomeUpdate = Partial<LeadStageOutcomeInsert>;

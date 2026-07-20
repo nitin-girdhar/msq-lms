@@ -1,5 +1,5 @@
-import { toApiRow, toApiRows } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
+import { toApiRow, toApiRows } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
 import { ConflictError, NotFoundError } from '../../../lib/errors.js';
 import * as repo from './interaction-types.repository.js';
 import type { CreateInteractionTypeInput, UpdateInteractionTypeInput } from './interaction-types.schema.js';

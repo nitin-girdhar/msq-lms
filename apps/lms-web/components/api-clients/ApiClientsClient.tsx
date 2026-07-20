@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
 import type { ApiClientView } from '@/src/lib/api/client';
 import ApiClientsTable from './ApiClientsTable';

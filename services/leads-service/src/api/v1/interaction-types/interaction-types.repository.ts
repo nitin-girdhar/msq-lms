@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { interactionTypesTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { interactionTypesTable } from '@platform/db/schema';
 
 type InteractionTypeInsert = typeof interactionTypesTable.$inferInsert;
 type InteractionTypeUpdate = Partial<InteractionTypeInsert>;

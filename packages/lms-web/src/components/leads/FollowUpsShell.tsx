@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../../types/leads';
 import { followUps as followUpsApi, leads as leadsApi } from '../../lib/api/client';
 import { LeadHistoryModal } from '../LeadHistoryModal';

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../types/leads';
 import type { CardFilter } from './dashboard/LeadDashboardShell';
 import { LMS_RANKS as RANKS } from '@lms/authz';

@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { readAuthContext, type AuthContext } from '@crm/service-auth';
+import { readAuthContext, type AuthContext } from '@platform/service-auth';
 
 export type { AuthContext };
 

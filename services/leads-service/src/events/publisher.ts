@@ -1,4 +1,4 @@
-import { pgNotify } from '@crm/db';
+import { pgNotify } from '@platform/db';
 
 const CHANNEL = 'crm_events';
 

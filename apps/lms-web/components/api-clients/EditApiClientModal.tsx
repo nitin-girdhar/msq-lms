@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_SCOPES } from '@crm/auth-constants';
+import { API_SCOPES } from '@platform/auth-constants';
 import { apiClients as apiClientsApi } from '@/src/lib/api/client';
 import type { ApiClientView } from '@/src/lib/api/client';
 import { Modal } from '@platform/ui-kit';

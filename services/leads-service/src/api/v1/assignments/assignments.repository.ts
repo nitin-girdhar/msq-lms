@@ -1,7 +1,7 @@
 import { sql, asc } from 'drizzle-orm';
-import { withServiceTx, withRoleTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { marketingLeadsTable, leadStageTable, leadStageOutcomeTable } from '@crm/db/schema';
+import { withServiceTx, withRoleTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { marketingLeadsTable, leadStageTable, leadStageOutcomeTable } from '@platform/db/schema';
 
 function sqlUuidArr(arr: string[]) {
   if (arr.length === 0) return sql`'{}'::uuid[]`;

@@ -1,1 +1,1 @@
-export type { SessionUser, JwtPayload, JwtVerifyResult, UserRole, DatabaseUser } from '@crm/types';
+export type { SessionUser, JwtPayload, JwtVerifyResult, UserRole, DatabaseUser } from '@platform/types';

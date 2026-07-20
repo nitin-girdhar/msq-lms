@@ -1,8 +1,8 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ROLES, ROLE_LABELS, ROLE_RANK } from '@crm/auth-constants';
-import type { UserRole } from '@crm/types';
+import { ROLES, ROLE_LABELS, ROLE_RANK } from '@platform/auth-constants';
+import type { UserRole } from '@platform/types';
 import { canCreateUser } from '@/src/lib/permissions';
 
 interface Props {

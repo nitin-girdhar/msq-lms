@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { AssignmentView } from '../../types/leads';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import AssigneeBadge from './AssigneeBadge';

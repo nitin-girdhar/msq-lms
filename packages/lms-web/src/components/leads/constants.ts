@@ -1,4 +1,4 @@
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 
 export const STATUS_CONFIG: Record<string, { bg: string; color: string; dot: string }> = {
   new:             { bg: '#EFF6FF', color: '#1D4ED8', dot: '#3B82F6' },

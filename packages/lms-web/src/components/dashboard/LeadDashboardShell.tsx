@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { ReactNode } from 'react';
 import { users as usersApi, useNotifications } from '@platform/ui-kit';
 import type { PlatformModule } from '@platform/ui-kit/server';

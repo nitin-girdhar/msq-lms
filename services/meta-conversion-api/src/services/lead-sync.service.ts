@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx } from '@crm/db';
+import { withServiceTx } from '@platform/db';
 import { resolveFieldMappings, type FieldMappingsConfig, type ResolvedFieldMappings } from '../config/meta.config.js';
 import { createIntakeLead } from '../lib/internal-leads-client.js';
 

@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { LMS_RANKS } from '@lms/authz';
-import { listActivities } from '@crm/audit-log';
+import { listActivities } from '@platform/audit-log';
 import { ForbiddenError } from '../../../lib/errors.js';
 
 export class ActivitiesController {

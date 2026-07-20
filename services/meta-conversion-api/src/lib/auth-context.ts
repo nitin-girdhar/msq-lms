@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { readAuthContext } from '@crm/service-auth';
+import { readAuthContext } from '@platform/service-auth';
 import { platformRank } from '@platform/authz';
 
 // P1.3: the JWT no longer carries a rank. Meta integration management gates

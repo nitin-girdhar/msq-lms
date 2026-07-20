@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import { organizationsTable } from '@crm/db/schema';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import { organizationsTable } from '@platform/db/schema';
 import { eq } from 'drizzle-orm';
 
 async function resolveTenantId(orgId: string): Promise<string> {

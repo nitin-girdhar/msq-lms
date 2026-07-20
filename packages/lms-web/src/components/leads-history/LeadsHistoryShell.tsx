@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { getRulesForTenant, canSeeAssignedToFilter, getLeadsHistoryAssignedToScope } from '@lms/authz';
 import { canSeeOrgFilter } from '@platform/authz';
 import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../types/leads';

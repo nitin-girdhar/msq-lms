@@ -6,7 +6,7 @@ import { fetchLeadFromMeta } from '../../../services/meta-api.service.js';
 import { syncLeadToDatabase } from '../../../services/lead-sync.service.js';
 import { resolveOrgId, resolveTenantAndOrg } from '../../../services/page-org-map.service.js';
 import { verifyHmacSignature } from '../../../lib/hmac.js';
-import { pgNotify } from '@crm/db';
+import { pgNotify } from '@platform/db';
 import { config } from '../../../config/index.js';
 
 const MetaWebhookBodySchema = z.object({

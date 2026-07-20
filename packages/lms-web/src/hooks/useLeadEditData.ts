@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { StageOption, StageOutcome, UpdatePayload } from '../types/leads';
 import { lookups, leads as leadsApi } from '../lib/api/client';
 import { users as usersApi } from '@platform/ui-kit';

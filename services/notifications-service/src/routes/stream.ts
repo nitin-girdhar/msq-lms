@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { resolveMemberRole } from '@crm/db';
+import { resolveMemberRole } from '@platform/db';
 import { parseAuthContext } from '../lib/auth-context.js';
 import { connectionManager } from '../connections/manager.js';
 import { config } from '../config/index.js';

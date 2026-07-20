@@ -1,6 +1,6 @@
 import { sql, and, eq, asc, isNull } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
+import { withRoleTx, withServiceTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
 import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
 import {
   leadStageTable,
@@ -10,7 +10,7 @@ import {
   leadInteractionsTable,
   leadFollowUpsTable,
   interactionTypesTable,
-} from '@crm/db/schema';
+} from '@platform/db/schema';
 import { RANKS } from '@platform/authz';
 import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 

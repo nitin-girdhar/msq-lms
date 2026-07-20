@@ -1,7 +1,7 @@
 import { sql, eq, and } from 'drizzle-orm';
-import { withRoleTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { leadFollowUpsTable, followUpStatusesTable, marketingLeadsTable } from '@crm/db/schema';
+import { withRoleTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { leadFollowUpsTable, followUpStatusesTable, marketingLeadsTable } from '@platform/db/schema';
 import { BadRequestError, ForbiddenError } from '../../../lib/errors.js';
 
 export async function createFollowUp(

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx, withRoleTx, type RoleTxContext } from '@crm/db';
+import { withServiceTx, withRoleTx, type RoleTxContext } from '@platform/db';
 import type { FieldMappingsConfig } from '../config/meta.config.js';
 import { encryptSecret, decryptSecret } from '../lib/crypto.js';
 

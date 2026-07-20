@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../../types/leads';
 import type { StageOutcome, UpdatePayload } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';

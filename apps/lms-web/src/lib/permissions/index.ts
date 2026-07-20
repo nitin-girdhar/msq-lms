@@ -3,10 +3,10 @@ export { hasRole, hasMinimumRole, hasAnyRole } from '@platform/authz';
 // the sales tiers (SSE/MANAGER/ADMIN), which now live in @lms/authz's LMS_RANKS.
 // Re-exported as RANKS so existing web consumers (e.g. StatsCards) keep working.
 export { LMS_RANKS as RANKS } from '@lms/authz';
-export type { SessionUser, UserRole } from '@crm/types';
+export type { SessionUser, UserRole } from '@platform/types';
 
-import { ROLE_RANK } from '@crm/auth-constants';
-import type { SessionUser, UserRole } from '@crm/types';
+import { ROLE_RANK } from '@platform/auth-constants';
+import type { SessionUser, UserRole } from '@platform/types';
 import { LMS_RANKS as RANKS } from '@lms/authz';
 
 export function canManageUsers(user: SessionUser | null | undefined): boolean {

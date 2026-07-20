@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import { canManageUsers } from '@/src/lib/permissions';
 import UsersTable from './UsersTable';
 import CreateUserModal from './CreateUserModal';

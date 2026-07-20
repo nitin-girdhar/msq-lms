@@ -1,9 +1,9 @@
-import type { RoleTxContext } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
 import type { CreateAssignmentInput, UpdateAssignmentInput } from '@lms/validation';
 import { LMS_RANKS, canAssignToUser, getRulesForTenant, getLeadsHistoryAssignedToScope } from '@lms/authz';
 import type { LeadsHistoryFilters } from './assignments.repository.js';
 import { BadRequestError, ForbiddenError, NotFoundError, ConflictError } from '../../../lib/errors.js';
-import { logActivity } from '@crm/audit-log';
+import { logActivity } from '@platform/audit-log';
 import { publishEvent } from '../../../events/publisher.js';
 import * as repo from './assignments.repository.js';
 

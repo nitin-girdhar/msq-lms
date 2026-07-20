@@ -1,4 +1,4 @@
-import type { RoleTxContext } from '@crm/db';
+import type { RoleTxContext } from '@platform/db';
 import { NotFoundError } from '../../../lib/errors.js';
 import * as repo from './campaigns.repository.js';
 import type { CreateCampaignBody, UpdateCampaignBody } from './campaigns.schema.js';

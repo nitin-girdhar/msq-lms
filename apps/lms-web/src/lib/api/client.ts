@@ -12,7 +12,7 @@ const { request } = createApiClient('/api');
 
 export const auth = {
   login: (email: string, password: string, org_id?: string) =>
-    request<{ success: true; data: { user: import('@crm/types').SessionUser } }>('/auth/login', {
+    request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, org_id }),
     }),
@@ -20,15 +20,15 @@ export const auth = {
   logout: () => request<{ success: true; data: null }>('/auth/logout', { method: 'POST' }),
 
   myOrgs: () =>
-    request<{ success: true; data: { orgs: import('@crm/types').UserOrgOption[] } }>('/auth/my-orgs'),
+    request<{ success: true; data: { orgs: import('@platform/types').UserOrgOption[] } }>('/auth/my-orgs'),
 
   switchOrg: (org_id: string) =>
-    request<{ success: true; data: { user: import('@crm/types').SessionUser } }>('/auth/switch-org', {
+    request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/switch-org', {
       method: 'POST',
       body: JSON.stringify({ org_id }),
     }),
 
-  me: () => request<{ success: true; data: { user: import('@crm/types').SessionUser } }>('/auth/me'),
+  me: () => request<{ success: true; data: { user: import('@platform/types').SessionUser } }>('/auth/me'),
 
   changePassword: (current_password: string, new_password: string) =>
     request<{ success: true; data: null }>('/auth/change-password', {

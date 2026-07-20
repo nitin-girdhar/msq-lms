@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { SessionUser } from '@crm/types';
+import type { SessionUser } from '@platform/types';
 import type { AssignmentView } from '../../types/leads';
-import { ROLE_LABELS } from '@crm/auth-constants';
+import { ROLE_LABELS } from '@platform/auth-constants';
 import { leads as leadsApi } from '../../lib/api/client';
 import { useDismissible } from '@platform/ui-kit';
 

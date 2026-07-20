@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@lms/authz": "workspace:*",
-    "@crm/db": "workspace:*",
-    "@crm/types": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/types": "workspace:*",
     "fastify": "^5.2.1",
     "pino": "^9.6.0"
   },

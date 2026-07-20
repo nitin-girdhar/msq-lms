@@ -1,4 +1,4 @@
-import { serviceDb } from '@crm/db';
+import { serviceDb } from '@platform/db';
 import { connectionManager } from '../connections/manager.js';
 import { config } from '../config/index.js';
 

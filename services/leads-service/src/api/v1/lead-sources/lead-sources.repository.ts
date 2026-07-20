@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { withTenantConfigTx } from '@crm/db';
-import type { RoleTxContext } from '@crm/db';
-import { leadSourcesTable } from '@crm/db/schema';
+import { withTenantConfigTx } from '@platform/db';
+import type { RoleTxContext } from '@platform/db';
+import { leadSourcesTable } from '@platform/db/schema';
 
 type LeadSourceInsert = typeof leadSourcesTable.$inferInsert;
 type LeadSourceUpdate = Partial<LeadSourceInsert>;
