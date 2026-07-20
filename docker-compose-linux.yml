@@ -1,4 +1,4 @@
-name: platform-lms
+name: msq
 
 x-db-env-lms: &db-env-lms
   DATABASE_URL: postgres://${DB_LMS_SVC_USER}:${DB_LMS_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}

@@ -1,4 +1,4 @@
-name: platform-lms
+name: msq
 
 # Per-product DB login (P1.2/D8) — read/write only lms/marketing/ext + read-only
 # iam/entity/geo. DB_CONTAINER_NAME/DB_NAME point at msq-core's Postgres
@@ -30,8 +30,8 @@ x-web-public-args: &web-public-args
 services:
   leads-service:
     build:
-      context: .
-      dockerfile: services/leads-service/Dockerfile
+      context: ..
+      dockerfile: msq-lms/services/leads-service/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -43,8 +43,8 @@ services:
 
   notifications-service:
     build:
-      context: .
-      dockerfile: services/notifications-service/Dockerfile
+      context: ..
+      dockerfile: msq-lms/services/notifications-service/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -55,8 +55,8 @@ services:
 
   meta-conversion-api:
     build:
-      context: .
-      dockerfile: services/meta-conversion-api/Dockerfile
+      context: ..
+      dockerfile: msq-lms/services/meta-conversion-api/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -71,8 +71,8 @@ services:
 
   lms-web:
     build:
-      context: .
-      dockerfile: apps/lms-web/Dockerfile
+      context: ..
+      dockerfile: msq-lms/apps/lms-web/Dockerfile
       args: *web-public-args
     restart: unless-stopped
     env_file: .env
