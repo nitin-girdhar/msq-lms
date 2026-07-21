@@ -10,7 +10,7 @@ x-db-env-lms: &db-env-lms
 
 services:
   leads-service:
-    image: crm-leads-service
+    image: msq-leads-service
     restart: unless-stopped
     env_file: .env
     environment:
@@ -21,7 +21,7 @@ services:
       - "${LEADS_SERVICE_PORT}"
 
   notifications-service:
-    image: crm-notifications-service
+    image: msq-notifications-service
     restart: unless-stopped
     env_file: .env
     environment:
@@ -31,7 +31,7 @@ services:
       - "${NOTIFICATIONS_SERVICE_PORT}"
 
   meta-conversion-api:
-    image: crm-meta-conversion-api
+    image: msq-meta-conversion-api
     restart: unless-stopped
     env_file: .env
     environment:
@@ -45,7 +45,7 @@ services:
         condition: service_started
 
   lms-web:
-    image: crm-lms-web
+    image: msq-lms-web
     restart: unless-stopped
     env_file: .env
     environment:

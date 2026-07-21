@@ -21,7 +21,7 @@
     "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",
     "@lms/validation": "workspace:*",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.1",
     "pino": "^9.6.0",
     "zod": "^3.22.0"
