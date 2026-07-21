@@ -5,7 +5,16 @@
    content auto-detection doesn't reliably pick up shared monorepo packages
    across every route's build chunk, which silently drops their utility
    classes from the compiled CSS. Declare the source explicitly. */
-@source "../../../packages/ui/src";
+@source "../../../../msq-core/packages/ui/src";
+
+/* Same reason, for this product's own component package: almost every screen
+   this app renders (LeadsTable, LeadHistoryModal, the dashboard shells) is
+   imported from @lms/web, which lives in packages/lms-web/src and is therefore
+   just as outside this app's tree as the ui-kit above. Without it those files'
+   utilities are dropped at build time and the components render with structure
+   but no sizing — an h-3.5 icon falls back to the SVG's intrinsic ~300px and a
+   max-w-md dialog stretches to the full viewport. */
+@source "../../../packages/lms-web/src";
 
 * { box-sizing: border-box; }
 

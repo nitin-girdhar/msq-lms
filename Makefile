@@ -26,7 +26,7 @@ dev-services: install ## Start LMS backend services (excludes web apps)
 # DB commands run psql inside the Postgres container (no local psql required).
 # Works with both docker-compose and standalone docker-run containers.
 DB_CONTAINER  ?= $(DB_CONTAINER_NAME)
-DB_CONTAINER_NAME ?= crm-db-server
+DB_CONTAINER_NAME ?= msq-db-server
 POSTGRES_USER ?= postgres
 
 define run_sql

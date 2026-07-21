@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionUser } from '@platform/types';
-import type { ReactNode } from 'react';
 import { users as usersApi, useNotifications } from '@platform/ui-kit';
 import type { PlatformModule } from '@platform/ui-kit/server';
 import { useOrgs, type DynamicOrg } from '../../hooks/useOrgs';
@@ -48,12 +47,9 @@ const FILTER_LABELS: Record<CardFilter, string> = {
 interface Props {
   actor: SessionUser;
   enabledModules?: PlatformModule[];
-  /** Cross-product "my day" summary tile — rendered by the app shell (apps/web),
-   *  which is the only layer allowed to reach into both @task/web and @hr/web. */
-  dayWidget?: ReactNode;
 }
 
-export default function LeadDashboardShell({ actor, enabledModules = ['lms'], dayWidget }: Props) {
+export default function LeadDashboardShell({ actor, enabledModules = ['lms'] }: Props) {
   const [activeFilter, setActiveFilter] = useState<CardFilter>('all');
 
   const {
@@ -202,9 +198,6 @@ export default function LeadDashboardShell({ actor, enabledModules = ['lms'], da
 
   return (
     <div className="flex w-full flex-1 flex-col bg-[#F8FAFC] lg:min-h-0">
-
-      {/* My Day widget — self-hides (no wrapper chrome) when no relevant module/stat applies */}
-      {dayWidget}
 
       {/* Stats cards */}
       <div className="shrink-0 border-b border-[#E2E8F0] bg-white">

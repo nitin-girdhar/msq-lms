@@ -8,10 +8,6 @@ import type { StageOutcome, UpdatePayload } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
 import { UserPicker } from '@platform/ui-kit';
 import { LeadFormDataPanel } from './LeadFormDataPanel';
-// Cross-product touchpoint: a lead shows its linked tasks. Reconciled for the repo
-// split (Phase5 P-4) — instead of importing @task/web we read the task data via the
-// shared gateway in an LMS-local component. See LeadTasksSection.
-import LeadTasksSection from './LeadTasksSection';
 import TransferOutModal from './TransferOutModal';
 import { CAN_ASSIGN_ROLES } from './constants';
 
@@ -225,9 +221,6 @@ export function LeadEditModal({
 
           {/* Original form submission (e.g. Meta lead-gen answers) — hidden when none */}
           <LeadFormDataPanel leadId={lead.lead_id} source={lead.source ?? lead.platform} />
-
-          {/* Linked tasks — self-hides when the tasks module isn't enabled */}
-          <LeadTasksSection leadId={lead.lead_id} />
 
           {/* Editable fields */}
           <div className="flex flex-col gap-4 px-6 py-5">

@@ -10,6 +10,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { session, licensedProducts } = await requireSession('/dashboard');
   const origins = productOrigins();
 
+  // NotificationBell is explicitly keyed: an element passed as a prop from a
+  // Server Component to a Client Component crosses the RSC wire with key=null
+  // and validated=0, so React re-runs list-key validation on the client, cannot
+  // tell this is a lone child rather than a list item, and warns about a missing
+  // key. The key is inert at runtime — it only satisfies that check.
   return (
     <NotificationProvider>
       <div className="flex min-h-screen w-full flex-col bg-[#F8FAFC] lg:h-full lg:min-h-0 lg:overflow-hidden">
@@ -20,7 +25,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           activeProduct="lms"
           homeHref="/dashboard/leads"
           title="Fitclass - Lead Management System"
-          notificationSlot={<NotificationBell />}
+          notificationSlot={<NotificationBell key="notification-bell" />}
         />
         <MobileSidebar role={session.role} items={DASHBOARD_NAV} />
         <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">

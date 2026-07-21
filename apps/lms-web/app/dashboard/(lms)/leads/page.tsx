@@ -2,7 +2,6 @@ import { redirect } from 'next/navigation';
 import { buildLoginUrl } from '@platform/ui-kit';
 import { getServerSession, getEnabledModules } from '@platform/ui-kit/server';
 import { LeadDashboardShell } from '@lms/web';
-import MyDayWidget from '@/components/dashboard/MyDayWidget';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +13,6 @@ export default async function LeadsPage() {
     <LeadDashboardShell
       actor={result.session}
       enabledModules={enabledModules}
-      dayWidget={<MyDayWidget actor={result.session} enabledModules={enabledModules} />}
     />
   );
 }
