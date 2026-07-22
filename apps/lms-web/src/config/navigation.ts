@@ -1,64 +1,28 @@
-import type { UserRole } from '@platform/auth-constants';
-import { ROLE_TIERS } from '@platform/auth-constants';
+import { CAPABILITY } from '@platform/rbac';
+import type { SessionUser } from '@platform/types';
+import { filterNav, type NavItem } from '@platform/ui-kit/shell';
 
-export interface NavItem {
-  id: string;
-  label: string;
-  href: string;
-  roles: readonly UserRole[];
-}
+export type { NavItem };
 
-const ADMIN_ROLES = ROLE_TIERS.ADMIN;
-const MANAGER_ROLES = ROLE_TIERS.MANAGER;
-const SSE_ROLES = ROLE_TIERS.SSE;
-const SE_ROLES = ROLE_TIERS.SE;
-const READ_ONLY_ROLES = ROLE_TIERS.READ_ONLY;
-
+// CRM top-rail nav. Each entry names the PAGE node it leads to, so the sidebar
+// and the guard on the page behind it read the same capability — a link can no
+// longer appear for someone the page will bounce.
+//
+// Tier C3: these were hard-coded ROLE_TIERS arrays. Besides needing a deploy to
+// change, such a list can only name the roles the platform ships with — so any
+// tenant-defined role (which iam.user_roles now allows) matched nothing and got
+// an empty sidebar.
 export const DASHBOARD_NAV: readonly NavItem[] = [
-  {
-    id: 'leads',
-    label: 'Leads',
-    href: '/dashboard/leads',
-    roles: [...ADMIN_ROLES, ...MANAGER_ROLES, ...SSE_ROLES, ...SE_ROLES, ...READ_ONLY_ROLES],
-  },
-  {
-    id: 'follow-ups',
-    label: 'Follow-ups',
-    href: '/dashboard/follow-ups',
-    roles: [...ADMIN_ROLES, ...MANAGER_ROLES, ...SSE_ROLES, ...SE_ROLES],
-  },
-  {
-    id: 'leads-history',
-    label: 'Leads History',
-    href: '/dashboard/leads-history',
-    roles: [...ADMIN_ROLES, ...MANAGER_ROLES, ...SSE_ROLES, ...SE_ROLES],
-  },
-  {
-    id: 'assignments',
-    label: 'Assignments',
-    href: '/dashboard/assignments',
-    roles: [...ADMIN_ROLES, ...MANAGER_ROLES, ...SSE_ROLES],
-  },
-  {
-    id: 'analytics',
-    label: 'Analytics',
-    href: '/dashboard/analytics',
-    roles: [...ADMIN_ROLES],
-  },
-  {
-    id: 'users',
-    label: 'Users',
-    href: '/dashboard/users',
-    roles: [...ADMIN_ROLES, ...MANAGER_ROLES, ...SSE_ROLES],
-  },
-  {
-    id: 'api-clients',
-    label: 'API Tokens',
-    href: '/dashboard/api-clients',
-    roles: [...ADMIN_ROLES],
-  },
+  { id: 'leads',         label: 'Leads',         href: '/dashboard/leads',         capability: CAPABILITY.LMS_LEADS },
+  { id: 'follow-ups',    label: 'Follow-ups',    href: '/dashboard/follow-ups',    capability: CAPABILITY.LMS_FOLLOWUPS },
+  { id: 'leads-history', label: 'Leads History', href: '/dashboard/leads-history', capability: CAPABILITY.LMS_HISTORY },
+  { id: 'assignments',   label: 'Assignments',   href: '/dashboard/assignments',   capability: CAPABILITY.LMS_ASSIGNMENTS },
+  { id: 'analytics',     label: 'Analytics',     href: '/dashboard/analytics',     capability: CAPABILITY.LMS_ANALYTICS },
+  { id: 'users',         label: 'Users',         href: '/dashboard/users',         capability: CAPABILITY.LMS_USERS },
+  { id: 'api-clients',   label: 'API Tokens',    href: '/dashboard/api-clients',   capability: CAPABILITY.LMS_APICLIENTS },
 ] as const;
 
-export function navItemsForRole(role: UserRole): NavItem[] {
-  return DASHBOARD_NAV.filter((item) => item.roles.includes(role));
+/** The CRM nav entries this user may actually open. */
+export function navItemsForActor(actor: SessionUser): NavItem[] {
+  return filterNav(DASHBOARD_NAV, actor);
 }

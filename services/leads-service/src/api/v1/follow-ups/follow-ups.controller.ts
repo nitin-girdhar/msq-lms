@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { can, CAPABILITY } from '@platform/rbac';
 import type { CreateFollowUpInput } from '@lms/validation';
 import { LMS_RANKS, checkEditLeadAccess } from '@lms/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
@@ -21,7 +22,7 @@ export class FollowUpsController {
     assertCanEdit(request.auth);
     const { id } = request.params as { id: string };
     const data = request.body as CreateFollowUpInput;
-    const result = await service.createFollowUp({ org_id, user_id, role, tenant_id, readOnly: isReadOnly(rank) }, id, data);
+    const result = await service.createFollowUp({ org_id, user_id, role, tenant_id, readOnly: !can(request.auth, CAPABILITY.PLATFORM_WRITE) }, id, data);
     return reply.status(201).send({ success: true, data: result });
   };
 
@@ -30,7 +31,7 @@ export class FollowUpsController {
     assertCanEdit(request.auth);
     const { id, follow_up_id } = request.params as { id: string; follow_up_id: string };
     const body = request.body as UpdateFollowUpBody;
-    await service.updateFollowUp({ org_id, user_id, role, tenant_id, readOnly: isReadOnly(rank) }, follow_up_id, id, body);
+    await service.updateFollowUp({ org_id, user_id, role, tenant_id, readOnly: !can(request.auth, CAPABILITY.PLATFORM_WRITE) }, follow_up_id, id, body);
     return reply.status(204).send();
   };
 
@@ -38,7 +39,7 @@ export class FollowUpsController {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
     assertCanEdit(request.auth);
     const { id, follow_up_id } = request.params as { id: string; follow_up_id: string };
-    await service.deleteFollowUp({ org_id, user_id, role, tenant_id, readOnly: isReadOnly(rank) }, follow_up_id, id);
+    await service.deleteFollowUp({ org_id, user_id, role, tenant_id, readOnly: !can(request.auth, CAPABILITY.PLATFORM_WRITE) }, follow_up_id, id);
     return reply.status(204).send();
   };
 }

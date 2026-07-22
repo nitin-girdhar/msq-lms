@@ -27,9 +27,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
           title="Fitclass - Lead Management System"
           notificationSlot={<NotificationBell key="notification-bell" />}
         />
-        <MobileSidebar role={session.role} items={DASHBOARD_NAV} />
+        <MobileSidebar actor={session} items={DASHBOARD_NAV} />
         <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">
-          <AppSidebar role={session.role} items={DASHBOARD_NAV} />
+          <AppSidebar actor={session} items={DASHBOARD_NAV} />
           <main className="flex w-full min-w-0 flex-1 flex-col lg:overflow-y-auto">
             {children}
           </main>

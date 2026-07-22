@@ -27,8 +27,9 @@ export async function authenticate(request: FastifyRequest): Promise<void> {
   const capabilities = await capabilitiesFor(tenant_id, role_name);
 
   // member_roles used to double as the "is this user provisioned in LMS" gate.
-  // The capability matrix is now that gate: no lms.leads.view grant, no LMS.
-  if (!can({ capabilities }, CAPABILITY.LMS_LEADS_VIEW)) {
+  // The TOOL node is now that gate — denying `lms` prunes every page, operation
+  // and scope beneath it in one row, which is what the tree is for.
+  if (!can({ capabilities }, CAPABILITY.LMS)) {
     throw new ForbiddenError('You do not have access to the LMS product in this organization');
   }
 
