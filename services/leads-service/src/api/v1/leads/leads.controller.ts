@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, TransferLeadInput } from '@lms/validation';
-import { LMS_RANKS, getRulesForTenant, checkTransferLeadAccess } from '@lms/authz';
+import { LMS_RANKS, getRulesForTenant, checkTransferLeadAccess, checkCreateLeadAccess, checkEditLeadAccess } from '@lms/authz';
 import { ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import * as service from './leads.service.js';
 import type { ListLeadsQuery } from './leads.schema.js';
@@ -49,9 +49,12 @@ export class LeadsController {
   };
 
   create = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    if (!checkCreateLeadAccess(getRulesForTenant(tenant_id), rank)) {
+      throw new ForbiddenError('Insufficient permissions to create leads');
+    }
     const data = request.body as CreateLeadInput;
-    const result = await service.createLead({ org_id, user_id, role, tenant_id }, data);
+    const result = await service.createLead({ org_id, user_id, role, tenant_id, readOnly: rank <= LMS_RANKS.READ_ONLY }, data);
     return reply.status(201).send({ success: true, data: { id: result.id } });
   };
 
@@ -63,10 +66,13 @@ export class LeadsController {
   };
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    if (!checkEditLeadAccess(getRulesForTenant(tenant_id), rank)) {
+      throw new ForbiddenError('Insufficient permissions to edit leads');
+    }
     const { id } = request.params as { id: string };
     const data = request.body as UpdateLeadInput;
-    await service.updateLead({ org_id, user_id, role, tenant_id }, id, data);
+    await service.updateLead({ org_id, user_id, role, tenant_id, readOnly: rank <= LMS_RANKS.READ_ONLY }, id, data);
     return reply.status(204).send();
   };
 
@@ -76,7 +82,7 @@ export class LeadsController {
     const { id } = request.params as { id: string };
     const comment = ((request.body as { comment?: string } | null)?.comment ?? '').trim();
     if (!comment) throw new BadRequestError('A deletion reason comment is required');
-    await service.deleteLead({ org_id, user_id, role, tenant_id }, id, comment);
+    await service.deleteLead({ org_id, user_id, role, tenant_id, readOnly: rank <= LMS_RANKS.READ_ONLY }, id, comment);
     return reply.status(204).send();
   };
 
@@ -102,10 +108,13 @@ export class LeadsController {
   };
 
   createInteraction = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id } = request.auth;
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    if (!checkEditLeadAccess(getRulesForTenant(tenant_id), rank)) {
+      throw new ForbiddenError('Insufficient permissions to add interactions');
+    }
     const { id } = request.params as { id: string };
     const data = request.body as CreateInteractionInput;
-    const result = await service.createInteraction({ org_id, user_id, role, tenant_id }, id, data);
+    const result = await service.createInteraction({ org_id, user_id, role, tenant_id, readOnly: rank <= LMS_RANKS.READ_ONLY }, id, data);
     return reply.status(201).send({ success: true, data: result });
   };
 
@@ -146,7 +155,7 @@ export class LeadsController {
     }
     const { id } = request.params as { id: string };
     const { target_org_id, notes } = request.body as TransferLeadInput;
-    const result = await service.transferLead({ org_id, user_id, role, tenant_id }, id, target_org_id, notes);
+    const result = await service.transferLead({ org_id, user_id, role, tenant_id, readOnly: rank <= LMS_RANKS.READ_ONLY }, id, target_org_id, notes);
     return reply.status(201).send({ success: true, data: result });
   };
 

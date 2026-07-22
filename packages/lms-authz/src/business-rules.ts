@@ -44,6 +44,14 @@ export interface TenantBusinessRules {
   // Minimum rank to transfer a lead to another org within the tenant.
   minRankToTransferLead: number;
 
+  // Minimum rank to create a lead (POST /leads).
+  minRankToCreateLead: number;
+
+  // Minimum rank to edit a lead — status change, note, reassign, interaction,
+  // follow-up (PATCH/POST write routes). read_only (0) is below this floor, so
+  // it can read every leads screen but cannot mutate anything.
+  minRankToEditLead: number;
+
   // ── Leads History — "Assigned To" filter scope thresholds ───────────
   // These LMS-rank thresholds control the WITHIN-ORG tiers (team/org). The
   // cross-org tiers (tenant/all) are platform_role-driven, not rank-driven —
@@ -64,6 +72,8 @@ export const DEFAULT_RULES: TenantBusinessRules = {
   minRankToAssignLeads:         LMS_RANKS.SSE,
   minRankToDeleteLead:          LMS_RANKS.ADMIN,
   minRankToTransferLead:        LMS_RANKS.MANAGER,
+  minRankToCreateLead:          LMS_RANKS.SE,
+  minRankToEditLead:            LMS_RANKS.SE,
   minRankForLeadsHistoryTeamScope:   LMS_RANKS.SSE,
   minRankForLeadsHistoryOrgScope:    LMS_RANKS.ADMIN,
 };
@@ -117,6 +127,14 @@ export function checkDeleteLeadAccess(rules: TenantBusinessRules, rank: number):
 
 export function checkTransferLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
   return rank >= rules.minRankToTransferLead;
+}
+
+export function checkCreateLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
+  return rank >= rules.minRankToCreateLead;
+}
+
+export function checkEditLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
+  return rank >= rules.minRankToEditLead;
 }
 
 // `role` is platform_role (services) / session role (web). The cross-org tiers
