@@ -1,5 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import { readAuthContext } from '@platform/service-auth';
+import { capabilitiesFor } from '@platform/db';
 import { platformRank } from '@platform/authz';
 import type { PlatformRole } from '@platform/types';
 import { UnauthorizedError, ForbiddenError } from '../lib/errors.js';
@@ -20,5 +21,14 @@ export async function authenticateSuperAdmin(request: FastifyRequest): Promise<v
   if (platform_role !== 'super_admin') {
     throw new ForbiddenError('Super admin only');
   }
-  request.auth = { org_id, user_id, tenant_id, role: platform_role, rank: platformRank(platform_role as PlatformRole) };
+  // super_admin is a department-less anchor role. Its capabilities still come
+  // from the DB (C3) rather than being assumed: the matrix grants super_admin
+  // everything by default, but a deployment may narrow that as data.
+  request.auth = {
+    org_id, user_id, tenant_id, role: platform_role,
+    rank: platformRank(platform_role as PlatformRole),
+    department: null,
+    role_name: platform_role,
+    capabilities: await capabilitiesFor(tenant_id, platform_role),
+  };
 }

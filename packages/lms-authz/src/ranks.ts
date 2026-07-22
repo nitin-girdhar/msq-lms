@@ -6,11 +6,13 @@
 // (numerically identical to the former shared sales ladder, so LMS behavior is
 // preserved). Cross-org / tenant-wide capabilities are NOT expressible on this
 // scale — they are platform concerns keyed on platform_role (see business-rules).
+import { ANCHOR_RANK, DEFAULT_ROLE_RANK } from '@platform/rbac';
+
 export const LMS_RANKS = {
-  READ_ONLY: 0,
-  SE: 20,
-  SSE: 40,
-  MANAGER: 60,
-  SR_MANAGER: 70,
-  ADMIN: 80,
+  READ_ONLY:  ANCHOR_RANK.READ_ONLY,
+  SE:         DEFAULT_ROLE_RANK.SALES_REPRESENTATIVE,
+  SSE:        DEFAULT_ROLE_RANK.SENIOR_SALES_EXECUTIVE,
+  MANAGER:    DEFAULT_ROLE_RANK.ORG_MANAGER,
+  SR_MANAGER: DEFAULT_ROLE_RANK.ORG_SR_MANAGER,
+  ADMIN:      ANCHOR_RANK.ORG_ADMIN,
 } as const;

@@ -50,7 +50,7 @@ export class LeadsController {
 
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (!checkCreateLeadAccess(getRulesForTenant(tenant_id), rank)) {
+    if (!checkCreateLeadAccess(request.auth)) {
       throw new ForbiddenError('Insufficient permissions to create leads');
     }
     const data = request.body as CreateLeadInput;
@@ -67,7 +67,7 @@ export class LeadsController {
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (!checkEditLeadAccess(getRulesForTenant(tenant_id), rank)) {
+    if (!checkEditLeadAccess(request.auth)) {
       throw new ForbiddenError('Insufficient permissions to edit leads');
     }
     const { id } = request.params as { id: string };
@@ -109,7 +109,7 @@ export class LeadsController {
 
   createInteraction = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (!checkEditLeadAccess(getRulesForTenant(tenant_id), rank)) {
+    if (!checkEditLeadAccess(request.auth)) {
       throw new ForbiddenError('Insufficient permissions to add interactions');
     }
     const { id } = request.params as { id: string };
@@ -150,7 +150,7 @@ export class LeadsController {
 
   transfer = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    if (!checkTransferLeadAccess(getRulesForTenant(tenant_id), rank)) {
+    if (!checkTransferLeadAccess(request.auth)) {
       throw new ForbiddenError('Insufficient permissions to transfer leads');
     }
     const { id } = request.params as { id: string };

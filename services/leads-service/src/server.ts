@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
-import { closeAllPools } from '@platform/db';
+import { closeAllPools, startCapabilityCache } from '@platform/db';
 
 const app = Fastify({
   logger: {
@@ -32,6 +32,8 @@ app.get('/health', async () => ({ status: 'ok', service: 'leads-service' }));
 
 const start = async () => {
   try {
+    // Tier C3: keep the in-memory capability matrix fresh via LISTEN/NOTIFY.
+    await startCapabilityCache();
     await app.listen({ port: config.port, host: '0.0.0.0' });
   } catch (err) {
     app.log.error(err);

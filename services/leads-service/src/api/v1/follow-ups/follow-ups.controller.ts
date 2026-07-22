@@ -1,14 +1,14 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { CreateFollowUpInput } from '@lms/validation';
-import { LMS_RANKS, getRulesForTenant, checkEditLeadAccess } from '@lms/authz';
+import { LMS_RANKS, checkEditLeadAccess } from '@lms/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './follow-ups.service.js';
 import type { UpdateFollowUpBody } from './follow-ups.schema.js';
 
-// Follow-ups are lead mutations; gate them with the same edit floor as the
-// leads write routes so read_only (rank 0) cannot create/edit/delete them.
-function assertCanEdit(rank: number, tenant_id: string): void {
-  if (!checkEditLeadAccess(getRulesForTenant(tenant_id), rank)) {
+// Follow-ups are lead mutations; gate them on the same lms.leads.edit capability
+// as the leads write routes, so read_only cannot create/edit/delete them.
+function assertCanEdit(auth: FastifyRequest['auth']): void {
+  if (!checkEditLeadAccess(auth)) {
     throw new ForbiddenError('Insufficient permissions to modify follow-ups');
   }
 }
@@ -18,7 +18,7 @@ const isReadOnly = (rank: number): boolean => rank <= LMS_RANKS.READ_ONLY;
 export class FollowUpsController {
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    assertCanEdit(rank, tenant_id);
+    assertCanEdit(request.auth);
     const { id } = request.params as { id: string };
     const data = request.body as CreateFollowUpInput;
     const result = await service.createFollowUp({ org_id, user_id, role, tenant_id, readOnly: isReadOnly(rank) }, id, data);
@@ -27,7 +27,7 @@ export class FollowUpsController {
 
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    assertCanEdit(rank, tenant_id);
+    assertCanEdit(request.auth);
     const { id, follow_up_id } = request.params as { id: string; follow_up_id: string };
     const body = request.body as UpdateFollowUpBody;
     await service.updateFollowUp({ org_id, user_id, role, tenant_id, readOnly: isReadOnly(rank) }, follow_up_id, id, body);
@@ -36,7 +36,7 @@ export class FollowUpsController {
 
   delete = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    assertCanEdit(rank, tenant_id);
+    assertCanEdit(request.auth);
     const { id, follow_up_id } = request.params as { id: string; follow_up_id: string };
     await service.deleteFollowUp({ org_id, user_id, role, tenant_id, readOnly: isReadOnly(rank) }, follow_up_id, id);
     return reply.status(204).send();

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { RANKS } from '@platform/authz';
 import type { SessionUser } from '@platform/types';
 import { canManageUsers } from '@/src/lib/permissions';
 import UsersTable from './UsersTable';
@@ -25,7 +26,7 @@ export default function UsersClient({ users, actor, orgs }: Props) {
   const canCreate = canManageUsers(actor);
 
   const subtitle =
-    actor.rank >= 80
+    actor.rank >= RANKS.ORG_ADMIN
       ? `${users.length} total · admin scope (all users)`
       : canCreate
         ? `${users.length} total · scoped to roles you can manage`

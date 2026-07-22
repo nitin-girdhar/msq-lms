@@ -33,7 +33,7 @@ export function canViewUser(
   if (target.id === actor.id) return true;
   if (target.rank >= RANKS.ADMIN) return false;
   if (actor.rank >= RANKS.MANAGER) return true;
-  if (actor.rank === RANKS.SSE) return target.rank <= 20; // SE rank
+  if (actor.rank === RANKS.SSE) return target.rank <= RANKS.SE;
   return false;
 }
 

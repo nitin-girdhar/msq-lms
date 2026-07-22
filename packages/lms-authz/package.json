@@ -21,7 +21,8 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@platform/authz": "workspace:*"
+    "@platform/authz": "workspace:*",
+    "@platform/rbac": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { resolveMemberRole } from '@platform/db';
+import { resolveGlobalRole } from '@platform/db';
 import { parseAuthContext } from '../lib/auth-context.js';
 import { connectionManager } from '../connections/manager.js';
 import { config } from '../config/index.js';
@@ -10,11 +10,10 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     const ctx = parseAuthContext(request, reply);
     if (!ctx) return;
 
-    // P1.3: resolve the LMS product rank server-side for lead-event visibility
-    // filtering (canViewUnassignedLeads). Non-LMS members resolve to -1 and simply
-    // won't receive LMS unassigned-lead broadcasts. When other products emit
-    // notifications, they'll resolve their own product rank the same way.
-    const { rank } = await resolveMemberRole('lms', ctx.user_id, ctx.org_id);
+    // Tier C: resolve the unified iam rank server-side for lead-event visibility
+    // filtering (canViewUnassignedLeads). Users with no active role in the org
+    // resolve to -1 and simply won't receive unassigned-lead broadcasts.
+    const { rank } = await resolveGlobalRole(ctx.user_id, ctx.org_id);
 
     const connId = randomUUID();
 

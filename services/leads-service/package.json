@@ -24,7 +24,8 @@
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.1",
     "pino": "^9.6.0",
-    "zod": "^3.22.0"
+    "zod": "^3.22.0",
+    "@platform/rbac": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",

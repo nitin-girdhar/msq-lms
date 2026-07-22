@@ -1,5 +1,6 @@
 import { LMS_RANKS } from './ranks.js';
 import { isTenantWideRole } from '@platform/authz';
+import { can, CAPABILITY, type CapabilityHolder } from '@platform/rbac';
 
 // Cross-org / tenant-wide leads-history scope is a PLATFORM capability, not an
 // LMS-rank one: the LMS scale tops out at lms_admin (80) and cannot express
@@ -105,14 +106,6 @@ export function canSeeUnassignedCard(rules: TenantBusinessRules, rank: number): 
   return rank >= rules.minRankForUnassignedCard;
 }
 
-export function checkAnalyticsAccess(rules: TenantBusinessRules, rank: number): boolean {
-  return rank >= rules.minRankForAnalytics;
-}
-
-export function checkManageUsersAccess(rules: TenantBusinessRules, rank: number): boolean {
-  return rank >= rules.minRankToManageUsers;
-}
-
 export function checkViewUsersAccess(rules: TenantBusinessRules, rank: number): boolean {
   return rank >= rules.minRankToViewUsers;
 }
@@ -121,24 +114,42 @@ export function checkAssignLeadsAccess(rules: TenantBusinessRules, rank: number)
   return rank >= rules.minRankToAssignLeads;
 }
 
-export function checkDeleteLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
-  return rank >= rules.minRankToDeleteLead;
+// ── Tier C3: the WRITE gates are capabilities, not rank floors ──────────
+// "May you edit a lead" is now a row in iam.role_capabilities, editable per
+// tenant without a deploy. The rank floors above are kept for the questions
+// that are genuinely about seniority and scope (whose leads you can see, how
+// wide the history filter goes) — those are hierarchy, not permission.
+
+export function checkDeleteLeadAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_LEADS_DELETE);
 }
 
-export function checkTransferLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
-  return rank >= rules.minRankToTransferLead;
+export function checkTransferLeadAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_LEADS_TRANSFER);
 }
 
-export function checkCreateLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
-  return rank >= rules.minRankToCreateLead;
+export function checkCreateLeadAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_LEADS_EDIT);
 }
 
-export function checkEditLeadAccess(rules: TenantBusinessRules, rank: number): boolean {
-  return rank >= rules.minRankToEditLead;
+export function checkEditLeadAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_LEADS_EDIT);
 }
 
-// `role` is platform_role (services) / session role (web). The cross-org tiers
-// (all/tenant) are platform-driven; the within-org tiers (org/team) are LMS-rank.
+export function checkAnalyticsAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_ANALYTICS_VIEW);
+}
+
+export function checkManageUsersAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_USERS_MANAGE);
+}
+
+// ── Leads-history scope (SENIORITY, not permission) ─────────────────────
+// Deliberately still rank/role-driven. "How far down the org can you see" is a
+// hierarchy question — the answer has to be an ordered scope, and a boolean
+// capability cannot express one. `role` is platform_role (services) / session
+// role (web); the cross-org tiers (all/tenant) are platform-driven, the
+// within-org tiers (org/team) are rank-driven.
 export function getLeadsHistoryAssignedToScope(
   rules: TenantBusinessRules,
   rank: number,
