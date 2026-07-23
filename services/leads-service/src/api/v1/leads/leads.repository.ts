@@ -12,7 +12,8 @@ import {
   interactionTypesTable,
 } from '@platform/db/schema';
 import { RANKS } from '@platform/authz';
-import { BadRequestError, ConflictError } from '../../../lib/errors.js';
+import { BadRequestError, ConflictError, NotFoundError } from '../../../lib/errors.js';
+import { resolveLeadWriteScope, effectiveInOrgActor } from '../../../lib/lead-write-scope.js';
 import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 
 function coerceTags(val: unknown): string[] {
@@ -681,6 +682,12 @@ export async function createInteraction(
   data: { interaction_type_name?: string; notes?: string; occurred_at?: string },
 ) {
   return withRoleTx(ctx, async (tx) => {
+    // Scope to the lead's REAL org (not the caller's home org). Invisible/cross-org
+    // lead → null → clean 404; a platform super_admin's write lands in the lead's
+    // org instead of raising the FK-org-scope trigger as a 500. See Issues #3/#4.
+    const scope = await resolveLeadWriteScope(tx, leadId);
+    if (!scope) throw new NotFoundError('Lead not found');
+
     let interactionTypeId: string | null = null;
 
     if (data.interaction_type_name) {
@@ -692,12 +699,17 @@ export async function createInteraction(
       interactionTypeId = typeRow?.id ?? null;
     }
 
+    // The interaction's user must map to the lead's org (DB trigger). Default to the
+    // actor when they belong to that org, else the lead's assignee — records a
+    // cross-org super_admin's interaction on behalf of the rep who owns the lead.
+    const userId = await effectiveInOrgActor(tx, ctx.user_id, scope);
+
     const [inserted] = await tx
       .insert(leadInteractionsTable)
       .values({
-        orgId: ctx.org_id,
+        orgId: scope.orgId,
         leadId,
-        userId: ctx.user_id,
+        userId,
         interactionTypeId,
         notes: data.notes ?? null,
         occurredAt: data.occurred_at ? new Date(data.occurred_at) : new Date(),
