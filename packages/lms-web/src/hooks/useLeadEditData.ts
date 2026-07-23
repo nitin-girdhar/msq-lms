@@ -123,6 +123,7 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
     } else {
       patchData.metadata = { remarks: payload.value };
     }
+    if (payload.expectedUpdatedAt) patchData.expected_updated_at = payload.expectedUpdatedAt;
 
     await leadsApi.update(payload.leadId, patchData);
 

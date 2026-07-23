@@ -89,6 +89,13 @@ export function LeadEditModal({
     return Object.keys(errs).length === 0;
   };
 
+  // The version this editor was opened against. Sent with every write so the
+  // server can reject a save that would clobber someone else's concurrent edit
+  // (409) rather than silently applying last-writer-wins.
+  const expectedUpdatedAt = lead.updated_at
+    ? new Date(lead.updated_at).toISOString()
+    : undefined;
+
   const handleSave = async () => {
     if (!validate()) return;
     setSaving(true);
@@ -101,6 +108,7 @@ export function LeadEditModal({
           value: selectedStatus,
           ...(outcomeId !== '' ? { outcomeId } : {}),
           ...(transitionNote.trim() ? { transitionNote: transitionNote.trim() } : {}),
+          ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
         });
       }
 
@@ -112,6 +120,10 @@ export function LeadEditModal({
         await leadsApi.update(lead.lead_id, {
           assigned_user_id: assigneeToSet,
           ...(transitionNote.trim() ? { transition_note: transitionNote.trim() } : {}),
+          // Only guard this write when it is the first one: the stage PATCH
+          // above already bumped updated_at, so re-sending the version we
+          // opened with would 409 against our own change.
+          ...(expectedUpdatedAt && !statusChanged ? { expected_updated_at: expectedUpdatedAt } : {}),
         });
       }
       if (fuVisible && fuFieldChanged) {

@@ -157,6 +157,7 @@ export function useLeads(orgIds?: string[], platforms?: string[]): UseLeadsRetur
       } else {
         patchData.metadata = { remarks: payload.value };
       }
+      if (payload.expectedUpdatedAt) patchData.expected_updated_at = payload.expectedUpdatedAt;
 
       try {
         await leadsApi.update(payload.leadId, patchData);

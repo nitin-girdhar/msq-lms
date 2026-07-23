@@ -59,6 +59,12 @@ export const updateLeadSchema = z.object({
   tags: z.array(z.string().max(50)).max(20).optional(),
   metadata: z.record(z.unknown()).optional(),
   note: z.string().max(5000).optional(),
+  // Optimistic concurrency token: the updated_at the client last read. When
+  // present the UPDATE is guarded on it and a mismatch is a 409, so two people
+  // editing the same lead no longer silently overwrite each other. Optional so
+  // server-to-server callers that legitimately want last-writer-wins are
+  // unaffected; the UI always sends it.
+  expected_updated_at: z.string().datetime({ offset: true }).optional(),
 }).refine(
   (d) => Object.keys(d).length > 0,
   { message: 'At least one field must be provided to update' },

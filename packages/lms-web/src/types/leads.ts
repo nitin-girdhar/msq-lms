@@ -92,6 +92,9 @@ export interface UpdatePayload {
   outcomeId?: string;
   outcomeComment?: string;
   transitionNote?: string;
+  // The updated_at the editor opened with. Sent as expected_updated_at so a
+  // concurrent edit is rejected with 409 instead of silently overwritten.
+  expectedUpdatedAt?: string;
 }
 
 export interface StageOption {

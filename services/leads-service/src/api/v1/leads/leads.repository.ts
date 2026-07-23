@@ -12,6 +12,7 @@ import {
   interactionTypesTable,
 } from '@platform/db/schema';
 import { RANKS } from '@platform/authz';
+import { BadRequestError, ConflictError } from '../../../lib/errors.js';
 import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 
 function coerceTags(val: unknown): string[] {
@@ -372,6 +373,59 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
   });
 }
 
+interface CurrentLeadRow {
+  stage_id: string | null;
+  outcome_id: string | null;
+  updated_at: Date | string;
+}
+
+// `outcome_comment` is not an independent field: lms.check_lead_stage_outcome()
+// NULLs it whenever the row ends up without an outcome, and again when a stage
+// change orphans the outcome it belonged to. The API used to accept such a
+// write and return 204, so a user typed a comment, saw a successful save, and
+// the text was gone — data loss they had no way to detect.
+//
+// This reproduces the trigger's rules ahead of the UPDATE so the request is
+// rejected with an explanation instead. Clearing the comment (empty/null) is
+// always allowed — that agrees with the trigger rather than fighting it.
+async function assertOutcomeCommentIsKeepable(
+  tx: Parameters<Parameters<typeof withRoleTx>[1]>[0],
+  current: CurrentLeadRow,
+  data: UpdateLeadInput,
+): Promise<void> {
+  if (typeof data.outcome_comment !== 'string' || data.outcome_comment.trim() === '') return;
+
+  const stageId = data.stage_id !== undefined ? data.stage_id : current.stage_id;
+  const outcomeId = data.outcome_id !== undefined ? data.outcome_id : current.outcome_id;
+
+  if (!outcomeId) {
+    throw new BadRequestError(
+      'outcome_comment can only be saved together with an outcome. Select an outcome for this lead, or clear the comment.',
+    );
+  }
+
+  // The outcome must belong to the stage the row will end up in; otherwise the
+  // trigger either raises (explicit cross-stage outcome) or silently drops both
+  // the outcome and the comment (outcome inherited across a stage change).
+  //
+  // Only reject on a stage we can actually see a mismatch for. This SELECT runs
+  // under the caller's RLS, so an outcome row that is invisible here (e.g. a
+  // catalog row whose tenant_id was never backfilled) returns nothing — that is
+  // not evidence of a cross-stage pick, and claiming so would reject a
+  // legitimate save. Defer to the trigger, which is the authority.
+  const outcomeRows = (await tx.execute(sql`
+    SELECT stage_id::text AS stage_id FROM lms.lead_stage_outcome
+    WHERE id = ${outcomeId}::uuid
+  `)) as unknown as Array<{ stage_id: string | null }>;
+
+  const outcomeStageId = outcomeRows[0]?.stage_id;
+  if (outcomeStageId !== undefined && outcomeStageId !== stageId) {
+    throw new BadRequestError(
+      'The selected outcome does not belong to this lead\'s stage, so the outcome and its comment cannot be saved. Pick an outcome that belongs to the stage.',
+    );
+  }
+}
+
 export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput) {
   return withRoleTx(ctx, async (tx) => {
     if (data.assigned_user_id !== undefined && data.assigned_user_id !== null) {
@@ -385,6 +439,39 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
 
     if (data.transition_note) {
       await tx.execute(sql`SELECT set_config('app.lead_transition_note', ${data.transition_note}, true)`);
+    }
+
+    // One locked read serves both checks below. FOR UPDATE is what makes the
+    // concurrency check sound: without the lock two racing transactions both
+    // read the same updated_at, both pass, and both write — the lost update we
+    // are preventing. With it the second blocks, then re-reads the winner's
+    // committed row and sees the version it expected is gone.
+    const currentRows = (await tx.execute(sql`
+      SELECT stage_id::text AS stage_id, outcome_id::text AS outcome_id, updated_at
+      FROM lms.marketing_leads
+      WHERE id = ${leadId}::uuid AND org_id = ${ctx.org_id}::uuid AND NOT is_deleted
+      FOR UPDATE
+    `)) as unknown as CurrentLeadRow[];
+    const current = currentRows[0];
+    // No row: fall through so the UPDATE below reports it as a 404, rather than
+    // pre-empting it with a misleading conflict/validation error.
+    if (current) {
+      // Compared as epoch milliseconds, not as SQL timestamps: updated_at holds
+      // microseconds, which a JS Date silently truncates, so an `updated_at =
+      // :expected` guard in SQL would never match and every save would 409.
+      if (data.expected_updated_at) {
+        const expected = new Date(data.expected_updated_at).getTime();
+        const actual = new Date(current.updated_at).getTime();
+        if (Number.isNaN(expected)) {
+          throw new BadRequestError('expected_updated_at is not a valid timestamp');
+        }
+        if (expected !== actual) {
+          throw new ConflictError(
+            'This lead was changed by someone else while you were editing it. Your changes were not saved — reload to see the current values, then re-apply them.',
+          );
+        }
+      }
+      await assertOutcomeCommentIsKeepable(tx, current, data);
     }
 
     const updateData: Record<string, unknown> = {};
@@ -410,6 +497,8 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
 
     if (Object.keys(updateData).length === 0) return null;
 
+    // The row is already locked and version-checked above, so a plain guarded
+    // UPDATE is enough here.
     const [updated] = await tx
       .update(marketingLeadsTable)
       .set(updateData as Parameters<typeof tx.update>[0] extends infer U ? Record<string, unknown> : never)
