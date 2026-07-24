@@ -80,16 +80,21 @@ export async function updateFollowUp(
   data: { status_name?: string; completed_at?: string; scheduled_at?: string; notes?: string },
 ) {
   return withRoleTx(ctx, async (tx) => {
+    // Resolve the follow-up under the caller's RLS visibility WITHOUT pinning
+    // ctx.org_id: a cross-org platform/tenant admin's home org differs from the
+    // follow-up's org, so an org_id = ctx.org_id filter would silently miss the
+    // row (a wrong 204/no-op). RLS still scopes app_user actors to their active
+    // org; the follow-up's own org drives every write below. See Issue #3.
     const [prev] = await tx
       .select()
       .from(leadFollowUpsTable)
       .where(and(
         eq(leadFollowUpsTable.id, followUpId),
-        eq(leadFollowUpsTable.orgId, ctx.org_id),
         eq(leadFollowUpsTable.isDeleted, false),
       ))
       .limit(1);
     if (!prev) return null;
+    const followUpOrgId = prev.orgId;
 
     let statusId = prev.statusId;
     let isCompleted: boolean;
@@ -127,13 +132,13 @@ export async function updateFollowUp(
     await tx
       .update(marketingLeadsTable)
       .set({ scheduledAt: isCompleted ? null : scheduledAt })
-      .where(and(eq(marketingLeadsTable.id, prev.leadId), eq(marketingLeadsTable.orgId, ctx.org_id)));
+      .where(and(eq(marketingLeadsTable.id, prev.leadId), eq(marketingLeadsTable.orgId, followUpOrgId)));
 
     // lead_follow_ups is append-only: insert a new row for this action, never mutate prev.
     const [inserted] = await tx
       .insert(leadFollowUpsTable)
       .values({
-        orgId: ctx.org_id,
+        orgId: followUpOrgId,
         leadId: prev.leadId,
         assignedUserId: prev.assignedUserId,
         statusId,
@@ -152,10 +157,14 @@ export async function updateFollowUp(
 
 export async function deleteFollowUp(ctx: RoleTxContext, followUpId: string) {
   return withRoleTx(ctx, async (tx) => {
+    // Scope by id only and let RLS bound which rows are visible/writable: an
+    // `org_id = ctx.org_id` filter would silently skip a cross-org platform/tenant
+    // admin's target (their home org ≠ the follow-up's org). app_user actors are
+    // still confined to their active org by the org_isolation policy. See Issue #3.
     await tx.execute(sql`
       UPDATE lms.lead_follow_ups
       SET is_deleted = TRUE, deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
-      WHERE id = ${followUpId} AND org_id = ${ctx.org_id}
+      WHERE id = ${followUpId} AND NOT is_deleted
     `);
   });
 }

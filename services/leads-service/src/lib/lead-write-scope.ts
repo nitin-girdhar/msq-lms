@@ -20,8 +20,9 @@ import type { DrizzleTx } from '@platform/db';
 export interface LeadWriteScope {
   /** The lead's own org — the org the sub-resource row must be stamped with. */
   orgId: string;
-  /** The lead's current assignee — a user guaranteed to map to `orgId`. */
-  assignedUserId: string;
+  /** The lead's current assignee — a user guaranteed to map to `orgId`, or null
+   *  when the lead is unassigned. */
+  assignedUserId: string | null;
 }
 
 /**
@@ -63,17 +64,21 @@ export async function actorMapsToOrg(
 }
 
 /**
- * The user id to attribute an in-org write to. Prefers the actor when they belong
- * to the lead's org; otherwise falls back to the lead's own assignee — the case
- * for a platform super_admin acting cross-org, who has no mapping in the target
- * org, so the row is recorded on behalf of the lead's owning rep.
+ * The user id to attribute an in-org write to, in priority order:
+ *   1. the actor, when they hold a mapping to the lead's org (the normal case —
+ *      a user acting in an org they belong to);
+ *   2. else the lead's current assignee — records a cross-org platform/tenant
+ *      admin's write on behalf of the rep who owns the lead;
+ *   3. else the actor themselves — the lead is UNASSIGNED and the actor is a
+ *      cross-org super_admin/tenant_admin with no mapping here. The FK-org-scope
+ *      trigger now accepts these actors via iam.fn_actor_can_act_in_org, so
+ *      attributing to the actor is valid instead of raising on a null assignee.
  */
 export async function effectiveInOrgActor(
   tx: DrizzleTx,
   actorUserId: string,
   scope: LeadWriteScope,
 ): Promise<string> {
-  return (await actorMapsToOrg(tx, actorUserId, scope.orgId))
-    ? actorUserId
-    : scope.assignedUserId;
+  if (await actorMapsToOrg(tx, actorUserId, scope.orgId)) return actorUserId;
+  return scope.assignedUserId ?? actorUserId;
 }
