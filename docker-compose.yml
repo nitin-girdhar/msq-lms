@@ -38,6 +38,7 @@ services:
       PORT: ${LEADS_SERVICE_PORT}
       <<: *db-env-lms
       META_SERVICE_URL: http://meta-conversion-api:${META_SERVICE_PORT}
+      COMMUNICATION_SERVICE_URL: http://communication-service:${COMMUNICATION_SERVICE_PORT}
     expose:
       - "${LEADS_SERVICE_PORT}"
 

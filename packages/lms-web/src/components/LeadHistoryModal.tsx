@@ -111,6 +111,20 @@ function formatDate(iso: string | Date | null | undefined): string {
 
 function InteractionIcon({ type }: { type: string | null }) {
   const t = (type ?? "").toLowerCase();
+  // Checked before "call": WhatsApp voice types would otherwise match the
+  // call branch below and lose the brand mark.
+  if (t.includes("whatsapp")) {
+    return (
+      <svg
+        className="h-3.5 w-3.5 shrink-0 text-[#25D366]"
+        fill="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.247-.694.247-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884a9.82 9.82 0 016.988 2.896 9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.885-9.885 9.885m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.548 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.465 3.49" />
+      </svg>
+    );
+  }
   if (t.includes("call") || t.includes("phone")) {
     return (
       <svg
@@ -714,7 +728,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
       }}
     >
       <div
-        className="my-auto w-full max-w-3xl rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden"
+        className="my-auto w-full max-w-5xl rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden md:min-h-[60vh]"
         style={{ maxHeight: "90vh" }}
       >
         {/* Header */}
@@ -748,31 +762,39 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
           </button>
         </div>
 
-        {/* Lead Details */}
-        {lead && (
-          <div className="border-b border-[#F1F5F9] px-6 py-4 shrink-0">
-            <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[#94A3B8]">Lead Details</p>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-1.5">
-              <InfoRow label="Status" value={statusLabel} />
-              <InfoRow label="Outcome" value={lead.outcome_label ?? "—"} />
-              <InfoRow label="Date" value={lead.created_at ? new Date(lead.created_at).toLocaleDateString("en-IN") : "—"} />
-              <InfoRow label="Lead Source" value={lead.source ?? lead.platform ?? "—"} />
-              <InfoRow label="Assigned To" value={lead.assigned_rep_name ?? "—"} />
-              <InfoRow label="Follow-up" value={lead.scheduled_at ? formatDate(lead.scheduled_at) : "—"} />
-              <InfoRow label="Campaign" value={lead.campaign_name ?? "—"} full />
-            </div>
+        {/* Body — two columns on desktop; below md this wrapper is the ONLY scroller,
+            so a large form submission can never push the activity history out of view. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+          {/* Left column: lead details + form submission */}
+          <div className="md:w-[42%] md:shrink-0 md:overflow-y-auto md:border-r md:border-[#F1F5F9]">
+            {/* Lead Details */}
+            {lead && (
+              <div className="border-b border-[#F1F5F9] px-6 py-4">
+                <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[#94A3B8]">Lead Details</p>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                  <InfoRow label="Status" value={statusLabel} />
+                  <InfoRow label="Outcome" value={lead.outcome_label ?? "—"} />
+                  <InfoRow label="Date" value={lead.created_at ? new Date(lead.created_at).toLocaleDateString("en-IN") : "—"} />
+                  <InfoRow label="Lead Source" value={lead.source ?? lead.platform ?? "—"} />
+                  <InfoRow label="Assigned To" value={lead.assigned_rep_name ?? "—"} />
+                  <InfoRow label="Follow-up" value={lead.scheduled_at ? formatDate(lead.scheduled_at) : "—"} />
+                  <InfoRow label="Campaign" value={lead.campaign_name ?? "—"} full />
+                </div>
+              </div>
+            )}
+
+            {/* Original form submission — same expandable section as the Edit modal */}
+            <LeadFormDataPanel
+              leadId={leadId}
+              source={lead?.source ?? lead?.platform}
+              singleColumn
+              className="border-b border-[#F1F5F9] md:border-b-0"
+            />
           </div>
-        )}
 
-        {/* Original form submission — same expandable section as the Edit modal */}
-        <LeadFormDataPanel
-          leadId={leadId}
-          source={lead?.source ?? lead?.platform}
-          className="border-b border-[#F1F5F9] shrink-0"
-        />
-
-        <div className="flex flex-col overflow-hidden flex-1">
-          <div className="px-6 py-3 border-b border-[#F1F5F9] shrink-0 flex items-center justify-between">
+          {/* Right column: activity history */}
+          <div className="flex min-h-0 flex-1 flex-col md:overflow-hidden">
+          <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-[#F1F5F9] bg-white px-6 py-3 md:static">
             <p className="text-[10px] font-bold uppercase tracking-widest text-[#94A3B8]">
               Activity History
             </p>
@@ -783,7 +805,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
             )}
           </div>
 
-          <div className="overflow-y-auto flex-1 px-6 py-4">
+          <div className="flex-1 px-6 py-4 md:min-h-0 md:overflow-y-auto">
             {loading && (
               <div className="flex items-center justify-center py-12 gap-2 text-[#94A3B8]">
                 <svg
@@ -879,6 +901,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
                 </ul>
               </div>
             )}
+            </div>
           </div>
         </div>
 

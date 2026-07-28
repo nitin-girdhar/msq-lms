@@ -11,4 +11,5 @@ export const config = {
   databaseUrlService: requireEnv('DATABASE_URL_SERVICE'),
   logLevel: process.env['LOG_LEVEL'] ?? 'info',
   metaServiceUrl: process.env['META_SERVICE_URL'] ?? 'http://localhost:4003',
+  communicationServiceUrl: process.env['COMMUNICATION_SERVICE_URL'] ?? 'http://localhost:4005',
 } as const;

@@ -1,0 +1,15 @@
+meta {
+  name: List WhatsApp Templates
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/leads/{{leadId}}/whatsapp/templates
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

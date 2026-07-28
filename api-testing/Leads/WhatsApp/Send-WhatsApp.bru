@@ -1,0 +1,37 @@
+meta {
+  name: Send WhatsApp To Lead
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/leads/{{leadId}}/whatsapp
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "template_id": "{{whatsappTemplateId}}"
+  }
+}
+
+docs {
+  Sends an approved WhatsApp template to the lead.
+
+  The body names ONLY the template: the destination number is read from the
+  lead server-side, and the message text comes from the Meta-approved template,
+  so a caller can neither redirect the send nor supply its own copy. Take
+  template_id from List-WhatsApp-Templates.
+
+  Requires the lms.leads.whatsapp.send capability (sales_representative and
+  above) plus edit access to this particular lead. A read_only user gets 403.
+
+  On success a `whatsapp` row is written to lms.lead_interactions and shows up
+  in the lead's activity timeline. A failed Interakt send returns 502 and
+  writes nothing.
+}

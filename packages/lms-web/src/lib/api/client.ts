@@ -73,6 +73,15 @@ export const leads = {
       body: JSON.stringify(data),
     }),
 
+  getWhatsAppTemplates: (id: string) =>
+    request<{ success: true; data: import('../../types/leads').WhatsAppTemplate[] }>(`/leads/${id}/whatsapp/templates`),
+
+  sendWhatsApp: (id: string, data: { template_id: string }) =>
+    request<{ success: true; data: { sent_to: string; template_label: string; interaction_id: string | null } }>(
+      `/leads/${id}/whatsapp`,
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
+
   getFollowUps: (id: string) =>
     request<{ success: true; data: unknown[] }>(`/leads/${id}/follow-ups`),
 

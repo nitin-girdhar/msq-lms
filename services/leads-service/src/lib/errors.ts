@@ -9,6 +9,7 @@ export const HttpStatus = {
   CONFLICT: 409,
   UNPROCESSABLE: 422,
   INTERNAL: 500,
+  BAD_GATEWAY: 502,
 } as const;
 
 export class AppError extends Error {

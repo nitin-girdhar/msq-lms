@@ -84,6 +84,16 @@ export const createInteractionSchema = z.object({
 
 export type CreateInteractionInput = z.infer<typeof createInteractionSchema>;
 
+// Sending a WhatsApp message to a lead. The body carries ONLY the template to
+// use: the destination number is read from the lead server-side, and the
+// message body comes from the approved Meta template, so a client can neither
+// redirect a send to an arbitrary number nor inject its own copy.
+export const sendLeadWhatsAppSchema = z.object({
+  template_id: z.string().uuid('Invalid template_id'),
+});
+
+export type SendLeadWhatsAppInput = z.infer<typeof sendLeadWhatsAppSchema>;
+
 export const createFollowUpSchema = z.object({
   assigned_user_id: z.string().uuid('Invalid assigned_user_id').optional(),
   scheduled_at: z.string().datetime({ offset: true }),

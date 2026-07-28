@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { createLeadSchema, updateLeadSchema, createInteractionSchema, createFollowUpSchema, transferLeadSchema } from '@lms/validation';
+import { createLeadSchema, updateLeadSchema, createInteractionSchema, createFollowUpSchema, transferLeadSchema, sendLeadWhatsAppSchema } from '@lms/validation';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { requireCapability } from '../../../middleware/require-capability.middleware.js';
 import { CAPABILITY } from '@platform/rbac';
@@ -7,11 +7,13 @@ import { requireModule } from '../../../middleware/require-module.middleware.js'
 import { validate } from '../../../middleware/validate.middleware.js';
 import { LeadsController } from './leads.controller.js';
 import { FollowUpsController } from '../follow-ups/follow-ups.controller.js';
+import { WhatsAppController } from '../whatsapp/whatsapp.controller.js';
 import { listLeadsQuerySchema } from './leads.schema.js';
 import { updateFollowUpBodySchema } from '../follow-ups/follow-ups.schema.js';
 
 const ctrl = new LeadsController();
 const fuCtrl = new FollowUpsController();
+const waCtrl = new WhatsAppController();
 
 // LMS routes require the 'lms' product entitlement (defense-in-depth behind the
 // gateway). The /lookups/* reads stay ungated — shared lookups, ungated at the
@@ -35,6 +37,11 @@ export async function leadsRouter(app: FastifyInstance) {
   app.get('/leads/:id/interactions', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_VIEW)] }, ctrl.getInteractions);
   app.post('/leads/:id/interactions', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_INTERACTION_LOG, 'You do not have permission to log interactions'), validate({ body: createInteractionSchema })] }, ctrl.createInteraction);
   app.get('/leads/:id/assignment-history', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_TIMELINE_VIEW)] }, ctrl.getAssignmentHistory);
+
+  // WhatsApp — the request body names only a template; the destination number is
+  // read from the lead server-side, so a client can never redirect a send.
+  app.get('/leads/:id/whatsapp/templates', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_WHATSAPP_SEND)] }, waCtrl.listTemplates);
+  app.post('/leads/:id/whatsapp', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_WHATSAPP_SEND, 'You do not have permission to send WhatsApp messages'), validate({ body: sendLeadWhatsAppSchema })] }, waCtrl.send);
 
   app.get('/leads/:id/follow-ups', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_FOLLOWUPS_VIEW)] }, ctrl.getFollowUps);
   app.post('/leads/:id/follow-ups', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_FOLLOWUPS_CREATE, 'You do not have permission to create follow-ups'), validate({ body: createFollowUpSchema })] }, fuCtrl.create);

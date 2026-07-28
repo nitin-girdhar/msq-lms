@@ -52,6 +52,17 @@ export interface LeadFormData {
   fields: LeadFormDataField[];
 }
 
+// A Meta-approved WhatsApp template offered in the lead edit modal's send form.
+// Deliberately does NOT carry template_name / placeholder tokens: the client
+// picks by id only, and the server resolves the rest.
+export interface WhatsAppTemplate {
+  id: string;
+  name: string;
+  label: string;
+  description: string | null;
+  preview_text: string | null;
+}
+
 export interface AssignmentView {
   id: string;
   lead_id: string;

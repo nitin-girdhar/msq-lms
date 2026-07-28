@@ -250,7 +250,7 @@ export default function LeadDashboardShell({ actor, enabledModules = ['lms'] }: 
       {/* Grid region */}
       <div className={`flex w-full flex-1 flex-col lg:min-h-0 lg:overflow-hidden ${activeFilter === 'followUp' ? 'p-2 sm:px-5 sm:py-1.5' : 'p-2 sm:px-5 sm:py-3'}`}>
         {activeFilter === 'followUp' ? (
-          <div className="flex w-full flex-1 flex-col overflow-y-auto lg:min-h-0">
+          <div className="flex w-full min-w-0 flex-1 flex-col overflow-y-auto lg:min-h-0">
             <FollowUpsShell actor={actor} embedded />
           </div>
         ) : (

@@ -232,8 +232,10 @@ function FollowUpGrid({ items, onEdit, onHistory, type }: { items: FollowUpItem[
       valueFormatter: (p) => p.value ? formatDate(p.value) : '—',
     },
     {
-      headerName: 'Notes', field: 'notes', flex: 2, minWidth: 120, filter: true, sortable: false,
+      headerName: 'Notes', field: 'notes', flex: 1.5, minWidth: 120, filter: true, sortable: false,
       valueFormatter: (p) => p.value ?? '—',
+      tooltipField: 'notes',
+      cellClass: 'truncate',
     },
     {
       headerName: '', width: 100, minWidth: 100, maxWidth: 100, sortable: false, filter: false, resizable: false, pinned: 'right',
@@ -275,7 +277,6 @@ function FollowUpGrid({ items, onEdit, onHistory, type }: { items: FollowUpItem[
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         domLayout="autoHeight"
-        autoSizeStrategy={{ type: 'fitGridWidth' }}
         pagination
         paginationPageSize={5}
         paginationPageSizeSelector={[5, 10, 25, 50]}
@@ -283,7 +284,6 @@ function FollowUpGrid({ items, onEdit, onHistory, type }: { items: FollowUpItem[
         headerHeight={40}
         animateRows={false}
         enableCellTextSelection
-        alwaysShowHorizontalScroll
         getRowId={(p) => p.data.leadId}
         getRowClass={getRowClass}
       />

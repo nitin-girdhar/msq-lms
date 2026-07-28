@@ -7,9 +7,9 @@ import { leads as leadsApi } from '../../lib/api/client';
 // ── Presentational: question → answer grid ──────────────────────────────────
 // Reusable wherever form-submission data is already fetched (e.g. history timeline).
 
-export function LeadFormDataFields({ fields }: { fields: LeadFormDataField[] }) {
+export function LeadFormDataFields({ fields, singleColumn }: { fields: LeadFormDataField[]; singleColumn?: boolean | undefined }) {
   return (
-    <dl className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
+    <dl className={`grid grid-cols-1 gap-x-8 gap-y-2 ${singleColumn ? '' : 'sm:grid-cols-2'}`}>
       {fields.map((f) => (
         <div key={f.key} className="flex flex-col gap-0.5 min-w-0">
           <dt className="text-[10px] font-bold uppercase tracking-widest text-[#94A3B8]">{f.label}</dt>
@@ -28,10 +28,12 @@ interface LeadFormDataPanelProps {
   leadId: string;
   source?: string | null | undefined;
   defaultOpen?: boolean;
+  /** Force a one-per-row field grid — for narrow containers (e.g. the Lead History left column). */
+  singleColumn?: boolean;
   className?: string | undefined;
 }
 
-export function LeadFormDataPanel({ leadId, source, defaultOpen = false, className }: LeadFormDataPanelProps) {
+export function LeadFormDataPanel({ leadId, source, defaultOpen = false, singleColumn, className }: LeadFormDataPanelProps) {
   const [data, setData] = useState<LeadFormData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(defaultOpen);
@@ -84,7 +86,7 @@ export function LeadFormDataPanel({ leadId, source, defaultOpen = false, classNa
       </button>
       {open && (
         <div className="mt-3">
-          <LeadFormDataFields fields={data.fields} />
+          <LeadFormDataFields fields={data.fields} singleColumn={singleColumn} />
         </div>
       )}
     </div>
