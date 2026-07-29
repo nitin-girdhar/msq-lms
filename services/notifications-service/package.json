@@ -16,6 +16,7 @@
   "dependencies": {
     "@lms/authz": "workspace:*",
     "@platform/db": "workspace:*",
+    "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",
     "fastify": "^5.2.1",
     "pino": "^9.6.0"

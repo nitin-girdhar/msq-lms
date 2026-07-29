@@ -10,6 +10,7 @@ export const HttpStatus = {
   UNPROCESSABLE: 422,
   INTERNAL: 500,
   BAD_GATEWAY: 502,
+  GATEWAY_TIMEOUT: 504,
 } as const;
 
 export class AppError extends Error {

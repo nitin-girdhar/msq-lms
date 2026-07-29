@@ -4,6 +4,7 @@ import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError, translatePgError } from './lib/errors.js';
 import { closeAllPools, startCapabilityCache, assertDbEnv } from '@platform/db';
+import { assertInternalServiceSecret } from '@platform/service-auth';
 
 const app = Fastify({
   logger: {
@@ -39,6 +40,10 @@ app.get('/health', async () => ({ status: 'ok', service: 'leads-service' }));
 
 const start = async () => {
   try {
+    // Fail fast rather than accepting traffic we cannot authenticate: without
+    // this secret every gateway-proxied request is rejected as unauthorized,
+    // and in production a placeholder value is refused outright.
+    assertInternalServiceSecret({ nodeEnv: config.nodeEnv, logPrefix: '[leads-service] ' });
     // Fail fast if a DB pool is unconfigured (e.g. missing DATABASE_URL_TENANT —
     // Issue #1), rather than 500-ing on the first tenant_admin request.
     assertDbEnv();

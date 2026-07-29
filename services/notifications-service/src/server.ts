@@ -4,7 +4,8 @@ import { config } from './config/index.js';
 import { streamRoutes } from './routes/stream.js';
 import { PgNotifyTransport } from './transport/pg-notify.transport.js';
 import { connectionManager } from './connections/manager.js';
-import { startFollowUpChecker, stopFollowUpChecker } from './services/followup-checker.js';
+import { startFollowUpChecker, stopFollowUpChecker, setFollowUpCheckerLogger } from './services/followup-checker.js';
+import { assertInternalServiceSecret } from '@platform/service-auth';
 
 const app = Fastify({
   logger: {
@@ -21,6 +22,16 @@ const transport = new PgNotifyTransport();
 
 const start = async () => {
   try {
+    // Fail fast rather than accepting traffic we cannot authenticate: without
+    // this secret every gateway-proxied request is rejected as unauthorized,
+    // and in production a placeholder value is refused outright.
+    assertInternalServiceSecret({ nodeEnv: config.nodeEnv, logPrefix: '[notifications-service] ' });
+
+    // Hand the connection manager and the follow-up poller the real pino logger
+    // before either can emit — both used console.* directly before this.
+    connectionManager.setLogger(app.log);
+    setFollowUpCheckerLogger(app.log);
+
     await transport.subscribe((event) => {
       app.log.info(
         { eventType: event.type, leadId: event.lead_id, orgId: event.org_id, clients: connectionManager.getClientCount() },

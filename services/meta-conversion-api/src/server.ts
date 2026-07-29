@@ -4,6 +4,7 @@ import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
 import { closeAllPools } from '@platform/db';
+import { assertInternalServiceSecret } from '@platform/service-auth';
 
 const app = Fastify({
   logger: {
@@ -49,6 +50,10 @@ app.get('/health', async () => ({ status: 'ok', service: 'meta-conversion-api' }
 
 const start = async () => {
   try {
+    // Fail fast rather than accepting traffic we cannot authenticate: without
+    // this secret every gateway-proxied request is rejected as unauthorized,
+    // and in production a placeholder value is refused outright.
+    assertInternalServiceSecret({ nodeEnv: config.nodeEnv, logPrefix: '[meta-conversion-api] ' });
     await app.listen({ port: config.port, host: '0.0.0.0' });
   } catch (err) {
     app.log.error(err);

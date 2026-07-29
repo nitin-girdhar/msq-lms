@@ -1,6 +1,7 @@
 import type { RoleTxContext } from '@platform/db';
 import { last10Digits } from '@platform/db';
 import { logActivity } from '@platform/audit-log';
+import { fetchWithTimeout, UpstreamTimeoutError } from '@platform/http';
 import { AppError, BadRequestError, NotFoundError, HttpStatus } from '../../../lib/errors.js';
 import { config } from '../../../config/index.js';
 import * as leadsRepo from '../leads/leads.repository.js';
@@ -143,7 +144,7 @@ export async function sendToLead(
   // headers and is not callable from here.
   let response: Response;
   try {
-    response = await fetch(`${config.communicationServiceUrl}/api/v1/communications/public-send`, {
+    response = await fetchWithTimeout(`${config.communicationServiceUrl}/api/v1/communications/public-send`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -159,8 +160,20 @@ export async function sendToLead(
         ...(bodyValues.length ? { body_values: bodyValues } : {}),
         ...(headerValues.length ? { header_values: headerValues } : {}),
       }),
+      timeoutMs: config.communicationServiceTimeoutMs,
+      target: 'communication-service/public-send',
     });
   } catch (err) {
+    // 504 rather than 502 on a timeout: communication-service in turn calls
+    // Interakt, so the likeliest cause is a slow third party rather than a dead
+    // service, and the send may well have gone out. Say so — the alternative is
+    // a user re-sending a WhatsApp message that already reached the customer.
+    if (err instanceof UpstreamTimeoutError) {
+      throw new AppError(
+        'The messaging service did not respond in time. The message may still have been sent — check the lead timeline before retrying.',
+        HttpStatus.GATEWAY_TIMEOUT,
+      );
+    }
     throw new AppError(
       `Could not reach the messaging service: ${(err as Error).message}`,
       HttpStatus.BAD_GATEWAY,

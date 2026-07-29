@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '@platform/http';
 import { config } from '../config/index.js';
 
 export interface IntakeLeadPayload {
@@ -23,13 +24,18 @@ export interface IntakeLeadResult {
 export async function createIntakeLead(payload: IntakeLeadPayload): Promise<IntakeLeadResult> {
   const url = new URL('/api/v1/intake/webhook', config.leadsServiceUrl).toString();
 
-  const response = await fetch(url, {
+  // Runs inside Meta's webhook delivery window: Meta retries a delivery it does
+  // not see acknowledged quickly, so hanging here does not just leak a socket, it
+  // multiplies the inbound load. Bounded short for that reason.
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Internal-Secret': config.internalServiceSecret,
     },
     body: JSON.stringify(payload),
+    timeoutMs: config.leadsServiceTimeoutMs,
+    target: 'leads-service/intake',
   });
 
   if (!response.ok) {
