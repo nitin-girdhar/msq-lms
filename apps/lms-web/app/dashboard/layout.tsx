@@ -1,4 +1,5 @@
-import { NotificationProvider, productOrigins } from '@platform/ui-kit';
+import { redirect } from 'next/navigation';
+import { NotificationProvider, productOrigins, authOrigin, usableProducts, landingFor } from '@platform/ui-kit';
 import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
 import { requireSession } from '@platform/ui-kit/server';
 import { DASHBOARD_NAV } from '@/src/config/navigation';
@@ -9,6 +10,21 @@ export const dynamic = 'force-dynamic';
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { session, licensedProducts } = await requireSession('/dashboard');
   const origins = productOrigins();
+  const usable = usableProducts(licensedProducts, session);
+
+  // The LMS shell had no product gate, so an unlicensed tenant or an HR-only
+  // user who navigated here directly got a rendered dashboard with an empty
+  // sidebar and 403-ing data calls. Bounce them to something they can use, the
+  // same way HrModuleShell and TaskModuleShell do.
+  if (!usable.includes('lms')) {
+    const elsewhere = landingFor(
+      usable.filter((p) => p !== 'lms'),
+      origins,
+    );
+    if (elsewhere) redirect(elsewhere);
+    const auth = authOrigin();
+    redirect(auth ? `${auth}/no-access` : '/no-access');
+  }
 
   // NotificationBell is explicitly keyed: an element passed as a prop from a
   // Server Component to a Client Component crosses the RSC wire with key=null

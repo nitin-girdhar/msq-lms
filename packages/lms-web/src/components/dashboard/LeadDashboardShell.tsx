@@ -49,7 +49,10 @@ interface Props {
   enabledModules?: PlatformModule[];
 }
 
-export default function LeadDashboardShell({ actor, enabledModules = ['lms'] }: Props) {
+// enabledModules defaults to NOTHING, matching getEnabledModules' fail-closed
+// value. Defaulting to ['lms'] here would quietly re-assert the CRM entitlement
+// that server helper stopped assuming.
+export default function LeadDashboardShell({ actor, enabledModules = [] }: Props) {
   const [activeFilter, setActiveFilter] = useState<CardFilter>('all');
 
   const {

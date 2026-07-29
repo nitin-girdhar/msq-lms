@@ -1,12 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useMemo, useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../../types/leads';
 import type { StageOutcome, UpdatePayload } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
-import { UserPicker } from '@platform/ui-kit';
+import { Modal, UserPicker } from '@platform/ui-kit';
 import { LeadFormDataPanel } from './LeadFormDataPanel';
 import TransferOutModal from './TransferOutModal';
 import WhatsAppSendModal from './WhatsAppSendModal';
@@ -76,16 +75,6 @@ export function LeadEditModal({
     if (inList) return inList.name ?? inList.email;
     return lead.assigned_rep_name ?? null;
   })();
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
 
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
@@ -184,19 +173,8 @@ export function LeadEditModal({
     : showRejection ? 'border border-[#FCA5A5] bg-[#FEF2F2]'
     : '';
 
-  if (typeof document === 'undefined') return null;
-
-  const portal = createPortal(
-    <div
-      className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-[2px] p-4 sm:p-6"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="my-auto w-full max-w-3xl rounded-2xl bg-white shadow-2xl">
-        {/* Header */}
-        <div className="flex items-start justify-between border-b border-[#F1F5F9] px-6 py-4">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-[#0F172A]">Edit Lead</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+  const subtitle = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               <span className="text-sm font-medium text-[#0F172A]">{lead.full_name || '—'}</span>
               {lead.phone && (
                 <a href={`tel:${lead.phone}`} className="flex items-center gap-1 text-xs text-[#0b6cbf] hover:underline">
@@ -235,15 +213,53 @@ export function LeadEditModal({
                 </svg>
                 WhatsApp
               </button>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="ml-4 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#64748B] hover:bg-[#F1F5F9]">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+    </div>
+  );
 
+  const footer = (
+    <div className="flex justify-end gap-3">
+      <button type="button" onClick={onClose} disabled={saving}
+        className="rounded-lg border border-[#E2E8F0] px-4 py-2 text-sm font-semibold text-[#475569] transition-colors hover:bg-[#F8FAFC] disabled:opacity-60">
+        Cancel
+      </button>
+      {selectedStatus === 'transferred_out' ? (
+        <button type="button" onClick={() => setShowTransferModal(true)}
+          disabled={!statusChanged}
+          className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60">
+          Transfer Lead →
+        </button>
+      ) : (
+        <button type="button" onClick={handleSave}
+          disabled={saving || !anyFieldChanged}
+          className="rounded-lg bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#0a5fa8] disabled:cursor-not-allowed disabled:opacity-60">
+          {saving ? (
+            <span className="inline-flex items-center gap-1.5">
+              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Saving…
+            </span>
+          ) : 'Save Changes'}
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        title="Edit Lead"
+        subtitle={subtitle}
+        maxWidth="max-w-3xl"
+        locked={saving}
+        footer={footer}
+        // The sections carry their own px-6 gutters and divider rules, so the
+        // body opts out of the shell's default padding.
+        bodyClassName="sheet-scroll min-h-0 flex-1 overflow-y-auto"
+      >
         <div className="flex flex-col divide-y divide-[#F1F5F9]">
           {/* Read-only lead details */}
           <div className="px-6 py-4">
@@ -357,46 +373,12 @@ export function LeadEditModal({
         </div>
 
         {saveError && (
-          <div className="mx-6 mb-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div className="mx-6 my-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
             {saveError}
           </div>
         )}
+      </Modal>
 
-        <div className="flex justify-end gap-3 border-t border-[#F1F5F9] px-6 py-4">
-          <button type="button" onClick={onClose} disabled={saving}
-            className="rounded-lg border border-[#E2E8F0] px-4 py-2 text-sm font-semibold text-[#475569] transition-colors hover:bg-[#F8FAFC] disabled:opacity-60">
-            Cancel
-          </button>
-          {selectedStatus === 'transferred_out' ? (
-            <button type="button" onClick={() => setShowTransferModal(true)}
-              disabled={!statusChanged}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60">
-              Transfer Lead →
-            </button>
-          ) : (
-            <button type="button" onClick={handleSave}
-              disabled={saving || !anyFieldChanged}
-              className="rounded-lg bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#0a5fa8] disabled:cursor-not-allowed disabled:opacity-60">
-              {saving ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Saving…
-                </span>
-              ) : 'Save Changes'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-
-  return (
-    <>
-      {portal}
       <TransferOutModal
         open={showTransferModal}
         onClose={() => setShowTransferModal(false)}

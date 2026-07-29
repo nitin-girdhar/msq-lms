@@ -7,6 +7,10 @@ import { apiClients as apiClientsApi } from '@/src/lib/api/client';
 import type { ApiClientView } from '@/src/lib/api/client';
 import { Modal } from '@platform/ui-kit';
 
+// The submit button lives in the Modal's pinned footer, outside the <form>;
+// the HTML `form` attribute is what still wires it to this form.
+const FORM_ID = 'edit-api-client-form';
+
 interface OrgOption {
   id: string;
   name: string;
@@ -83,9 +87,25 @@ export default function EditApiClientModal({ open, onClose, client, orgs, isOrgA
     }
   };
 
+  const footer = (
+    <div className="flex justify-end gap-2">
+      <button type="button" onClick={handleClose} disabled={pending}
+        className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60">
+        Cancel
+      </button>
+      <button type="submit" form={FORM_ID} disabled={pending} aria-busy={pending}
+        className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70">
+        {pending && (
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
+        )}
+        {pending ? 'Saving…' : 'Save changes'}
+      </button>
+    </div>
+  );
+
   return (
-    <Modal open={open} onClose={handleClose} title={`Edit "${client.name}"`} locked={pending}>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+    <Modal open={open} onClose={handleClose} title={`Edit "${client.name}"`} locked={pending} footer={footer}>
+      <form id={FORM_ID} onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
         {error && (
           <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             {error}
@@ -178,19 +198,6 @@ export default function EditApiClientModal({ open, onClose, client, orgs, isOrgA
           <span className="text-[11px] text-[#94A3B8]">Leave blank to clear the expiry (never expires).</span>
         </div>
 
-        <div className="mt-2 flex justify-end gap-2">
-          <button type="button" onClick={handleClose} disabled={pending}
-            className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60">
-            Cancel
-          </button>
-          <button type="submit" disabled={pending} aria-busy={pending}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70">
-            {pending && (
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden />
-            )}
-            {pending ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
       </form>
     </Modal>
   );

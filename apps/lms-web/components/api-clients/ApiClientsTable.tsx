@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Modal } from '@platform/ui-kit';
 import { apiClients as apiClientsApi } from '@/src/lib/api/client';
 import type { ApiClientView } from '@/src/lib/api/client';
 
@@ -41,21 +42,70 @@ function statusLabel(client: ApiClientView): { text: string; className: string }
 export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
   const router = useRouter();
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<ApiClientView | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
-  const handleRevoke = async (client: ApiClientView) => {
-    if (!window.confirm(`Revoke "${client.name}"? Any integration using this key will stop working immediately.`)) {
-      return;
-    }
-    setRevokingId(client.id);
+  const handleRevoke = async () => {
+    if (!confirming) return;
+    setRevokingId(confirming.id);
+    setRevokeError(null);
     try {
-      await apiClientsApi.revoke(client.id);
+      await apiClientsApi.revoke(confirming.id);
+      setConfirming(null);
       router.refresh();
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'Failed to revoke token.');
+      setRevokeError(err instanceof Error ? err.message : 'Failed to revoke token.');
     } finally {
       setRevokingId(null);
     }
   };
+
+  const closeConfirm = () => {
+    if (revokingId) return;
+    setConfirming(null);
+    setRevokeError(null);
+  };
+
+  const confirmDialog = confirming && (
+    <Modal
+      open
+      onClose={closeConfirm}
+      title={`Revoke "${confirming.name}"?`}
+      locked={!!revokingId}
+      footer={
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={closeConfirm}
+            disabled={!!revokingId}
+            className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleRevoke}
+            disabled={!!revokingId}
+            aria-busy={!!revokingId}
+            className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {revokingId ? 'Revoking…' : 'Revoke token'}
+          </button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-[#475569]">
+          Any integration using this key will stop working immediately. This cannot be undone.
+        </p>
+        {revokeError && (
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {revokeError}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
 
   if (clients.length === 0) {
     return (
@@ -66,6 +116,7 @@ export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
   }
 
   return (
+    <>
     <div className="overflow-x-auto rounded-2xl border border-[#E2E8F0] bg-white shadow-sm">
       <table className="w-full min-w-[900px] text-left text-sm">
         <thead className="border-b border-[#E2E8F0] bg-[#F8FAFC] text-xs font-semibold uppercase tracking-wide text-[#64748B]">
@@ -113,7 +164,7 @@ export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRevoke(client)}
+                      onClick={() => { setRevokeError(null); setConfirming(client); }}
                       disabled={revoked || revokingId === client.id}
                       className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -127,5 +178,7 @@ export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
         </tbody>
       </table>
     </div>
+    {confirmDialog}
+    </>
   );
 }

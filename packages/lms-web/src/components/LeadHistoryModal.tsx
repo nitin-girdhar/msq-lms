@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { Modal } from "@platform/ui-kit";
 import type { LeadView } from "../types/leads";
 import { leads as leadsApi } from '../lib/api/client';
 import { LeadFormDataPanel } from "./leads/LeadFormDataPanel";
 import { STATUS_CONFIG } from "./leads/constants";
+
+// The Save button lives in the Modal's pinned footer, outside the <form>; the
+// HTML `form` attribute is what still wires it to this form.
+const FOLLOW_UP_FORM_ID = "follow-up-action-form";
 
 interface TimelineEvent {
   eventId: string;
@@ -518,34 +522,62 @@ function FollowUpActionModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-[#E2E8F0] px-6 py-4">
-          <h2 className="text-base font-semibold text-[#0F172A]">
-            Update Follow-Up
-          </h2>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1 text-[#94A3B8] hover:bg-[#F1F5F9] hover:text-[#475569]"
-          >
+  const footer = (
+    <div className="flex gap-3">
+      <button
+        type="button"
+        onClick={onClose}
+        disabled={loading}
+        className="flex-1 rounded-lg border border-[#E2E8F0] px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:opacity-50"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        form={FOLLOW_UP_FORM_ID}
+        disabled={loading}
+        className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#0891b2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0e7490] disabled:opacity-50"
+      >
+        {loading ? (
+          <>
             <svg
-              className="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
+              className="h-4 w-4 animate-spin"
               viewBox="0 0 24 24"
+              fill="none"
             >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
               <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
               />
             </svg>
-          </button>
-        </div>
+            Saving…
+          </>
+        ) : (
+          "Save"
+        )}
+      </button>
+    </div>
+  );
 
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Update Follow-Up"
+      locked={loading}
+      footer={footer}
+      layer="nested"
+    >
+      <form id={FOLLOW_UP_FORM_ID} onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#94A3B8]">
               Action
@@ -626,51 +658,8 @@ function FollowUpActionModal({
             </p>
           )}
 
-          <div className="flex gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={loading}
-              className="flex-1 rounded-lg border border-[#E2E8F0] px-4 py-2 text-sm font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#0891b2] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0e7490] disabled:opacity-50"
-            >
-              {loading ? (
-                <>
-                  <svg
-                    className="h-4 w-4 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  Saving…
-                </>
-              ) : (
-                "Save"
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -713,58 +702,60 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  if (typeof document === "undefined") return null;
-
   const currentStatus = lead?.stage ?? "";
   const statusLabel = statusLabelMap[currentStatus] ?? lead?.stage_label ?? currentStatus;
   const statusCfg = STATUS_CONFIG[currentStatus];
   const groups = groupEvents(events);
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-[2px] p-4 sm:p-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="my-auto w-full max-w-5xl rounded-2xl bg-white shadow-2xl flex flex-col overflow-hidden md:min-h-[60vh]"
-        style={{ maxHeight: "90vh" }}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between border-b border-[#F1F5F9] px-6 py-4 shrink-0">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-[#0F172A]">Lead History</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-              <span className="text-sm font-medium text-[#0F172A]">{lead?.full_name || "—"}</span>
-              {lead?.phone && (
-                <a href={`tel:${lead.phone}`} className="flex items-center gap-1 text-xs text-[#0b6cbf] hover:underline">
-                  <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 17.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                  </svg>
-                  {lead.phone}
-                </a>
-              )}
-              {lead?.email && (
-                <a href={`mailto:${lead.email}`} className="flex items-center gap-1 text-xs text-[#0b6cbf] hover:underline">
-                  <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                  </svg>
-                  {lead.email}
-                </a>
-              )}
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="ml-4 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#64748B] hover:bg-[#F1F5F9]">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+  const subtitle = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+      <span className="text-sm font-medium text-[#0F172A]">{lead?.full_name || "—"}</span>
+      {lead?.phone && (
+        <a href={`tel:${lead.phone}`} className="flex items-center gap-1 text-xs text-[#0b6cbf] hover:underline">
+          <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498A1 1 0 0121 17.72V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+          </svg>
+          {lead.phone}
+        </a>
+      )}
+      {lead?.email && (
+        <a href={`mailto:${lead.email}`} className="flex items-center gap-1 text-xs text-[#0b6cbf] hover:underline">
+          <svg className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+          {lead.email}
+        </a>
+      )}
+    </div>
+  );
 
-        {/* Body — two columns on desktop; below md this wrapper is the ONLY scroller,
-            so a large form submission can never push the activity history out of view. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+  const footer = (
+    <div className="flex justify-end">
+      <button
+        type="button"
+        onClick={onClose}
+        className="rounded-lg border border-[#E2E8F0] px-5 py-2 text-sm font-semibold text-[#475569] transition-colors hover:bg-[#F8FAFC]"
+      >
+        Close
+      </button>
+    </div>
+  );
+
+  return (
+    <>
+      <Modal
+        open
+        onClose={onClose}
+        title="Lead History"
+        subtitle={subtitle}
+        maxWidth="max-w-5xl"
+        footer={footer}
+        // Two panes on desktop, each with its own scroller; below md this wrapper
+        // is the ONLY scroller, so a large form submission can never push the
+        // activity history out of view. Hence the custom body instead of the
+        // shell's single padded scroll region.
+        bodyClassName="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden"
+      >
           {/* Left column: lead details + form submission */}
           <div className="md:w-[42%] md:shrink-0 md:overflow-y-auto md:border-r md:border-[#F1F5F9]">
             {/* Lead Details */}
@@ -903,18 +894,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
             )}
             </div>
           </div>
-        </div>
-
-        <div className="flex justify-end border-t border-[#F1F5F9] px-6 py-4 shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-[#E2E8F0] px-5 py-2 text-sm font-semibold text-[#475569] transition-colors hover:bg-[#F8FAFC]"
-          >
-            Close
-          </button>
-        </div>
-      </div>
+      </Modal>
 
       {activeFollowUp && (
         <FollowUpActionModal
@@ -926,8 +906,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
           }}
         />
       )}
-    </div>,
-    document.body,
+    </>
   );
 }
 

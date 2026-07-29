@@ -12,6 +12,10 @@ import AssignmentSelector from "./AssignmentSelector";
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// The submit button lives in the Modal's pinned footer, outside the <form>;
+// the HTML `form` attribute is what still wires it to this form.
+const FORM_ID = 'assign-lead-form';
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -230,14 +234,59 @@ export default function AssignLeadModal({
 
   const isEdit = !!existing;
 
+  const footer = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      {isEdit ? (
+        <button
+          type="button"
+          onClick={unassign}
+          disabled={pending}
+          className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Unassign
+        </button>
+      ) : (
+        <span className="text-[11px] text-[#64748B]">
+          Acting as {actor.email}
+        </span>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={close}
+          disabled={pending}
+          className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          form={FORM_ID}
+          disabled={pending}
+          aria-busy={pending}
+          className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-3 py-2 text-xs font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          {pending && (
+            <span
+              className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+              aria-hidden
+            />
+          )}
+          {isEdit ? "Save changes" : "Add lead"}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <Modal
       open={open}
       onClose={close}
       title={isEdit ? "Edit assignment" : "New walk-in lead"}
       locked={pending}
+      footer={footer}
     >
-      <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
+      <form id={FORM_ID} onSubmit={submit} className="flex flex-col gap-4" noValidate>
         {error && (
           <div
             role="alert"
@@ -432,46 +481,6 @@ export default function AssignLeadModal({
           />
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          {isEdit ? (
-            <button
-              type="button"
-              onClick={unassign}
-              disabled={pending}
-              className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Unassign
-            </button>
-          ) : (
-            <span className="text-[11px] text-[#64748B]">
-              Acting as {actor.email}
-            </span>
-          )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={close}
-              disabled={pending}
-              className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={pending}
-              aria-busy={pending}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#0b6cbf] px-3 py-2 text-xs font-semibold text-white hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {pending && (
-                <span
-                  className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
-                  aria-hidden
-                />
-              )}
-              {isEdit ? "Save changes" : "Add lead"}
-            </button>
-          </div>
-        </div>
       </form>
     </Modal>
   );
