@@ -19,4 +19,9 @@ export const config = {
   // the downstream call is still in flight — leaving the message sent but the
   // caller told it failed.
   communicationServiceTimeoutMs: timeoutFromEnv('LEADS_COMMUNICATION_SERVICE_TIMEOUT_MS', 15_000),
+  // Daily lead report: Bcc platform super_admins on every tenant's report.
+  // No timezone setting here on purpose — every "today" count is bounded by the
+  // branch's own entity.organizations.timezone inside the SQL views, so there is
+  // nothing for an env var to influence.
+  reportIncludeSuperAdmins: process.env['LEAD_REPORT_INCLUDE_SUPER_ADMINS'] !== 'false',
 } as const;

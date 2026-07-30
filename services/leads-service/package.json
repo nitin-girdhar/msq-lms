@@ -11,7 +11,9 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist",
-    "dev:local": "tsx watch --env-file .env src/server.ts"
+    "dev:local": "tsx watch --env-file .env src/server.ts",
+    "send-lead-report": "tsx --env-file ../../.env src/jobs/send-lead-report.ts",
+    "send-lead-report:prod": "node dist/jobs/send-lead-report.js"
   },
   "dependencies": {
     "@lms/authz": "workspace:*",

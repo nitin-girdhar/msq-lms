@@ -1,4 +1,4 @@
-.PHONY: dev dev-services stop build install migrate seed-admin seed-data lint typecheck test clean clean-all help db-shell build-docker up down logs
+.PHONY: dev dev-services stop build install migrate seed-admin seed-data send-lead-report lint typecheck test clean clean-all help db-shell build-docker up down logs
 
 # ── Variables ──────────────────────────────────────────────────────────────────
 COMPOSE := docker compose
@@ -47,6 +47,15 @@ seed-data: ## Seed leads, interactions, and follow-ups (run after seed-admin)
 	$(call run_sql,db_scripts/03-seed-leads-bulk.sql)
 	$(call run_sql,db_scripts/04-seed-interactions-followups.sql)
 	$(call run_sql,db_scripts/05-cleanup-seed-helpers.sql)
+
+# ── Jobs ───────────────────────────────────────────────────────────────────────
+# LOCAL DEV ONLY. Runs on the host via tsx, so COMMUNICATION_SERVICE_URL must be
+# host-reachable — in the compose deployment it is not (the service is `expose`d,
+# not published), and every tenant fails on connect. Use the production runner
+# for anything real, which executes inside the container on the compose network:
+#   msq-deploy/reports/send-lead-report.sh --dry-run
+send-lead-report: ## Email the daily lead report per tenant — LOCAL ONLY (ARGS="--dry-run --tenant=<uuid>")
+	$(PNPM) --filter @crm/leads-service send-lead-report -- $(ARGS)
 
 db-shell: ## Open a psql shell in the Postgres container
 	docker exec -it $(DB_CONTAINER) psql -U $(POSTGRES_USER) -d $(DB_NAME)
