@@ -9,6 +9,12 @@
     "src/routes",
     "src/mutations",
     "src/queries",
-    "src/serializers"
+    "src/serializers",
+    // Tests are excluded from the BUILD so they stay out of dist. They are still
+    // typechecked — see tsconfig.typecheck.json, which the `typecheck` script
+    // uses. Excluding them from both would leave the test suite as the only
+    // unchecked code in the service.
+    "src/**/*.test.ts",
+    "src/**/__tests__/**"
   ]
 }

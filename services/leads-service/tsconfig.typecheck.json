@@ -1,0 +1,15 @@
+// Typecheck everything the build excludes for packaging reasons — the tests.
+// vitest does not typecheck, so without this a fixture drifting from a type shows
+// up as a confusing runtime failure instead of a compile error.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "exclude": [
+    "src/routes",
+    "src/mutations",
+    "src/queries",
+    "src/serializers"
+  ]
+}

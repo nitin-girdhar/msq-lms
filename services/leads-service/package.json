@@ -9,7 +9,9 @@
     "build": "tsc",
     "dev": "tsx watch --env-file ../../.env src/server.ts",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rimraf dist",
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
@@ -21,6 +23,7 @@
     "@platform/db": "workspace:*",
     "@platform/http": "workspace:*",
     "@platform/rbac": "workspace:*",
+    "@platform/reporting": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",
     "drizzle-orm": "^0.45.2",
@@ -33,6 +36,7 @@
     "pino-pretty": "^13.0.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
   }
 }
