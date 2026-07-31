@@ -17,9 +17,19 @@ interface Props {
   clients: ApiClientView[];
   orgs: OrgOption[];
   actor: SessionUser;
+  /**
+   * Holds `lms.apiclients.manage` — resolved once on the server so this and the
+   * gate behind it read the same list.
+   *
+   * Separate from page access on purpose: `lms.apiclients.view` alone opens this
+   * screen, and identity-service re-checks `.manage` FRESH on every create,
+   * update, rotate and revoke. Rendering those controls without it offered an
+   * action the server refuses.
+   */
+  canManage: boolean;
 }
 
-export default function ApiClientsClient({ clients, orgs, actor }: Props) {
+export default function ApiClientsClient({ clients, orgs, actor, canManage }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ApiClientView | null>(null);
   const isOrgAdmin = actor.rank < RANKS.TENANT_ADMIN;
@@ -33,16 +43,18 @@ export default function ApiClientsClient({ clients, orgs, actor }: Props) {
             Manage credentials for the public API. Keys are shown once at creation — they cannot be retrieved again.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699]"
-        >
-          New token
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white hover:bg-[#095699]"
+          >
+            New token
+          </button>
+        )}
       </div>
 
-      <ApiClientsTable clients={clients} orgs={orgs} onEdit={setEditTarget} />
+      <ApiClientsTable clients={clients} orgs={orgs} onEdit={setEditTarget} canManage={canManage} />
 
       <CreateApiClientModal
         open={createOpen}

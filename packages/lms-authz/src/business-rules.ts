@@ -144,6 +144,17 @@ export function checkManageUsersAccess(actor: CapabilityHolder): boolean {
   return can(actor, CAPABILITY.LMS_USERS_MANAGE);
 }
 
+// canOpenApiClients() only answers whether the API Tokens PAGE opens, and
+// lms.apiclients.view alone satisfies it. Minting, editing, rotating and revoking
+// credentials are the `.manage` operation, which identity-service checks
+// separately and FRESH (hasCapabilityFresh) on every one of those calls. Without
+// this the page rendered New token / Edit / Revoke to a view-only role and only
+// told them on submit — the render-then-403 shape the tree exists to remove, on
+// the one screen that issues integration credentials.
+export function checkManageApiClientsAccess(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_APICLIENTS_MANAGE);
+}
+
 // ── Leads-history scope (SENIORITY, not permission) ─────────────────────
 // Deliberately still rank/role-driven. "How far down the org can you see" is a
 // hierarchy question — the answer has to be an ordered scope, and a boolean

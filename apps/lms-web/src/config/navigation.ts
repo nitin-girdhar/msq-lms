@@ -26,3 +26,16 @@ export const DASHBOARD_NAV: readonly NavItem[] = [
 export function navItemsForActor(actor: SessionUser): NavItem[] {
   return filterNav(DASHBOARD_NAV, actor);
 }
+
+/**
+ * Where to send someone who reached a CRM page they may not open.
+ *
+ * The first nav entry they CAN open, not a fixed path. Every guard used to
+ * redirect to /dashboard/leads, which was safe only while leads itself was
+ * ungated — now that it guards too, a role denied leads would bounce from one
+ * denial into the same denial forever. /dashboard/no-access is the terminal
+ * case: session-only, no capability gate, so it can never bounce again.
+ */
+export function fallbackPathForActor(actor: SessionUser): string {
+  return navItemsForActor(actor)[0]?.href ?? '/dashboard/no-access';
+}

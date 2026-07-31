@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation';
 import { buildLoginUrl } from '@platform/ui-kit';
 import type { SessionUser } from '@platform/types';
-import { LMS_RANKS } from '@lms/authz';
+import { canOpenUsers } from '@lms/authz';
 import { getServerSession, GATEWAY_URL } from '@platform/ui-kit/server';
 import UsersClient from '@/components/users/UsersClient';
+import { fallbackPathForActor } from '@/src/config/navigation';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export default async function UsersPage() {
   const result = await getServerSession();
   if (!result) redirect(buildLoginUrl());
   const { session, cookieHeader } = result;
-  if (session.rank < LMS_RANKS.SSE) redirect('/dashboard/leads');
+  if (!canOpenUsers(session)) redirect(fallbackPathForActor(session));
 
   const [usersRes, orgsRes] = await Promise.all([
     fetch(`${GATEWAY_URL}/users`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),

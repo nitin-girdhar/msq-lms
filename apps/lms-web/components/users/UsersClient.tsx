@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { RANKS } from '@platform/authz';
 import type { SessionUser } from '@platform/types';
-import { canManageUsers } from '@/src/lib/permissions';
+import { checkManageUsersAccess } from '@lms/authz';
 import UsersTable from './UsersTable';
 import CreateUserModal from './CreateUserModal';
 import EditUserModal from './EditUserModal';
@@ -23,7 +23,9 @@ export default function UsersClient({ users, actor, orgs }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
 
-  const canCreate = canManageUsers(actor);
+  // Capability, not rank: the "New user" button and the /users write behind it
+  // now answer to the same lms.users.manage grant.
+  const canCreate = checkManageUsersAccess(actor);
 
   const subtitle =
     actor.rank >= RANKS.ORG_ADMIN

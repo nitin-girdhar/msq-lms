@@ -6,60 +6,34 @@ export { LMS_RANKS as RANKS } from '@lms/authz';
 export type { SessionUser, UserRole } from '@platform/types';
 
 import { ROLE_RANK } from '@platform/auth-constants';
-import type { SessionUser, UserRole } from '@platform/types';
 import { LMS_RANKS as RANKS } from '@lms/authz';
 
-export function canManageUsers(user: SessionUser | null | undefined): boolean {
-  if (!user) return false;
-  return user.rank >= RANKS.MANAGER;
-}
+// ── What used to live here ──────────────────────────────────────────────────
+// Tier C3 removed a family of rank predicates from this file — canViewAnalytics,
+// canManageApiClients, canManageUsersView, canViewUser, canAssignLeads,
+// canManageUsers, hasMinimumRoleByName. Every one of them asked "is this rank
+// high enough", which can only describe the ladder the platform ships with; a
+// tenant-defined role matched none of them. Page access now resolves through
+// @lms/authz's canOpenX() against the capability matrix, and the "New user"
+// affordance through checkManageUsersAccess(). Most had no call sites at all by
+// the time they were removed — the inline `session.rank < RANKS.ADMIN` checks in
+// the page files were doing the work, and those are gone too.
 
-export function canManageUsersView(user: SessionUser | null | undefined): boolean {
-  if (!user) return false;
-  return user.rank >= RANKS.SSE;
-}
-
+/**
+ * May an actor of `actorRank` create a user holding `targetRank`?
+ *
+ * Deliberately still RANK-based, and not a candidate for a capability. This is
+ * a SENIORITY question — "is A far enough up the ladder to mint someone at B" —
+ * and the answer depends on the ordering of two ranks, which a boolean grant
+ * cannot express. Same reasoning as @lms/authz's canAssignToUser.
+ *
+ * Authority to be on the Users screen at all is a capability (lms.users.manage,
+ * checked upstream). This only decides how far down that authority reaches.
+ */
 export function canCreateUser(actorRank: number, targetRank: number): boolean {
   if (actorRank < RANKS.MANAGER) return false;
   return actorRank > targetRank;
 }
 
-export function canViewUser(
-  actor: SessionUser | null | undefined,
-  target: { id: string; rank: number },
-): boolean {
-  if (!actor) return false;
-  if (actor.rank >= RANKS.ADMIN) return true;
-  if (target.id === actor.id) return true;
-  if (target.rank >= RANKS.ADMIN) return false;
-  if (actor.rank >= RANKS.MANAGER) return true;
-  if (actor.rank === RANKS.SSE) return target.rank <= RANKS.SE;
-  return false;
-}
-
-export function canAssignLeads(user: SessionUser | null | undefined): boolean {
-  if (!user) return false;
-  return user.rank >= RANKS.MANAGER;
-}
-
-export function canViewAnalytics(user: SessionUser | null | undefined): boolean {
-  if (!user) return false;
-  return user.rank >= RANKS.ADMIN;
-}
-
-export function canManageApiClients(user: SessionUser | null | undefined): boolean {
-  if (!user) return false;
-  return user.rank >= RANKS.ADMIN;
-}
-
 // Re-export ROLE_RANK for callers that need the full map
 export { ROLE_RANK };
-
-// Alias for monolith-compat
-export function hasMinimumRoleByName(
-  user: SessionUser | null | undefined,
-  min: UserRole,
-): boolean {
-  if (!user) return false;
-  return user.rank >= ROLE_RANK[min];
-}

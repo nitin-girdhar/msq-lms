@@ -15,6 +15,9 @@ interface Props {
   clients: ApiClientView[];
   orgs: OrgOption[];
   onEdit: (client: ApiClientView) => void;
+  /** Holds `lms.apiclients.manage`. Without it the row is read-only: Edit and
+   *  Revoke both call endpoints identity-service gates on that capability. */
+  canManage: boolean;
 }
 
 // Pinned locale + timezone so the SSR pass (Node's default locale/timezone)
@@ -39,7 +42,7 @@ function statusLabel(client: ApiClientView): { text: string; className: string }
   return { text: 'Active', className: 'bg-emerald-100 text-emerald-700' };
 }
 
-export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
+export default function ApiClientsTable({ clients, orgs, onEdit, canManage }: Props) {
   const router = useRouter();
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<ApiClientView | null>(null);
@@ -110,7 +113,7 @@ export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
   if (clients.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-[#E2E8F0] bg-white p-8 text-center text-sm text-[#64748B]">
-        No API tokens yet. Create one to get started.
+        {canManage ? 'No API tokens yet. Create one to get started.' : 'No API tokens yet.'}
       </div>
     );
   }
@@ -128,7 +131,7 @@ export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
             <th className="px-4 py-3">Expires</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3">Created</th>
-            <th className="px-4 py-3 text-right">Actions</th>
+            {canManage && <th className="px-4 py-3 text-right">Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-[#E2E8F0]">
@@ -152,26 +155,28 @@ export default function ApiClientsTable({ clients, orgs, onEdit }: Props) {
                 <td className="px-4 py-3 text-xs text-[#64748B]">
                   {formatDate(client.created_at)}
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onEdit(client)}
-                      disabled={revoked}
-                      className="rounded-lg border border-[#E2E8F0] px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setRevokeError(null); setConfirming(client); }}
-                      disabled={revoked || revokingId === client.id}
-                      className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {revokingId === client.id ? 'Revoking…' : 'Revoke'}
-                    </button>
-                  </div>
-                </td>
+                {canManage && (
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onEdit(client)}
+                        disabled={revoked}
+                        className="rounded-lg border border-[#E2E8F0] px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setRevokeError(null); setConfirming(client); }}
+                        disabled={revoked || revokingId === client.id}
+                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {revokingId === client.id ? 'Revoking…' : 'Revoke'}
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             );
           })}
