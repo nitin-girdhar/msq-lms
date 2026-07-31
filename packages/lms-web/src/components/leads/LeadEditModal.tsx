@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { SessionUser } from '@platform/types';
+import { can, CAPABILITY } from '@platform/rbac';
 import type { LeadView } from '../../types/leads';
 import type { StageOutcome, UpdatePayload } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
@@ -44,9 +45,18 @@ export function LeadEditModal({
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
 
-  // Mirrors the server-side check (last10Digits): anything that doesn't yield 10
-  // digits can't be dialled, so the button stays visible but inert rather than
-  // letting the rep click through to a guaranteed error.
+  // Two independent questions, and they get different treatments.
+  //
+  // MAY THEY SEND AT ALL — the capability leads-service gates both WhatsApp
+  // routes on. Absent, the button is not rendered: unticking `Send WhatsApp` in
+  // the Capability Matrix has to actually remove the action, not leave it on
+  // screen to 403 on click.
+  const mayWhatsApp = can(actor, CAPABILITY.LMS_LEADS_WHATSAPP_SEND);
+
+  // CAN THIS LEAD RECEIVE — mirrors the server-side check (last10Digits):
+  // anything that doesn't yield 10 digits can't be dialled, so the button stays
+  // visible but inert rather than letting the rep click through to a guaranteed
+  // error. A permission the role holds shouldn't vanish over missing lead data.
   const canWhatsApp = (lead.phone ?? '').replace(/\D/g, '').length >= 10;
 
   const stageNameToId = useMemo(() => {
@@ -192,10 +202,12 @@ export function LeadEditModal({
                   {lead.email}
                 </a>
               )}
-              {/* Always rendered, disabled when there's no usable number, so the
-                  action stays discoverable instead of silently vanishing.
+              {/* Rendered whenever the role holds the send capability, disabled
+                  when there's no usable number, so the action stays discoverable
+                  instead of silently vanishing.
                   The WhatsApp mark is a filled brand glyph, hence `fill` rather
                   than the `stroke` convention the other icons here use. */}
+              {mayWhatsApp && (
               <button
                 type="button"
                 onClick={() => setShowWhatsAppModal(true)}
@@ -213,6 +225,7 @@ export function LeadEditModal({
                 </svg>
                 WhatsApp
               </button>
+              )}
     </div>
   );
 

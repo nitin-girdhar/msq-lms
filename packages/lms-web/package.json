@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@platform/auth-constants": "workspace:*",
+    "@platform/rbac": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/ui-kit": "workspace:*",
     "@platform/authz": "workspace:*",
