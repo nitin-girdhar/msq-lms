@@ -3,18 +3,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { orgs as orgsApi } from '@platform/ui-kit';
 
+// geo ids are UUID v7 strings (db_scripts/02_tables_core.sql), not ints.
 export interface DynamicOrg {
   id: string;
   name: string;
-  cityId: number | null;
-  stateId: number | null;
-  countryId: number | null;
+  cityId: string | null;
+  stateId: string | null;
+  countryId: string | null;
 }
 
 export interface LocationFilter {
-  cityIds?: number[];
-  stateIds?: number[];
-  countryIds?: number[];
+  cityIds?: string[];
+  stateIds?: string[];
+  countryIds?: string[];
 }
 
 interface UseOrgsReturn {

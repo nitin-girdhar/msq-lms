@@ -17,9 +17,10 @@ export interface WebhookLeadData {
   address_line1?: string;
   address_line2?: string;
   pincode?: string;
-  city_id?: number;
-  state_id?: number;
-  country_id?: number;
+  // geo.* PKs are UUID v7 (db_scripts/02_tables_core.sql), not identity ints.
+  city_id?: string;
+  state_id?: string;
+  country_id?: string;
   source_id?: string;
   source?: string;
   campaign_id?: string;

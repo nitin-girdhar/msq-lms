@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { locations as locationsApi } from '../lib/api/client';
 
+// geo ids are UUID v7 strings (db_scripts/02_tables_core.sql), not ints.
 export interface LocationOption {
-  id: number;
+  id: string;
   name: string;
   isoCode?: string;
-  countryId?: number;
-  stateId?: number;
+  countryId?: string;
+  stateId?: string;
 }
 
 interface UseLocationFiltersReturn {

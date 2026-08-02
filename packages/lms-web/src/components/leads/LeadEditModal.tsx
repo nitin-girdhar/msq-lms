@@ -107,6 +107,11 @@ export function LeadEditModal({
     setSaving(true);
     setSaveError(null);
     try {
+      // Tracks whether we have already written to the lead this save, so the
+      // optimistic-concurrency token is only attached to the FIRST write (see
+      // the assignee PATCH below).
+      let leadWritten = false;
+
       if (statusChanged) {
         await onUpdate({
           leadId: lead.lead_id,
@@ -116,6 +121,21 @@ export function LeadEditModal({
           ...(transitionNote.trim() ? { transitionNote: transitionNote.trim() } : {}),
           ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
         });
+        leadWritten = true;
+      } else if (outcomeChanged && outcomeId !== '' && lead.lead_id) {
+        // The Outcome select renders whenever the CURRENT stage has outcomes,
+        // not only after a stage change — so the outcome is editable on its
+        // own. Without this branch that edit reached no endpoint at all: the
+        // modal closed as if it had saved, nothing was persisted and no
+        // lms.lead_status_log row was written. The trigger behind that log
+        // fires on `UPDATE OF stage_id, outcome_id`, so an outcome-only PATCH
+        // records the transition note exactly like a stage change does.
+        await leadsApi.update(lead.lead_id, {
+          outcome_id: outcomeId,
+          ...(transitionNote.trim() ? { transition_note: transitionNote.trim() } : {}),
+          ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
+        });
+        leadWritten = true;
       }
 
       const autoAssign        = showRejection && !origAssigneeId;
@@ -126,10 +146,10 @@ export function LeadEditModal({
         await leadsApi.update(lead.lead_id, {
           assigned_user_id: assigneeToSet,
           ...(transitionNote.trim() ? { transition_note: transitionNote.trim() } : {}),
-          // Only guard this write when it is the first one: the stage PATCH
-          // above already bumped updated_at, so re-sending the version we
-          // opened with would 409 against our own change.
-          ...(expectedUpdatedAt && !statusChanged ? { expected_updated_at: expectedUpdatedAt } : {}),
+          // Only guard this write when it is the first one: an earlier stage or
+          // outcome PATCH already bumped updated_at, so re-sending the version
+          // we opened with would 409 against our own change.
+          ...(expectedUpdatedAt && !leadWritten ? { expected_updated_at: expectedUpdatedAt } : {}),
         });
       }
       if (fuVisible && fuFieldChanged) {

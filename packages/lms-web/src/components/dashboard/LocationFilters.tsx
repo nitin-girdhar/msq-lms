@@ -9,7 +9,7 @@ function toOption(o: LocationOption): SelectOption {
 }
 
 function fromOption(o: SelectOption, source: LocationOption[]): LocationOption {
-  return source.find((s) => s.id === o.id) ?? { id: o.id as number, name: o.label };
+  return source.find((s) => s.id === o.id) ?? { id: String(o.id), name: o.label };
 }
 
 interface Props {

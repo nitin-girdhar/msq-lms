@@ -63,7 +63,7 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
   } = useLocationFilters();
 
   const locationFilter = useMemo(() => {
-    const f: { cityIds: number[]; stateIds?: number[]; countryIds?: number[] } = {
+    const f: { cityIds: string[]; stateIds?: string[]; countryIds?: string[] } = {
       cityIds: selectedCities.map(c => c.id),
     };
     if (selectedCities.length === 0) f.stateIds = selectedStates.map(s => s.id);
