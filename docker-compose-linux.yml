@@ -3,6 +3,13 @@ name: msq
 x-db-env-lms: &db-env-lms
   DATABASE_URL: postgres://${DB_LMS_SVC_USER}:${DB_LMS_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  # REQUIRED, not optional: withRoleTx routes tenant_admin to its OWN pool on
+  # this URL (@platform/db transaction.ts), so a service that omits it inherits
+  # the local-dev value from .env — `@localhost`, which inside a container is the
+  # container itself. Every other role keeps working on the two URLs above, so
+  # the only symptom is a blanket 500 for tenant_admin. assertDbEnv does not
+  # catch it: the var IS set, it just points nowhere.
+  DATABASE_URL_TENANT: postgres://${DB_TENANT_SVC_USER}:${DB_TENANT_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DB_PRODUCT_SCOPED_LOGIN: "true"
 
 # See docker-compose.yml for the cross-repo networking note (not solved here).
