@@ -1,6 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { AxiosError } from 'axios';
 import { getIntegrationById, getGlobalIntegration, type MetaIntegration } from '../../../services/integration.service.js';
 import { fetchLeadFromMeta } from '../../../services/meta-api.service.js';
 import { syncLeadToDatabase } from '../../../services/lead-sync.service.js';
@@ -92,6 +91,18 @@ export async function handleWebhookPost(
   );
 
   if (!hmacResult.valid) {
+    // Previously a bare 401 with no log at all, which made the two very
+    // different causes indistinguishable: a rotated app_secret (our problem,
+    // every lead is being dropped) and a forged request (not our problem).
+    request.log.warn(
+      {
+        evt: 'webhook.hmac_failed',
+        integrationId: integration.id,
+        signaturePresent: Boolean(signatureHeader),
+        reason: hmacResult.error,
+      },
+      'Webhook signature verification failed',
+    );
     return reply.status(401).send({ error: hmacResult.error });
   }
 
@@ -128,7 +139,14 @@ export async function handleWebhookPost(
 
         if (!mapping) {
           request.log.warn(
-            `Unmapped Meta lead | leadId=${leadId} pageId=${change.value.page_id} formId=${formId ?? 'unknown'} — no org mapping found, skipping`,
+            {
+              evt: 'webhook.lead_unmapped',
+              metaLeadId: leadId,
+              pageId: change.value.page_id,
+              formId: formId ?? null,
+              integrationId: integration.id,
+            },
+            'No org mapping for Meta lead — skipping',
           );
           results.push({ leadId, status: 'unmapped' });
           continue;
@@ -163,7 +181,14 @@ export async function handleWebhookPost(
         }, integration.field_mappings);
 
         request.log.info(
-          `Lead synced | metaLeadId=${leadId} marketingLeadId=${syncResult.marketingLeadId} orgId=${mapping.orgId} duplicate=${syncResult.isDuplicate}`,
+          {
+            evt: 'webhook.lead_synced',
+            metaLeadId: leadId,
+            marketingLeadId: syncResult.marketingLeadId,
+            orgId: mapping.orgId,
+            duplicate: syncResult.isDuplicate,
+          },
+          'Lead synced',
         );
 
         if (!syncResult.isDuplicate) {
@@ -175,17 +200,28 @@ export async function handleWebhookPost(
             assigned_user_id: null,
             actor_id: 'system',
             ts: Date.now(),
-          }).catch(() => {});
+          }).catch((err: unknown) => {
+            // Fire-and-forget by design — a failed notify must not fail the
+            // webhook, since Meta would retry the whole delivery. But swallowing
+            // it silently meant a broken realtime feed looked identical to a
+            // healthy one.
+            request.log.error(
+              { evt: 'pgnotify.failed', err, channel: 'crm_events', marketingLeadId: syncResult.marketingLeadId },
+              'Failed to publish crm_events notification',
+            );
+          });
         }
 
         results.push({ leadId, status: syncResult.isDuplicate ? 'duplicate' : 'synced' });
       } catch (leadError) {
-        const msg = leadError instanceof Error ? leadError.message : String(leadError);
-        const metaErrorDetail = leadError instanceof AxiosError
-          ? JSON.stringify(leadError.response?.data)
-          : undefined;
+        // Pass the error through as `err` rather than pre-stringifying it. The
+        // shared serializer strips the axios request config (which carries the
+        // Meta access token) and truncates + scrubs the upstream response body,
+        // which is where lead PII used to arrive: leads-service echoes the
+        // rejected fields back, and that message was being logged verbatim.
         request.log.error(
-          `Failed to sync leadId=${leadId} — ${msg}${metaErrorDetail ? ` | meta_response=${metaErrorDetail}` : ''}`,
+          { evt: 'webhook.lead_sync_failed', err: leadError, metaLeadId: leadId, integrationId: integration.id },
+          'Failed to sync Meta lead',
         );
         results.push({ leadId, status: 'error' });
       }

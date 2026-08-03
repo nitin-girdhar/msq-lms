@@ -1,5 +1,6 @@
 import { fetchWithTimeout } from '@platform/http';
 import { config } from '../config/index.js';
+import { AppError, HttpStatus } from './errors.js';
 
 export interface IntakeLeadPayload {
   org_id: string;
@@ -39,8 +40,17 @@ export async function createIntakeLead(payload: IntakeLeadPayload): Promise<Inta
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(`Intake lead creation failed (${response.status}): ${JSON.stringify(body)}`);
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    // Do NOT stringify the body into the message. leads-service echoes the
+    // rejected fields back, and the payload we just posted is a lead's name,
+    // phone, email and every answer from the Meta form — so this message went
+    // straight into an error-level log line as raw PII. The field names are
+    // what actually diagnoses the failure; the values are not.
+    throw new AppError(
+      `Intake lead creation failed (${response.status})`,
+      HttpStatus.BAD_GATEWAY,
+      { upstreamStatus: response.status, fields: Object.keys(body) },
+    );
   }
 
   const json = (await response.json()) as { success: boolean; data: IntakeLeadResult };

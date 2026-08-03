@@ -5,12 +5,14 @@ import { v1Router } from './api/v1/index.js';
 import { AppError } from './lib/errors.js';
 import { closeAllPools } from '@platform/db';
 import { assertInternalServiceSecret } from '@platform/service-auth';
+import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
-  logger: {
-    level: config.nodeEnv === 'production' ? 'info' : 'debug',
-    ...(config.nodeEnv !== 'production' ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
-  },
+  logger: createLoggerOptions({
+    service: 'meta-conversion-api',
+    nodeEnv: config.nodeEnv,
+    level: config.logLevel,
+  }),
 });
 
 // Capture raw body for HMAC verification on webhook POST routes.
@@ -33,15 +35,21 @@ app.addContentTypeParser(
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof AppError) {
     const level = error.statusCode >= 500 ? 'error' : 'warn';
-    app.log[level]({ err: error, path: request.url }, error.message);
+    request.log[level]({ evt: 'request.failed', err: error, statusCode: error.statusCode }, error.message);
     const body: Record<string, unknown> = { success: false, error: error.message };
     if (error.details !== undefined) body['details'] = error.details;
     return reply.status(error.statusCode).send(body);
   }
   if (error instanceof ZodError) {
-    return reply.status(422).send({ success: false, error: 'Validation failed', details: error.flatten().fieldErrors });
+    const fieldErrors = error.flatten().fieldErrors;
+    // Log field NAMES only. Zod messages can quote the rejected value (enum and
+    // custom-refine messages do), and the rejected value here is submitted lead
+    // data. The response still carries `details` because @platform/ui-kit's
+    // client renders those messages for the user who submitted them.
+    request.log.warn({ evt: 'request.validation_failed', fields: Object.keys(fieldErrors) }, 'Validation failed');
+    return reply.status(422).send({ success: false, error: 'Validation failed', details: fieldErrors });
   }
-  app.log.error({ err: error, path: request.url }, 'Unhandled error');
+  request.log.error({ evt: 'request.unhandled_error', err: error }, 'Unhandled error');
   return reply.status(500).send({ success: false, error: 'Internal server error' });
 });
 

@@ -15,10 +15,36 @@ export interface CapiTriggerInput {
   triggeredByUserId?: string | undefined;
 }
 
+/**
+ * Stable machine codes for why a CAPI event was not sent.
+ *
+ * Skips are NOT written to ext.meta_capi_outbound_logs — that table only
+ * records actual send attempts — so this code is the only durable signal for
+ * "the trigger fired but nothing reached Meta". It is logged as `reason_code`
+ * and is deliberately separate from the human-readable `reason` so that
+ * rewording a message never breaks a log query or an alert.
+ */
+export const CAPI_SKIP_REASONS = {
+  LEAD_NOT_FOUND: 'Marketing lead not found',
+  NOT_META_ORIGIN: 'Lead did not originate from Meta — no CAPI feedback sent',
+  ORG_NOT_FOUND: 'Organization not found',
+  NO_ACTIVE_INTEGRATION: 'No active Meta integration for this tenant',
+  NO_EVENT_NAME_OR_STAGE: 'No eventName or newStageId provided',
+  NO_STAGE_EVENT_MAPPING: 'No Meta CAPI event mapped for this lead stage',
+  ALREADY_SENT: 'CAPI event already sent successfully for this lead+event',
+} as const;
+
+export type CapiSkipReason = keyof typeof CAPI_SKIP_REASONS;
+
 export interface CapiTriggerResult {
   status: 'SUCCESS' | 'FAILED' | 'SKIPPED';
   reason?: string | undefined;
+  reasonCode?: CapiSkipReason | undefined;
   logId?: string | undefined;
+}
+
+function skip(code: CapiSkipReason): CapiTriggerResult {
+  return { status: 'SKIPPED', reason: CAPI_SKIP_REASONS[code], reasonCode: code };
 }
 
 export async function triggerCapiEvent(input: CapiTriggerInput): Promise<CapiTriggerResult> {
@@ -32,7 +58,7 @@ export async function triggerCapiEvent(input: CapiTriggerInput): Promise<CapiTri
       id: string; org_id: string; first_name: string | null;
       last_name: string | null; phone: string | null; email: string | null;
     }>)[0];
-    if (!lead) return { status: 'SKIPPED' as const, reason: 'Marketing lead not found' };
+    if (!lead) return skip('LEAD_NOT_FOUND');
 
     // Try to get linked meta_lead for richer data. A lead only ever gets CAPI
     // feedback sent back to Meta if it actually originated from Meta — leads
@@ -50,24 +76,24 @@ export async function triggerCapiEvent(input: CapiTriggerInput): Promise<CapiTri
     }>)[0];
 
     if (!metaLead) {
-      return { status: 'SKIPPED' as const, reason: 'Lead did not originate from Meta — no CAPI feedback sent' };
+      return skip('NOT_META_ORIGIN');
     }
 
     const tenantResult = await tx.execute(
       sql`SELECT tenant_id FROM entity.organizations WHERE id = ${input.orgId} LIMIT 1`,
     );
     const tenantId = (tenantResult as unknown as Array<{ tenant_id: string }>)[0]?.tenant_id;
-    if (!tenantId) return { status: 'SKIPPED' as const, reason: 'Organization not found' };
+    if (!tenantId) return skip('ORG_NOT_FOUND');
 
     const integration = await getIntegrationByTenantId(tenantId);
     if (!integration || !integration.is_active) {
-      return { status: 'SKIPPED' as const, reason: 'No active Meta integration for this tenant' };
+      return skip('NO_ACTIVE_INTEGRATION');
     }
 
     let eventName = input.eventName;
     if (!eventName) {
       if (!input.newStageId) {
-        return { status: 'SKIPPED' as const, reason: 'No eventName or newStageId provided' };
+        return skip('NO_EVENT_NAME_OR_STAGE');
       }
       // Resolve by stage_id (never by stage name text) via the lead_stage -> CAPI event mapping.
       const mappingResult = await tx.execute(
@@ -75,7 +101,7 @@ export async function triggerCapiEvent(input: CapiTriggerInput): Promise<CapiTri
       );
       const mapping = (mappingResult as unknown as Array<{ capi_event_code: string }>)[0];
       if (!mapping) {
-        return { status: 'SKIPPED' as const, reason: 'No Meta CAPI event mapped for this lead stage' };
+        return skip('NO_STAGE_EVENT_MAPPING');
       }
       eventName = mapping.capi_event_code;
     }
@@ -89,7 +115,7 @@ export async function triggerCapiEvent(input: CapiTriggerInput): Promise<CapiTri
           LIMIT 1`,
     );
     if ((existingResult as unknown as Array<{ id: string }>).length > 0) {
-      return { status: 'SKIPPED' as const, reason: 'CAPI event already sent successfully for this lead+event' };
+      return skip('ALREADY_SENT');
     }
 
     // Build CAPI payload using the best available data

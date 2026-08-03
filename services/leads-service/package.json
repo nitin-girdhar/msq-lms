@@ -22,6 +22,7 @@
     "@platform/authz": "workspace:*",
     "@platform/db": "workspace:*",
     "@platform/http": "workspace:*",
+    "@platform/logger": "workspace:*",
     "@platform/rbac": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",

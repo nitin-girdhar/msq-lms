@@ -5,12 +5,14 @@ import { v1Router } from './api/v1/index.js';
 import { AppError, translatePgError } from './lib/errors.js';
 import { closeAllPools, startCapabilityCache, assertDbEnv } from '@platform/db';
 import { assertInternalServiceSecret } from '@platform/service-auth';
+import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
-  logger: {
-    level: config.nodeEnv === 'production' ? 'info' : 'debug',
-    ...(config.nodeEnv !== 'production' ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
-  },
+  logger: createLoggerOptions({
+    service: 'leads-service',
+    nodeEnv: config.nodeEnv,
+    level: config.logLevel,
+  }),
 });
 
 app.setErrorHandler((error, request, reply) => {

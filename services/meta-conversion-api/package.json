@@ -17,6 +17,7 @@
     "@platform/authz": "workspace:*",
     "@platform/db": "workspace:*",
     "@platform/http": "workspace:*",
+    "@platform/logger": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "axios": "^1.7.2",
     "drizzle-orm": "^0.45.2",

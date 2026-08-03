@@ -6,12 +6,14 @@ import { PgNotifyTransport } from './transport/pg-notify.transport.js';
 import { connectionManager } from './connections/manager.js';
 import { startFollowUpChecker, stopFollowUpChecker, setFollowUpCheckerLogger } from './services/followup-checker.js';
 import { assertInternalServiceSecret } from '@platform/service-auth';
+import { createLoggerOptions } from '@platform/logger';
 
 const app = Fastify({
-  logger: {
-    level: config.nodeEnv === 'production' ? 'info' : 'debug',
-    ...(config.nodeEnv !== 'production' ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
-  },
+  logger: createLoggerOptions({
+    service: 'notifications-service',
+    nodeEnv: config.nodeEnv,
+    level: config.logLevel,
+  }),
   keepAliveTimeout: 0,
 });
 
