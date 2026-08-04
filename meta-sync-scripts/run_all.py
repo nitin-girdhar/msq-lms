@@ -20,12 +20,14 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-def run_stage(script: str, args: argparse.Namespace, supports_org_id: bool = True) -> int:
+def run_stage(script: str, args: argparse.Namespace, supports_org_id: bool = True, supports_since: bool = False) -> int:
     cmd = [sys.executable, str(SCRIPT_DIR / script)]
     if args.tenant_id:
         cmd += ["--tenant-id", args.tenant_id]
     if supports_org_id and args.org_id:
         cmd += ["--org-id", args.org_id]
+    if supports_since and args.since:
+        cmd += ["--since", args.since]
     if args.dry_run:
         cmd += ["--dry-run"]
     if args.debug:
@@ -40,6 +42,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tenant-id", help="Only sync this tenant (UUID)")
     parser.add_argument("--org-id", help="Only sync this org (UUID) — applies to campaigns/leads stages only")
+    parser.add_argument("--since", help="Only leads created at/after this date — leads stage only (default: see sync_leads.py)")
     parser.add_argument("--dry-run", action="store_true", help="Log what would happen, write nothing (no DB, no CSV)")
     parser.add_argument(
         "--debug",
@@ -51,7 +54,7 @@ def main() -> int:
     exit_code = 0
     exit_code |= run_stage("sync_forms.py", args, supports_org_id=False)
     exit_code |= run_stage("sync_campaigns.py", args)
-    exit_code |= run_stage("sync_leads.py", args)
+    exit_code |= run_stage("sync_leads.py", args, supports_since=True)
     return exit_code
 
 

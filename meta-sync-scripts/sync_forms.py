@@ -35,24 +35,10 @@ from typing import Optional
 
 from common import config, db, tenant_config
 from common.graph_api import MetaGraphClient, MetaGraphError
+from common.mappings import get_known_page_ids
 from common.output import CsvWriter
 
 log = config.setup_logging("sync_forms")
-
-
-def get_known_page_ids(cur, tenant_id: Optional[str] = None) -> list:
-    if tenant_id:
-        cur.execute(
-            """
-            SELECT DISTINCT m.page_id FROM ext.meta_page_form_org_map m
-            JOIN entity.organizations o ON o.id = m.org_id
-            WHERE o.tenant_id = %s
-            """,
-            (tenant_id,),
-        )
-    else:
-        cur.execute("SELECT DISTINCT page_id FROM ext.meta_page_form_org_map")
-    return [str(row["page_id"]) for row in cur.fetchall()]
 
 
 def upsert_form(cur, page_id: str, form: dict, dry_run: bool, debug_writer: CsvWriter = None) -> str:

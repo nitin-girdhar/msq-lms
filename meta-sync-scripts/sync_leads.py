@@ -7,8 +7,18 @@ catching up leads if a webhook delivery was missed, (b) backfilling
 historical leads when Meta integration is turned on for a tenant that
 already has leads sitting in Meta, (c) periodic reconciliation via cron.
 
-For each active org->form mapping in ext.meta_page_form_org_map, pages
-through GET /{form_id}/leads and, for every lead not already present in
+PAGE-FIRST, not form-first. For every Page in scope this asks Meta which
+leadgen forms actually exist on it right now (GET /{page-id}/leadgen_forms)
+rather than trusting the form_id list cached in ext.meta_page_form_org_map —
+that list goes stale as soon as a new form is created, and pages/ad accounts
+get reorganised Meta-side, which silently stopped this sync from ever seeing
+newer forms' leads. ext.meta_page_form_org_map is still the routing
+authority: a discovered form with no active mapping row is reported and
+skipped, never guessed into an org (one Page here is shared by eight branch
+orgs).
+
+For each mapped form it pages through GET /{form_id}/leads, restricted to
+leads created at/after --since, and for every lead not already present in
 ext.meta_leads (deduped on meta_lead_id, same as the webhook path):
   1. writes the canonical lms.marketing_leads row via common.lead_writer
      (bare SQL port of intake.repository.ts::createWebhookLead, including
@@ -18,10 +28,9 @@ ext.meta_leads (deduped on meta_lead_id, same as the webhook path):
 
 No internal CRM HTTP API is called — DB (root_service role) + Graph API only.
 
-Because Meta's /{form-id}/leads edge doesn't reliably support server-side
-"since" filtering, pagination stops early once a run of consecutive
-already-synced leads is seen (--stop-after-dupes), bounded by --max-pages
-as a hard safety cap for first-run backfills.
+For a reviewable backfill (dump to disk, reconcile against the DB, then
+import) use download_page_leads.py -> check_leads_against_db.py ->
+import_downloaded_leads.py instead; this script is the unattended cron path.
 """
 
 import argparse
@@ -30,13 +39,24 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from common import config, db, field_mapping, lead_writer, tenant_config
-from common.graph_api import MetaGraphClient, MetaGraphError
+from common import config, db, field_mapping, lead_writer, mappings as mappings_repo, tenant_config
+from common.graph_api import (
+    MetaGraphClient,
+    MetaGraphError,
+    parse_created_time,
+    parse_since_arg,
+    resolve_page_clients,
+)
 from common.output import CsvWriter
 
 log = config.setup_logging("sync_leads")
 
 PLATFORM_TO_LEAD_SOURCE = {"fb": "facebook", "ig": "instagram"}
+
+# The Meta-side page/account reorganisation that broke form_id-driven syncing.
+# Everything from here on needs (re-)pulling; older leads are already in the DB
+# from the pre-reorg runs. Override with --since for a deeper backfill.
+DEFAULT_SINCE = "2026-07-28"
 
 
 def safe_bigint(value) -> Optional[int]:
@@ -49,38 +69,9 @@ def safe_bigint(value) -> Optional[int]:
 
 
 def parse_meta_created_time(value: Optional[str]) -> datetime:
-    """Meta's Lead object returns created_time as an ISO8601 string
-    (e.g. "2026-07-11T18:07:55+0000"), NOT a Unix timestamp — confirmed
-    against a live Graph API response. Falls back to "now" if missing or
-    unparseable rather than failing the whole lead."""
-    if value:
-        try:
-            return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S%z")
-        except ValueError:
-            log.warning("  could not parse created_time=%r, using current time instead", value)
-    return datetime.now(timezone.utc)
-
-
-def get_active_mappings(
-    cur, tenant_id: Optional[str], org_id: Optional[str], form_id: Optional[str]
-) -> list:
-    """tenant_id here filters by the *org's* tenant (via
-    ext.meta_page_form_org_map.tenant_id, which mirrors entity.organizations.
-    tenant_id) — it is NOT the credential/integration's tenant, since
-    ext.meta_tenant_config is tenant-agnostic (tenant_id may be NULL there).
-    None means "every org, regardless of tenant"."""
-    cur.execute(
-        """
-        SELECT id, tenant_id, org_id, page_id, form_id, platform
-        FROM ext.meta_page_form_org_map
-        WHERE is_active = true
-          AND (%(tenant_id)s::uuid IS NULL OR tenant_id = %(tenant_id)s::uuid)
-          AND (%(org_id)s::uuid IS NULL OR org_id = %(org_id)s::uuid)
-          AND (%(form_id)s::bigint IS NULL OR form_id = %(form_id)s::bigint)
-        """,
-        {"tenant_id": tenant_id, "org_id": org_id, "form_id": form_id},
-    )
-    return cur.fetchall()
+    """Falls back to "now" if the lead's created_time is missing or
+    unparseable, rather than failing the whole lead."""
+    return parse_created_time(value) or datetime.now(timezone.utc)
 
 
 def is_already_synced(cur, meta_lead_id: int) -> bool:
@@ -274,65 +265,36 @@ def process_lead(cur, mapping, raw_lead: Dict[str, Any], mappings, dry_run: bool
     return "created"
 
 
-def sync_form(cur, integration, mapping, page_tokens: Dict[str, str], dry_run: bool, debug: bool, max_pages: int, stop_after_dupes: int) -> dict:
-    # /{form-id}/leads requires a Page Access Token, not the tenant-level
-    # User/System-User token stored on ext.meta_tenant_config (Meta error
-    # #190 otherwise) — same fix as sync_forms.py.
-    page_token = page_tokens.get(str(mapping["page_id"]))
-    if not page_token:
-        log.error(
-            "tenant=%s org=%s form=%s: page_id=%s not found among this token's managed Pages "
-            "(/me/accounts) — check ext.meta_page_form_org_map.page_id is correct",
-            mapping["tenant_id"], mapping["org_id"], mapping["form_id"], mapping["page_id"],
-        )
-        return {"created": 0, "duplicate": 0, "error": 1}
-
-    client = MetaGraphClient(page_token, integration.graph_api_version)
+def sync_form(cur, integration, client: MetaGraphClient, mapping, since, dry_run: bool, debug: bool, max_pages: int, debug_writers) -> dict:
+    """Syncs one mapped form. `client` is already page-scoped — /{form-id}/leads
+    requires a Page Access Token, not the tenant-level User/System-User token
+    on ext.meta_tenant_config (Meta error #190 otherwise)."""
     mappings = field_mapping.resolve_field_mappings(integration.field_mappings)
-
-    debug_writers = None
-    if debug:
-        debug_writers = {
-            "marketing_leads": CsvWriter("marketing_leads"),
-            "meta_leads": CsvWriter("meta_leads"),
-            "custom_fields": CsvWriter("meta_lead_custom_fields"),
-        }
-
     counts = {"created": 0, "duplicate": 0, "error": 0}
-    consecutive_dupes = 0
-    after = None
-    pages_fetched = 0
+    form_id = str(mapping["form_id"])
 
-    while pages_fetched < max_pages:
-        try:
-            leads, after = client.get_leads_page(str(mapping["form_id"]), after=after)
-        except MetaGraphError as exc:
-            log.error("form=%s: Graph API error: %s", mapping["form_id"], exc)
-            counts["error"] += 1
-            break
+    try:
+        leads, truncated = client.get_leads_all(form_id, since=since, max_pages=max_pages)
+    except MetaGraphError as exc:
+        log.error("form=%s: Graph API error: %s", form_id, exc)
+        counts["error"] += 1
+        return counts
 
-        pages_fetched += 1
-        if not leads:
-            break
+    if truncated:
+        log.warning(
+            "  form=%s: hit --max-pages=%d before pagination ended — older leads were not fetched "
+            "this run (raise --max-pages or narrow --since for a full backfill)",
+            form_id, max_pages,
+        )
 
-        for raw_lead in leads:
-            raw_lead.setdefault("platform", mapping["platform"])
-            result = process_lead(cur, mapping, raw_lead, mappings, dry_run, debug_writers)
-            counts[result] = counts.get(result, 0) + 1
-            consecutive_dupes = consecutive_dupes + 1 if result == "duplicate" else 0
-            if consecutive_dupes >= stop_after_dupes:
-                log.info("  form=%s: stopping after %d consecutive already-synced leads", mapping["form_id"], consecutive_dupes)
-                after = None
-                break
+    for raw_lead in leads:
+        raw_lead.setdefault("platform", mapping["platform"])
+        raw_lead.setdefault("page_id", mapping["page_id"])
+        raw_lead["form_id"] = form_id
+        result = process_lead(cur, mapping, raw_lead, mappings, dry_run, debug_writers)
+        counts[result] = counts.get(result, 0) + 1
 
-        if not after:
-            break
-
-    if debug_writers:
-        for writer in debug_writers.values():
-            writer.close()
-
-    if not dry_run and not debug:
+    if not dry_run and not debug and mapping.get("id"):
         cur.execute(
             "UPDATE ext.meta_page_form_org_map SET last_synced_at = NOW() WHERE id = %s",
             (mapping["id"],),
@@ -342,19 +304,13 @@ def sync_form(cur, integration, mapping, page_tokens: Dict[str, str], dry_run: b
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--tenant-id", help="Only sync orgs belonging to this tenant (UUID)")
     parser.add_argument("--org-id", help="Only sync this org (UUID)")
-    parser.add_argument("--form-id", help="Only sync this Meta form id")
-    parser.add_argument("--max-pages", type=int, default=20, help="Hard cap on pages fetched per form per run")
-    parser.add_argument(
-        "--stop-after-dupes", type=int, default=50,
-        help="Stop paging a form after this many consecutive already-synced leads. Default is "
-        "deliberately generous (50, not a handful) — a small cluster of old test/webhook leads "
-        "mixed into Meta's result order can otherwise trigger an early stop before reaching "
-        "genuinely new leads further back in pagination (confirmed live: several Fitclass "
-        "branches had real new leads hidden behind under 20 pre-existing test rows).",
-    )
+    parser.add_argument("--page-id", action="append", default=[], help="Extra page_id(s) to sync beyond those in the mapping table (repeatable)")
+    parser.add_argument("--form-id", action="append", default=[], help="Narrow to these Meta form id(s) (repeatable)")
+    parser.add_argument("--since", default=DEFAULT_SINCE, help=f"Only leads created at/after this date (default {DEFAULT_SINCE})")
+    parser.add_argument("--max-pages", type=int, default=20, help="Hard cap on Graph pages fetched per form per run (100 leads each)")
     parser.add_argument("--dry-run", action="store_true", help="Log what would happen, write nothing (no DB, no CSV)")
     parser.add_argument(
         "--debug",
@@ -364,38 +320,86 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    since = parse_since_arg(args.since)
+    form_filter = {str(f) for f in args.form_id}
+    total = {"created": 0, "duplicate": 0, "error": 0, "unmapped": 0}
+
+    debug_writers = None
+    if args.debug:
+        debug_writers = {
+            "marketing_leads": CsvWriter("marketing_leads"),
+            "meta_leads": CsvWriter("meta_leads"),
+            "custom_fields": CsvWriter("meta_lead_custom_fields"),
+        }
+
     with db.transaction() as cur:
         integrations = tenant_config.list_active_integrations(cur, args.tenant_id)
         if not integrations:
             log.warning("No active ext.meta_tenant_config rows found for the given scope")
             return 0
 
-        total = {"created": 0, "duplicate": 0, "error": 0}
-        for integration in integrations:
-            # args.tenant_id filters by the org's tenant (via
-            # meta_page_form_org_map.tenant_id), not the integration's own
-            # tenant_id — ext.meta_tenant_config is tenant-agnostic.
-            mappings = get_active_mappings(cur, args.tenant_id, args.org_id, args.form_id)
-            if not mappings:
-                continue
+        # args.tenant_id/--org-id filter by the *org's* tenant (via
+        # ext.meta_page_form_org_map), not the integration's own tenant_id —
+        # ext.meta_tenant_config is tenant-agnostic.
+        form_org_map = mappings_repo.load_form_org_map(cur, args.tenant_id, args.org_id)
+        page_ids = sorted({page_id for page_id, _ in form_org_map} | {str(p) for p in args.page_id})
+        if not page_ids:
+            log.warning("No active page/form mappings in scope — nothing to sync")
+            return 0
 
-            user_client = MetaGraphClient(integration.access_token, integration.graph_api_version)
-            try:
-                page_tokens = user_client.get_managed_pages()
-            except MetaGraphError as exc:
-                log.error("integration=%s: could not list managed pages via /me/accounts: %s", integration.id, exc)
+        # Resolved once across all integrations, not per-integration: doing it
+        # inside the integration loop synced every page once per credential row
+        # and then failed page-token lookup on the second pass.
+        page_clients = resolve_page_clients(integrations)
+
+        for page_id in page_ids:
+            entry = page_clients.get(page_id)
+            if not entry:
+                log.error(
+                    "page=%s: not among any active token's managed Pages (/me/accounts) — the Page may "
+                    "have moved to another Business/ad account, or the token lost access",
+                    page_id,
+                )
                 total["error"] += 1
                 continue
 
-            for mapping in mappings:
-                log.info("tenant=%s org=%s form=%s: syncing", mapping["tenant_id"], mapping["org_id"], mapping["form_id"])
-                counts = sync_form(cur, integration, mapping, page_tokens, args.dry_run, args.debug, args.max_pages, args.stop_after_dupes)
-                for key in total:
+            client, integration = entry
+            try:
+                forms = client.get_leadgen_forms(page_id)
+            except MetaGraphError as exc:
+                log.error("page=%s: could not list leadgen forms: %s", page_id, exc)
+                total["error"] += 1
+                continue
+
+            log.info("page=%s: %d live form(s) on Meta", page_id, len(forms))
+            for form in forms:
+                form_id = str(form["id"])
+                if form_filter and form_id not in form_filter:
+                    continue
+
+                mapping = form_org_map.get((page_id, form_id))
+                if not mapping:
+                    total["unmapped"] += 1
+                    log.warning(
+                        "  page=%s form=%s (%r): no active ext.meta_page_form_org_map row — leads NOT "
+                        "synced. Add a mapping row to route them (never guessed: this page may serve "
+                        "several orgs)",
+                        page_id, form_id, form.get("name"),
+                    )
+                    continue
+
+                log.info("  org=%s form=%s (%r): syncing since %s", mapping["org_name"], form_id, form.get("name"), since.date())
+                counts = sync_form(cur, integration, client, mapping, since, args.dry_run, args.debug, args.max_pages, debug_writers)
+                for key in ("created", "duplicate", "error"):
                     total[key] += counts.get(key, 0)
 
+    if debug_writers:
+        for writer in debug_writers.values():
+            writer.close()
+
     log.info(
-        "Done. leads created=%d duplicate=%d errors=%d",
-        total["created"], total["duplicate"], total["error"],
+        "Done. leads created=%d duplicate=%d errors=%d | forms needing a manual mapping=%d",
+        total["created"], total["duplicate"], total["error"], total["unmapped"],
     )
     return 1 if total["error"] else 0
 
