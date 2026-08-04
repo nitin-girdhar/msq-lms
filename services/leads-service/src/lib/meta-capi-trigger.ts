@@ -8,6 +8,22 @@ const INTERNAL_SECRET = process.env['INTERNAL_SERVICE_SECRET'] ?? '';
 // levels, redaction and JSON structure — the output could not be queried at all.
 const log = createLogger({ service: 'leads-service', nodeEnv: config.nodeEnv });
 
+/**
+ * lms.lead_sources.name values for leads that Meta itself captured.
+ *
+ * Only these leads may have conversion feedback sent back to Meta — a lead that
+ * came from the website form, a walk-in or a referral is not Meta's to hear
+ * about, and firing the auto-trigger for one only burns a round-trip to
+ * meta-conversion-api to be told SKIPPED. Gating here keeps the call from
+ * happening at all; meta-conversion-api re-checks the same rule for the manual
+ * POST /meta/crm-event path.
+ *
+ * Mirrors META_LEAD_SOURCE_NAMES in meta-conversion-api's lead-sync.service.ts
+ * (a separate service, so it cannot be imported). Both match the source rows
+ * seeded by db_scripts/reference_data/04_lms_catalog_templates.sql.
+ */
+export const META_LEAD_SOURCE_NAMES: readonly string[] = ['facebook', 'instagram'];
+
 interface AutoTriggerResponse {
   success?: boolean;
   status?: string;

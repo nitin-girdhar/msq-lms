@@ -25,6 +25,18 @@ const PLATFORM_TO_LEAD_SOURCE: Record<'fb' | 'ig', string> = {
   ig: 'instagram',
 };
 
+/**
+ * The lms.lead_sources.name values that mean "captured by Meta itself".
+ *
+ * Derived from PLATFORM_TO_LEAD_SOURCE rather than written out again, because
+ * this is the only place that stamps a source name on an inbound Meta lead —
+ * a new platform added above must not silently fall out of the CAPI eligibility
+ * check in capi-trigger.service.ts. leads-service keeps its own copy of this
+ * list (it is a separate service and cannot import from here); the two are kept
+ * in sync by the seed data in db_scripts/reference_data/04_lms_catalog_templates.sql.
+ */
+export const META_LEAD_SOURCE_NAMES: readonly string[] = Object.values(PLATFORM_TO_LEAD_SOURCE);
+
 export interface SyncLeadResult {
   metaLeadRowId: string;
   marketingLeadId: string;

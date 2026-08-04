@@ -3,7 +3,7 @@ import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, CreateFo
 import { AppError, NotFoundError, ForbiddenError } from '../../../lib/errors.js';
 import { logActivity } from '@platform/audit-log';
 import { publishEvent } from '../../../events/publisher.js';
-import { fireCapiAutoTrigger } from '../../../lib/meta-capi-trigger.js';
+import { fireCapiAutoTrigger, META_LEAD_SOURCE_NAMES } from '../../../lib/meta-capi-trigger.js';
 import * as repo from './leads.repository.js';
 import type { ListLeadsFilters, ListFollowUpsFilters } from './leads.repository.js';
 
@@ -119,7 +119,16 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
         new_value: { stage_id: data.stage_id, outcome_id: data.outcome_id },
       });
 
-      fireCapiAutoTrigger(leadId, ctx.org_id, data.stage_id);
+      // Meta only hears about leads Meta captured, and only when the stage really
+      // moved. Previously this fired on every request carrying a stage_id — for
+      // every lead regardless of origin — so a website or walk-in lead, and even
+      // a re-save that changed nothing, still made a call to meta-conversion-api
+      // just to be told SKIPPED.
+      const shouldReportToMeta = data.stage_id !== result.previousStageId
+        && META_LEAD_SOURCE_NAMES.includes(result.sourceName ?? '');
+      if (shouldReportToMeta) {
+        fireCapiAutoTrigger(leadId, ctx.org_id, data.stage_id);
+      }
     }
 
     publishEvent('lead:updated', {

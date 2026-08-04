@@ -377,6 +377,7 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
 interface CurrentLeadRow {
   stage_id: string | null;
   outcome_id: string | null;
+  source_name: string | null;
   updated_at: Date | string;
 }
 
@@ -447,9 +448,14 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
     // read the same updated_at, both pass, and both write — the lost update we
     // are preventing. With it the second blocks, then re-reads the winner's
     // committed row and sees the version it expected is gone.
+    // source_name rides along on this same read so the caller can decide whether
+    // the lead is eligible for Meta CAPI feedback without a second query. It is a
+    // scalar subquery rather than a join on purpose: FOR UPDATE would otherwise
+    // try to lock lms.lead_sources too.
     const currentRows = (await tx.execute(sql`
-      SELECT stage_id::text AS stage_id, outcome_id::text AS outcome_id, updated_at
-      FROM lms.marketing_leads
+      SELECT stage_id::text AS stage_id, outcome_id::text AS outcome_id, updated_at,
+             (SELECT name FROM lms.lead_sources WHERE id = ml.source_id) AS source_name
+      FROM lms.marketing_leads ml
       WHERE id = ${leadId}::uuid AND org_id = ${ctx.org_id}::uuid AND NOT is_deleted
       FOR UPDATE
     `)) as unknown as CurrentLeadRow[];
@@ -512,6 +518,14 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
 
     if (!updated) return null;
 
+    // Carried out for the Meta CAPI gate in the service layer: it needs to know
+    // whether the stage actually moved, and whether this lead came from Meta.
+    const outcome = {
+      ...updated,
+      previousStageId: current?.stage_id ?? null,
+      sourceName: current?.source_name ?? null,
+    };
+
     if (data.assigned_user_id !== undefined && data.assigned_user_id !== null) {
       await tx
         .update(leadFollowUpsTable)
@@ -532,7 +546,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
       });
     }
 
-    return updated;
+    return outcome;
   });
 }
 
