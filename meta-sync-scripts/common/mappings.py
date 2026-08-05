@@ -4,16 +4,42 @@ ext.meta_page_form_org_map is the single routing authority (same as the
 webhook path in services/meta-conversion-api). Forms are now *discovered*
 per Page at run time rather than read from this table — Meta-side pages and
 ad accounts get reorganised and new leadgen forms appear constantly, so the
-table's form_id list goes stale — but a form still has to be mapped here
-before its leads can be routed to an org.
+table's form_id list goes stale — but a form still has to be mapped (either
+directly, or via its page's page-level row) here before its leads can be
+routed to an org.
 
-Deliberately no fallback guessing: page 825984413941973 alone is shared by
-eight Fitclass branch orgs, so "the page's org" is not a well-defined thing.
-An unmapped form is reported, never routed. Same rule sync_forms.py's
-maybe_auto_map_form() already enforces.
+A mapping row's form_id may be NULL: that's a page-level subscription,
+meaning every form discovered on that page routes to the row's org. An
+explicit (page_id, form_id) row always wins over a page-level row for the
+same page — this is how a page shared by several orgs (e.g. page
+825984413941973, shared by eight Fitclass branch orgs) stays correctly
+routed: each branch gets its own explicit form_id row, and the page has no
+page-level row at all. A form with neither an explicit row nor a page-level
+fallback is reported, never guessed into an org. Same rule sync_forms.py's
+maybe_auto_map_form() already enforces, and the same fallback order as
+page-org-map.service.ts::resolveOrgId in services/meta-conversion-api.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
+
+
+class FormOrgMap(NamedTuple):
+    """form_map: {(page_id, form_id): row} for explicit form-level mappings.
+    page_map: {page_id: row} for page-level (form_id IS NULL) mappings."""
+
+    form_map: Dict[Tuple[str, str], dict]
+    page_map: Dict[str, dict]
+
+    def page_ids(self) -> List[str]:
+        return sorted({page_id for page_id, _ in self.form_map} | set(self.page_map))
+
+    def resolve(self, page_id: str, form_id: str) -> Optional[dict]:
+        """Explicit (page_id, form_id) row wins; else fall back to the
+        page's page-level row, if any; else unmapped."""
+        mapping = self.form_map.get((page_id, form_id))
+        if mapping is not None:
+            return mapping
+        return self.page_map.get(page_id)
 
 
 def get_known_page_ids(cur, tenant_id: Optional[str] = None) -> List[str]:
@@ -36,10 +62,11 @@ def get_known_page_ids(cur, tenant_id: Optional[str] = None) -> List[str]:
 
 def load_form_org_map(
     cur, tenant_id: Optional[str] = None, org_id: Optional[str] = None
-) -> Dict[Tuple[str, str], dict]:
-    """Returns {(page_id, form_id): mapping row} for every ACTIVE mapping in
-    scope. Keys are strings on both sides — Meta ids arrive from the Graph API
-    as strings and are stored as BIGINT, and mixing the two silently misses."""
+) -> FormOrgMap:
+    """Returns every ACTIVE mapping in scope, split into explicit form-level
+    and page-level rows (see FormOrgMap). Keys are strings — Meta ids arrive
+    from the Graph API as strings and are stored as BIGINT, and mixing the
+    two silently misses."""
     cur.execute(
         """
         SELECT m.id, m.tenant_id, m.org_id, m.page_id, m.form_id, m.platform, m.last_synced_at,
@@ -52,7 +79,16 @@ def load_form_org_map(
         """,
         {"tenant_id": tenant_id, "org_id": org_id},
     )
-    return {(str(row["page_id"]), str(row["form_id"])): dict(row) for row in cur.fetchall()}
+    form_map: Dict[Tuple[str, str], dict] = {}
+    page_map: Dict[str, dict] = {}
+    for row in cur.fetchall():
+        row = dict(row)
+        page_id = str(row["page_id"])
+        if row["form_id"] is None:
+            page_map[page_id] = row
+        else:
+            form_map[(page_id, str(row["form_id"]))] = row
+    return FormOrgMap(form_map, page_map)
 
 
 def page_org_names(cur, page_id: str) -> List[str]:

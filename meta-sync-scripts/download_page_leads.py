@@ -54,7 +54,7 @@ def download_page(
     page_id: str,
     client,
     integration,
-    form_org_map: Dict[tuple, dict],
+    form_org_map: "mappings_repo.FormOrgMap",
     since,
     until,
     max_pages: int,
@@ -83,7 +83,7 @@ def download_page(
 
     for form in forms:
         form_id = str(form["id"])
-        mapping = form_org_map.get((page_id, form_id))
+        mapping = form_org_map.resolve(page_id, form_id)
         try:
             leads, truncated = client.get_leads_all(form_id, since=since, until=until, max_pages=max_pages)
         except MetaGraphError as exc:

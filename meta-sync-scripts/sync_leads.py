@@ -225,7 +225,7 @@ def process_lead(cur, mapping, raw_lead: Dict[str, Any], mappings, dry_run: bool
                 "org_id": org_id,
                 "marketing_lead_id": synthetic_marketing_lead_id,
                 "meta_lead_id": meta_lead_id,
-                "form_id": mapping["form_id"],
+                "form_id": raw_lead["form_id"],
                 "campaign_id": raw_lead.get("campaign_id"),
                 "platform": raw_lead["platform"],
                 "lead_created_at": lead_created_at.isoformat(),
@@ -265,13 +265,14 @@ def process_lead(cur, mapping, raw_lead: Dict[str, Any], mappings, dry_run: bool
     return "created"
 
 
-def sync_form(cur, integration, client: MetaGraphClient, mapping, since, dry_run: bool, debug: bool, max_pages: int, debug_writers) -> dict:
+def sync_form(cur, integration, client: MetaGraphClient, mapping, form_id: str, since, dry_run: bool, debug: bool, max_pages: int, debug_writers) -> dict:
     """Syncs one mapped form. `client` is already page-scoped — /{form-id}/leads
     requires a Page Access Token, not the tenant-level User/System-User token
-    on ext.meta_tenant_config (Meta error #190 otherwise)."""
+    on ext.meta_tenant_config (Meta error #190 otherwise). `form_id` is the
+    Graph-API-discovered form id — not read off `mapping`, since a page-level
+    mapping row (form_id IS NULL) covers many forms."""
     mappings = field_mapping.resolve_field_mappings(integration.field_mappings)
     counts = {"created": 0, "duplicate": 0, "error": 0}
-    form_id = str(mapping["form_id"])
 
     try:
         leads, truncated = client.get_leads_all(form_id, since=since, max_pages=max_pages)
@@ -342,7 +343,7 @@ def main() -> int:
         # ext.meta_page_form_org_map), not the integration's own tenant_id —
         # ext.meta_tenant_config is tenant-agnostic.
         form_org_map = mappings_repo.load_form_org_map(cur, args.tenant_id, args.org_id)
-        page_ids = sorted({page_id for page_id, _ in form_org_map} | {str(p) for p in args.page_id})
+        page_ids = sorted(set(form_org_map.page_ids()) | {str(p) for p in args.page_id})
         if not page_ids:
             log.warning("No active page/form mappings in scope — nothing to sync")
             return 0
@@ -377,19 +378,19 @@ def main() -> int:
                 if form_filter and form_id not in form_filter:
                     continue
 
-                mapping = form_org_map.get((page_id, form_id))
+                mapping = form_org_map.resolve(page_id, form_id)
                 if not mapping:
                     total["unmapped"] += 1
                     log.warning(
-                        "  page=%s form=%s (%r): no active ext.meta_page_form_org_map row — leads NOT "
-                        "synced. Add a mapping row to route them (never guessed: this page may serve "
-                        "several orgs)",
+                        "  page=%s form=%s (%r): no active ext.meta_page_form_org_map row (form-level or "
+                        "page-level) — leads NOT synced. Add a mapping row to route them (never guessed: "
+                        "this page may serve several orgs)",
                         page_id, form_id, form.get("name"),
                     )
                     continue
 
                 log.info("  org=%s form=%s (%r): syncing since %s", mapping["org_name"], form_id, form.get("name"), since.date())
-                counts = sync_form(cur, integration, client, mapping, since, args.dry_run, args.debug, args.max_pages, debug_writers)
+                counts = sync_form(cur, integration, client, mapping, form_id, since, args.dry_run, args.debug, args.max_pages, debug_writers)
                 for key in ("created", "duplicate", "error"):
                     total[key] += counts.get(key, 0)
 
