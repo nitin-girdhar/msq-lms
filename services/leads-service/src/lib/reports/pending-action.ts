@@ -1,6 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // "Pending Action" — the share of a row's leads that still need attention:
-// new, unassigned, or overdue for follow-up, as a percentage of its total.
+// new or overdue for follow-up, as a percentage of its total. Unassigned is
+// excluded here since new leads are also unassigned, and counting both would
+// double-count the same leads.
 //
 // One shared module, used by both the email renderer (lead-report.render.ts)
 // and the public webpage renderer (public-report.render.ts), so the formula
@@ -33,7 +35,7 @@ const BANDS: ReadonlyArray<{ upperBound: number; band: PendingActionBand }> = [
  */
 export function computePendingActionPct(row: LeadReportMetrics): number | null {
   if (row.total_leads <= 0) return null;
-  const pending = row.new_count + row.unassigned_count + row.followup_overdue;
+  const pending = row.new_count + row.followup_overdue;
   return Math.round((100 * pending) / row.total_leads);
 }
 
