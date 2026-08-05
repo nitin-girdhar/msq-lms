@@ -2,6 +2,8 @@ import { sql } from 'drizzle-orm';
 import { withRoleTx, withServiceTx } from '@platform/db';
 import { organizationsTable } from '@platform/db/schema';
 import { eq } from 'drizzle-orm';
+import { toBranchRow, toUserRow } from '../../../lib/reports/lead-report.types.js';
+import type { BranchReportRow, TenantReport, UserReportRow } from '../../../lib/reports/lead-report.types.js';
 
 async function resolveTenantId(orgId: string): Promise<string> {
   return withServiceTx(async (tx) => {
@@ -165,6 +167,109 @@ export async function getTenantReportForJob(tenantId: string) {
       ORDER BY org_name, is_unassigned DESC, assignee
     `)) as Array<Record<string, unknown>>;
     return { branches, users };
+  });
+}
+
+/**
+ * Writes one row per (org_id, assigned_user_id) bucket from `report.users`,
+ * plus a synthetic all-zero row for any branch in `report.branches` that has
+ * no user rows at all. A branch with zero leads produces no row in
+ * lms.vw_lead_report_user (see its header comment in db_scripts/05_views.sql)
+ * — without the synthetic row that branch would silently vanish from history
+ * on a quiet day instead of showing a genuine zero, same distinction the live
+ * branch view already makes.
+ *
+ * Idempotent (ON CONFLICT ... DO UPDATE): re-running for the same tenant/day
+ * overwrites those rows rather than duplicating them.
+ */
+export async function upsertReportSnapshot(report: TenantReport): Promise<void> {
+  return withServiceTx(async (tx) => {
+    const coveredOrgIds = new Set(report.users.map((u) => u.org_id));
+
+    for (const u of report.users) {
+      await tx.execute(sql`
+        INSERT INTO lms.lead_report_snapshot
+          (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned, report_date,
+           total_leads, new_count, new_leads_today, unassigned_count, followup_scheduled,
+           followup_overdue, converted_count, unqualified_count)
+        VALUES (
+          ${report.tenant_id}::uuid, ${u.org_id}::uuid, ${u.org_name}, ${u.assigned_user_id}::uuid,
+          ${u.assignee}, ${u.is_unassigned}, ${u.report_date}::date,
+          ${u.total_leads}, ${u.new_count}, ${u.new_leads_today}, ${u.unassigned_count},
+          ${u.followup_scheduled}, ${u.followup_overdue}, ${u.converted_count}, ${u.unqualified_count}
+        )
+        ON CONFLICT (tenant_id, org_id, assigned_user_id, report_date) DO UPDATE SET
+          org_name = EXCLUDED.org_name, assignee = EXCLUDED.assignee, is_unassigned = EXCLUDED.is_unassigned,
+          total_leads = EXCLUDED.total_leads, new_count = EXCLUDED.new_count,
+          new_leads_today = EXCLUDED.new_leads_today, unassigned_count = EXCLUDED.unassigned_count,
+          followup_scheduled = EXCLUDED.followup_scheduled, followup_overdue = EXCLUDED.followup_overdue,
+          converted_count = EXCLUDED.converted_count, unqualified_count = EXCLUDED.unqualified_count,
+          captured_at = CLOCK_TIMESTAMP()
+      `);
+    }
+
+    for (const b of report.branches) {
+      if (b.is_total || !b.org_id || coveredOrgIds.has(b.org_id)) continue;
+      await tx.execute(sql`
+        INSERT INTO lms.lead_report_snapshot
+          (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned, report_date,
+           total_leads, new_count, new_leads_today, unassigned_count, followup_scheduled,
+           followup_overdue, converted_count, unqualified_count)
+        VALUES (
+          ${report.tenant_id}::uuid, ${b.org_id}::uuid, ${b.org_name}, NULL, 'Unassigned', TRUE, ${b.report_date}::date,
+          0, 0, 0, 0, 0, 0, 0, 0
+        )
+        ON CONFLICT (tenant_id, org_id, assigned_user_id, report_date) DO UPDATE SET
+          org_name = EXCLUDED.org_name, captured_at = CLOCK_TIMESTAMP()
+      `);
+    }
+  });
+}
+
+/**
+ * The prior day's (or any historical day's) report, reconstructed from
+ * lms.lead_report_snapshot for the public report page's compare view.
+ * `null` when nothing was recorded for that tenant/date — expected for any
+ * day before the snapshot job first ran, not an error condition.
+ *
+ * Branch/rollup totals are derived with the same GROUPING SETS technique
+ * tenantBranchReportQuery uses over live data (see its header comment) — the
+ * snapshot table stores per-assignee rows only, never a separate branch total.
+ */
+export async function getSnapshotForDate(
+  tenantId: string,
+  date: string,
+): Promise<{ branches: BranchReportRow[]; users: UserReportRow[] } | null> {
+  return withServiceTx(async (tx) => {
+    const users = (await tx.execute(sql`
+      SELECT * FROM lms.lead_report_snapshot
+      WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
+      ORDER BY org_name, is_unassigned DESC, assignee
+    `)) as Array<Record<string, unknown>>;
+    if (users.length === 0) return null;
+
+    const branches = (await tx.execute(sql`
+      SELECT
+        ${tenantId}::uuid AS tenant_id,
+        org_id,
+        CASE WHEN GROUPING(org_id) = 1 THEN 'ALL BRANCHES' ELSE MAX(org_name) END AS org_name,
+        (GROUPING(org_id) = 1) AS is_total,
+        ${date}::date AS report_date,
+        SUM(total_leads)::INT        AS total_leads,
+        SUM(new_count)::INT          AS new_count,
+        SUM(new_leads_today)::INT    AS new_leads_today,
+        SUM(unassigned_count)::INT   AS unassigned_count,
+        SUM(followup_scheduled)::INT AS followup_scheduled,
+        SUM(followup_overdue)::INT   AS followup_overdue,
+        SUM(converted_count)::INT    AS converted_count,
+        SUM(unqualified_count)::INT  AS unqualified_count
+      FROM lms.lead_report_snapshot
+      WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
+      GROUP BY GROUPING SETS ((org_id), ())
+      ORDER BY GROUPING(org_id), MAX(org_name)
+    `)) as Array<Record<string, unknown>>;
+
+    return { branches: branches.map(toBranchRow), users: users.map(toUserRow) };
   });
 }
 

@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { BranchReportRow, LeadReportMetrics, TenantReport, UserReportRow } from './lead-report.types.js';
+import { computePendingActionPct, pendingActionBand, PENDING_ACTION_LEGEND } from './pending-action.js';
 
 /**
  * communication-service caps html at 100_000 and body at 50_000
@@ -25,15 +26,17 @@ const TEXT_BUDGET = 48_000;
 
 const OMITTED_NOTE = 'User breakdown omitted — too large for email. See the analytics dashboard for the full list.';
 
+// Kept in sync with public-report.render.ts's column set/order by request —
+// the email and the public page must show the same columns. Pending Action
+// (computed, not a raw metric) is appended separately, below.
 const COLUMNS = [
+  { key: 'total_leads', label: 'Total Leads' },
   { key: 'new_count', label: 'New' },
-  { key: 'new_leads_today', label: 'New Today' },
   { key: 'unassigned_count', label: 'Unassigned' },
-  { key: 'followup_scheduled', label: 'FU Scheduled' },
-  { key: 'followup_overdue', label: 'FU Overdue' },
+  { key: 'followup_scheduled', label: 'FollowUp Scheduled' },
+  { key: 'followup_overdue', label: 'FollowUp Overdue' },
   { key: 'converted_count', label: 'Converted' },
   { key: 'unqualified_count', label: 'Unqualified' },
-  { key: 'total_leads', label: 'Total' },
 ] as const satisfies ReadonlyArray<{ key: keyof LeadReportMetrics; label: string }>;
 
 /** Columns worth drawing attention to when non-zero. */
@@ -75,16 +78,25 @@ const TD_ALERT = `${TD}background:#fdecea;font-weight:600;`;
 
 function headerRow(firstLabel: string): string {
   const cells = COLUMNS.map((c) => `<th style="${TH}">${escapeHtml(c.label)}</th>`).join('');
-  return `<tr><th style="${TH_LEFT}">${escapeHtml(firstLabel)}</th>${cells}</tr>`;
+  return `<tr><th style="${TH_LEFT}">${escapeHtml(firstLabel)}</th>${cells}<th style="${TH}">Pending Action</th></tr>`;
+}
+
+/** Same formula/bands as the public page (pending-action.ts); expressed as an inline style since Gmail strips <style> blocks. */
+function pendingActionCell(row: LeadReportMetrics): string {
+  const pct = computePendingActionPct(row);
+  const band = pendingActionBand(pct);
+  if (pct === null || !band) return `<td style="${TD}">—</td>`;
+  return `<td style="${TD}background:${band.bg};color:${band.text};font-weight:600;">${pct}%</td>`;
 }
 
 function metricCells(row: LeadReportMetrics, emphasise: boolean): string {
-  return COLUMNS.map((c) => {
+  const cells = COLUMNS.map((c) => {
     const value = Number(row[c.key] ?? 0);
     const alert = ALERT_KEYS.has(c.key) && value > 0;
     const style = alert ? TD_ALERT : emphasise ? `${TD}font-weight:600;` : TD;
     return `<td style="${style}">${value}</td>`;
   }).join('');
+  return `${cells}${pendingActionCell(row)}`;
 }
 
 function branchTable(branches: BranchReportRow[]): string {
@@ -125,7 +137,7 @@ function userTable(users: UserReportRow[]): string {
   const bandStyle = `padding:6px 10px;border:1px solid #d0d5dd;background:#e9eefb;font:600 12px/1.4 Arial,sans-serif;text-align:left;`;
   const body: string[] = [];
   for (const [orgName, rows] of byBranch) {
-    body.push(`<tr><th colspan="${COLUMNS.length + 1}" style="${bandStyle}">${escapeHtml(orgName)}</th></tr>`);
+    body.push(`<tr><th colspan="${COLUMNS.length + 2}" style="${bandStyle}">${escapeHtml(orgName)}</th></tr>`);
     for (const u of rows) {
       const nameStyle = u.is_unassigned ? `${TD_LEFT}font-style:italic;` : TD_LEFT;
       body.push(`<tr><td style="${nameStyle}">${escapeHtml(u.assignee)}</td>${metricCells(u, false)}</tr>`);
@@ -150,9 +162,15 @@ export function renderReportHtml(report: TenantReport): { html: string; usersOmi
     `<h1 style="font:600 18px/1.3 Arial,sans-serif;margin:0 0 4px;">Daily Lead Report</h1>` +
     `<p style="margin:0 0 20px;color:#475467;">${escapeHtml(report.tenant_name)} &middot; ${escapeHtml(report.report_date)}</p>` +
     `<h2 style="${h2}">By branch</h2>${branchTable(report.branches)}`;
+  const legend = PENDING_ACTION_LEGEND
+    .map((l) => `<span style="background:${l.band.bg};color:${l.band.text};padding:1px 6px;border-radius:8px;">${escapeHtml(l.range)}</span>`)
+    .join(' ');
   const foot =
     `<p style="margin:24px 0 0;color:#667085;font:400 11px/1.5 Arial,sans-serif;">` +
-    `Counts are a live snapshot at send time. "New Today" is counted in each branch's own timezone.` +
+    `Counts are a live snapshot at send time.` +
+    `</p>` +
+    `<p style="margin:6px 0 0;font:400 11px/1.5 Arial,sans-serif;">` +
+    `Pending Action = (New + Unassigned + FollowUp Overdue) / Total Leads. ${legend}` +
     `</p></div>`;
 
   const withUsers = `${head}<h2 style="${h2}">By assignee</h2>${userTable(report.users)}${foot}`;
@@ -170,9 +188,11 @@ export function renderReportHtml(report: TenantReport): { html: string; usersOmi
 // like "MSquare Professionals - Gurgaon HQ", which a 24-column budget truncates
 // to an identical "MSquare Professionals -…" on every row.
 const NAME_WIDTH = 34;
-// Must exceed the longest column label ('FU Scheduled', 12) or right-aligned
-// headers run into each other with no separating space.
-const NUM_WIDTH = 14;
+// Must exceed the longest column label ('FollowUp Scheduled', 19) or
+// right-aligned headers run into each other with no separating space.
+const NUM_WIDTH = 20;
+// Plain text can't carry the color bands, so this is a bare percentage.
+const PENDING_LABEL = 'Pending%';
 
 function truncate(value: string, width: number): string {
   return value.length <= width ? value : `${value.slice(0, width - 1)}…`;
@@ -180,11 +200,13 @@ function truncate(value: string, width: number): string {
 
 function textRow(label: string, row: LeadReportMetrics): string {
   const cells = COLUMNS.map((c) => String(Number(row[c.key] ?? 0)).padStart(NUM_WIDTH));
+  const pct = computePendingActionPct(row);
+  cells.push((pct === null ? '—' : `${pct}%`).padStart(NUM_WIDTH));
   return `${truncate(label, NAME_WIDTH).padEnd(NAME_WIDTH)}${cells.join('')}`;
 }
 
 function textHeader(firstLabel: string): string[] {
-  const head = `${firstLabel.padEnd(NAME_WIDTH)}${COLUMNS.map((c) => c.label.padStart(NUM_WIDTH)).join('')}`;
+  const head = `${firstLabel.padEnd(NAME_WIDTH)}${COLUMNS.map((c) => c.label.padStart(NUM_WIDTH)).join('')}${PENDING_LABEL.padStart(NUM_WIDTH)}`;
   return [head, '-'.repeat(head.length)];
 }
 
@@ -205,7 +227,7 @@ export function renderReportText(report: TenantReport): { text: string; usersOmi
   for (const b of report.branches.filter((r) => !r.is_total)) lines.push(textRow(b.org_name, b));
   const total = report.branches.find((b) => b.is_total);
   if (total) {
-    lines.push('-'.repeat(NAME_WIDTH + NUM_WIDTH * COLUMNS.length));
+    lines.push('-'.repeat(NAME_WIDTH + NUM_WIDTH * (COLUMNS.length + 1)));
     lines.push(textRow(total.org_name, total));
   }
 
@@ -219,7 +241,8 @@ export function renderReportText(report: TenantReport): { text: string; usersOmi
     }
     userLines.push(textRow(u.assignee, u));
   }
-  const foot = '\n\nCounts are a live snapshot at send time. "New Today" is counted in each branch\'s own timezone.';
+  const foot = '\n\nCounts are a live snapshot at send time. '
+    + 'Pending% = (New + Unassigned + FollowUp Overdue) / Total Leads: <20% low, 20-40% moderate, 40-60% high, 60%+ critical.';
 
   const withUsers = `${head}${userLines.join('\n')}${foot}`;
   if (withUsers.length <= TEXT_BUDGET) return { text: withUsers, usersOmitted: false };

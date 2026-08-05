@@ -6,6 +6,7 @@ import { intakeRouter } from './intake/intake.router.js';
 import { activitiesRouter } from './activities/activities.router.js';
 import { assignmentsRouter } from './assignments/assignments.router.js';
 import { analyticsRouter } from './analytics/analytics.router.js';
+import { publicReportRouter } from './public-report/public-report.router.js';
 import { internalRouter } from './internal/internal.router.js';
 // Tenant-scoped lookup/role admin (N-6): super_admin manages LMS reference data
 // within a selected tenant. Moved here from admin-service so the write executes
@@ -28,6 +29,7 @@ export async function v1Router(app: FastifyInstance) {
   await app.register(activitiesRouter);
   await app.register(assignmentsRouter);
   await app.register(analyticsRouter);
+  await app.register(publicReportRouter);
   await app.register(internalRouter);
   await app.register(lmsRolesRouter);
   await app.register(leadStageRouter);

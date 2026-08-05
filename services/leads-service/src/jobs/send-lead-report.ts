@@ -19,6 +19,12 @@
 // (Bcc, so one tenant's admins never see the operator list). Set
 // LEAD_REPORT_INCLUDE_SUPER_ADMINS=false to drop the Bcc.
 //
+// Also upserts today's per-branch/assignee counts into lms.lead_report_snapshot
+// (skipped on --dry-run), which is what lets the public lead report page
+// (GET /public/v1/lead-report) show a day-over-day comparison — the live views
+// only ever compute "now", so without this write there would be no history to
+// compare against.
+//
 // Reads as root_service (withServiceTx, BYPASSRLS) and scopes every query on
 // tenant_id explicitly — there is no actor session to drive RLS from.
 //
@@ -117,6 +123,18 @@ async function main() {
   for (const tenant of tenants) {
     try {
       const report = await buildTenantReport(tenant.tenant_id, tenant.tenant_name);
+
+      // Side-effect, not the job's main purpose: a dry run must stay
+      // side-effect-free, and a failure here must never block the email —
+      // the report data was already computed correctly either way.
+      if (!args.dryRun) {
+        try {
+          await repo.upsertReportSnapshot(report);
+        } catch (err) {
+          console.warn(`${LOG} ${tenant.tenant_name}: snapshot write failed —`, err);
+        }
+      }
+
       const to = args.to ?? (await repo.listTenantAdminEmails(tenant.tenant_id));
 
       if (to.length === 0) {
