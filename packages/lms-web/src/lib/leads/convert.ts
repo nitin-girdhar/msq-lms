@@ -20,6 +20,7 @@ export function assignmentToLeadView(a: AssignmentView): LeadView {
     stage: a.lead_stage ?? '',
     stage_label: a.lead_stage_label ?? a.lead_stage ?? '',
     source: null,
+    source_label: null,
     followup_required: false,
     is_rejected: false,
     is_terminated: a.is_terminated,

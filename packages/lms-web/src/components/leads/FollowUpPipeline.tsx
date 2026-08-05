@@ -52,7 +52,7 @@ function followUpToLeadView(item: FollowUpEnriched): LeadView {
     lead_id: item.leadId, org_id: '', org_name: '', first_name: '', middle_name: null, last_name: '',
     full_name: item.leadFullName, phone: item.leadPhone, email: null, address_line1: null,
     city: null, city_name: null, state_name: null, country_name: null,
-    stage: item.leadStage, stage_label: item.leadStage.replace(/_/g, ' '), source: null,
+    stage: item.leadStage, stage_label: item.leadStage.replace(/_/g, ' '), source: null, source_label: null,
     followup_required: false, is_rejected: false, is_terminated: false,
     outcome: null, outcome_label: null, outcome_comment: null, stage_id: '', outcome_id: null,
     scheduled_at: item.scheduledAt, is_followup_overdue: item.isOverdue,

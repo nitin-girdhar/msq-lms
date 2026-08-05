@@ -16,6 +16,7 @@ export interface LeadView {
   stage: string;
   stage_label: string;
   source: string | null;
+  source_label: string | null;
   followup_required: boolean;
   is_rejected: boolean;
   is_terminated: boolean;
