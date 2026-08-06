@@ -46,7 +46,7 @@ export function canOpenUsers(actor: CapabilityHolder): boolean {
 }
 
 export function canOpenApiClients(actor: CapabilityHolder): boolean {
-  return holdsUsableNode(actor, CAPABILITY.LMS_APICLIENTS);
+  return holdsUsableNode(actor, CAPABILITY.PLATFORM_API_TOKENS);
 }
 
 /**

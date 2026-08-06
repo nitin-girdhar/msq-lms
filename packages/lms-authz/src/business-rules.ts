@@ -152,7 +152,7 @@ export function checkManageUsersAccess(actor: CapabilityHolder): boolean {
 // told them on submit — the render-then-403 shape the tree exists to remove, on
 // the one screen that issues integration credentials.
 export function checkManageApiClientsAccess(actor: CapabilityHolder): boolean {
-  return can(actor, CAPABILITY.LMS_APICLIENTS_MANAGE);
+  return can(actor, CAPABILITY.PLATFORM_API_TOKENS_MANAGE);
 }
 
 // ── Leads-history scope (SENIORITY, not permission) ─────────────────────

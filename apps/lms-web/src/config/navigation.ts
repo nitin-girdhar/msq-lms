@@ -19,7 +19,7 @@ export const DASHBOARD_NAV: readonly NavItem[] = [
   { id: 'assignments',   label: 'Assignments',   href: '/dashboard/assignments',   capability: CAPABILITY.LMS_ASSIGNMENTS },
   { id: 'analytics',     label: 'Analytics',     href: '/dashboard/analytics',     capability: CAPABILITY.LMS_ANALYTICS },
   { id: 'users',         label: 'Users',         href: '/dashboard/users',         capability: CAPABILITY.LMS_USERS },
-  { id: 'api-clients',   label: 'API Tokens',    href: '/dashboard/api-clients',   capability: CAPABILITY.LMS_APICLIENTS },
+  { id: 'api-clients',   label: 'API Tokens',    href: '/dashboard/api-clients',   capability: CAPABILITY.PLATFORM_API_TOKENS },
 ] as const;
 
 /** The CRM nav entries this user may actually open. */
