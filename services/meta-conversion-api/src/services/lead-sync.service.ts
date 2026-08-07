@@ -8,11 +8,13 @@ export interface MetaLeadFieldData {
   values: string[];
 }
 
+export type MetaLeadPlatform = 'fb' | 'ig' | 'wa';
+
 export interface RawMetaLead {
   id: string;
   form_id: string;
   page_id: string;
-  platform: 'fb' | 'ig';
+  platform: MetaLeadPlatform;
   created_time?: number | undefined;
   ad_id?: string | undefined;
   adset_id?: string | undefined;
@@ -20,10 +22,48 @@ export interface RawMetaLead {
   field_data: MetaLeadFieldData[];
 }
 
-const PLATFORM_TO_LEAD_SOURCE: Record<'fb' | 'ig', string> = {
+const PLATFORM_TO_LEAD_SOURCE: Record<MetaLeadPlatform, string> = {
   fb: 'facebook',
   ig: 'instagram',
+  wa: 'whatsapp',
 };
+
+/**
+ * Meta returns `platform` per-lead ("fb" | "ig", and for WhatsApp-originated leads
+ * some value we haven't confirmed yet against a live payload). That per-lead value
+ * is the source of truth for what channel a lead actually came in on — a single
+ * form/campaign can run across Facebook, Instagram, and WhatsApp placements at once,
+ * so the static per-(page,form) `ext.meta_page_form_org_map.platform` config value is
+ * only a fallback for when Meta omits the field or returns something we don't
+ * recognize yet (never crash/drop the lead over an unexpected platform string).
+ */
+export function resolveLeadPlatform(
+  metaPlatform: string | undefined,
+  fallbackPlatform: MetaLeadPlatform,
+  onUnrecognized?: (rawValue: string) => void,
+): MetaLeadPlatform {
+  if (!metaPlatform) return fallbackPlatform;
+  if (metaPlatform in PLATFORM_TO_LEAD_SOURCE) return metaPlatform as MetaLeadPlatform;
+  onUnrecognized?.(metaPlatform);
+  return fallbackPlatform;
+}
+
+const TEST_LEAD_VALUE_PATTERN = /test lead:/i;
+
+/**
+ * Meta's Ads Manager "Test Form" tool fires a real webhook event, but every
+ * field_data value it submits is placeholder text shaped like
+ * "<test lead: dummy data for full_name>". Meta exposes no dedicated test-lead
+ * flag on the lead object — a missing ad_id/adset_id was considered but rejected
+ * as a signal, since Meta documents it as also occurring for genuine organic
+ * (non-ad) leads, which must still sync. Matching the placeholder text is the
+ * only reliable signal available. Checked across all field_data entries, not
+ * just full_name, since Meta stamps the same placeholder into whichever fields
+ * the form has (email, phone, city, etc.).
+ */
+export function isMetaTestLead(fieldData: MetaLeadFieldData[]): boolean {
+  return fieldData.some((f) => f.values?.some((v) => TEST_LEAD_VALUE_PATTERN.test(v)));
+}
 
 /**
  * The lms.lead_sources.name values that mean "captured by Meta itself".

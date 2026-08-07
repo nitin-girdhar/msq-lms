@@ -3,6 +3,7 @@ import { BadRequestError, UnauthorizedError } from '../../../lib/errors.js';
 import { buildTenantReport } from '../../../lib/reports/lead-report.mailer.js';
 import { renderPublicReportHtml } from '../../../lib/reports/public-report.render.js';
 import type { BranchReportRow, TenantReport, UserReportRow } from '../../../lib/reports/lead-report.types.js';
+import type { SourceBranchRow, SourceUserRow } from '../../../lib/reports/source-report.types.js';
 import * as analyticsRepo from '../analytics/analytics.repository.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -62,21 +63,50 @@ function scopeReport<T extends { branches: BranchReportRow[]; users: UserReportR
   };
 }
 
+/** Same idea as scopeReport, for the source-segmented shape (structurally different: no org_timezone, extra source_id/label). */
+function scopeSourceReport(
+  report: { branches: SourceBranchRow[]; users: SourceUserRow[] },
+  orgId?: string,
+): { branches: SourceBranchRow[]; users: SourceUserRow[] } {
+  if (!orgId) return report;
+  return {
+    branches: report.branches.filter((b) => !b.is_total && b.org_id === orgId),
+    users: report.users.filter((u) => u.org_id === orgId),
+  };
+}
+
 export class PublicReportController {
   getReport = async (request: FastifyRequest, reply: FastifyReply) => {
     const { tenantId, orgId } = resolveScope(request);
 
-    const reportFull: TenantReport = await buildTenantReport(tenantId);
-    const report = scopeReport(reportFull, orgId);
+    const [reportFull, sourceReportFull] = await Promise.all([
+      buildTenantReport(tenantId),
+      analyticsRepo.getTenantSourceReport(tenantId),
+    ]);
+    const report: TenantReport = scopeReport(reportFull, orgId);
+    const sourceReport = scopeSourceReport(sourceReportFull, orgId);
 
     const { compare: compareRaw, key } = request.query as { compare?: string; key?: string };
     const compareDate = compareRaw && DATE_RE.test(compareRaw) ? compareRaw : null;
-    const compareSnapshotFull = compareDate ? await analyticsRepo.getSnapshotForDate(tenantId, compareDate) : null;
+    const [compareSnapshotFull, sourceCompareSnapshotFull] = compareDate
+      ? await Promise.all([
+          analyticsRepo.getSnapshotForDate(tenantId, compareDate),
+          analyticsRepo.getSourceSnapshotForDate(tenantId, compareDate),
+        ])
+      : [null, null];
     const compareSnapshot = compareSnapshotFull ? scopeReport(compareSnapshotFull, orgId) : null;
+    const sourceCompareSnapshot = sourceCompareSnapshotFull ? scopeSourceReport(sourceCompareSnapshotFull, orgId) : null;
 
     // Carried forward as a hidden field in the compare-date form — a GET form
     // can't set headers, so the key has to stay in the URL/form either way.
-    const html = renderPublicReportHtml(report, { compareDate, compareSnapshot, key: key ?? '' });
+    const html = renderPublicReportHtml(report, {
+      compareDate,
+      compareSnapshot,
+      key: key ?? '',
+      sourceBranches: sourceReport.branches,
+      sourceUsers: sourceReport.users,
+      sourceCompareSnapshot,
+    });
     reply.type('text/html; charset=utf-8').send(html);
   };
 }

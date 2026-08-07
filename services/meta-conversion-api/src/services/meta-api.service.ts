@@ -9,6 +9,7 @@ export interface MetaLeadApiResponse {
   campaign_id?: string;
   field_data: Array<{ name: string; values: string[] }>;
   created_time?: string;
+  platform?: string;
 }
 
 export interface CAPIDeliveryResult {

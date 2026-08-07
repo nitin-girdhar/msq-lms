@@ -114,7 +114,7 @@ export const metaConfig = {
   graph_api: {
     base_url: 'https://graph.facebook.com',
     lead_fields: [
-      'field_data', 'ad_id', 'adset_id', 'campaign_id', 'form_id', 'id', 'created_time',
+      'field_data', 'ad_id', 'adset_id', 'campaign_id', 'form_id', 'id', 'created_time', 'platform',
     ],
   },
 

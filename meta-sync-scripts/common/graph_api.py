@@ -16,7 +16,7 @@ log = logging.getLogger("graph_api")
 
 GRAPH_BASE_URL = "https://graph.facebook.com"
 
-LEAD_FIELDS = ["field_data", "ad_id", "adset_id", "campaign_id", "form_id", "id", "created_time"]
+LEAD_FIELDS = ["field_data", "ad_id", "adset_id", "campaign_id", "form_id", "id", "created_time", "platform"]
 FORM_FIELDS = ["id", "name", "status", "leads_count", "created_time"]
 CAMPAIGN_FIELDS = ["id", "name", "status", "objective", "effective_status"]
 

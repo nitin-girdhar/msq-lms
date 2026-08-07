@@ -65,13 +65,14 @@ const METRIC_KEYS = [
   'unqualified_count',
 ] as const satisfies ReadonlyArray<keyof LeadReportMetrics>;
 
-function toMetrics(row: Record<string, unknown>): LeadReportMetrics {
+/** Exported for source-report.types.ts's normalizers — same raw-row shape, one extra grouping dimension. */
+export function toMetrics(row: Record<string, unknown>): LeadReportMetrics {
   const out = {} as LeadReportMetrics;
   for (const key of METRIC_KEYS) out[key] = Number(row[key] ?? 0);
   return out;
 }
 
-function str(value: unknown, fallback = ''): string {
+export function str(value: unknown, fallback = ''): string {
   return value === null || value === undefined ? fallback : String(value);
 }
 

@@ -4,6 +4,8 @@ import { organizationsTable } from '@platform/db/schema';
 import { eq } from 'drizzle-orm';
 import { toBranchRow, toUserRow } from '../../../lib/reports/lead-report.types.js';
 import type { BranchReportRow, TenantReport, UserReportRow } from '../../../lib/reports/lead-report.types.js';
+import { toSourceBranchRow, toSourceUserRow } from '../../../lib/reports/source-report.types.js';
+import type { SourceBranchRow, SourceUserRow } from '../../../lib/reports/source-report.types.js';
 
 async function resolveTenantId(orgId: string): Promise<string> {
   return withServiceTx(async (tx) => {
@@ -171,35 +173,46 @@ export async function getTenantReportForJob(tenantId: string) {
 }
 
 /**
- * Writes one row per (org_id, assigned_user_id) bucket from `report.users`,
- * plus a synthetic all-zero row for any branch in `report.branches` that has
- * no user rows at all. A branch with zero leads produces no row in
- * lms.vw_lead_report_user (see its header comment in db_scripts/05_views.sql)
- * — without the synthetic row that branch would silently vanish from history
- * on a quiet day instead of showing a genuine zero, same distinction the live
- * branch view already makes.
+ * Writes one row per (org_id, assigned_user_id, source_id) bucket from
+ * `sourceReport.users`, plus a synthetic all-zero row for any (branch, source)
+ * combination in `sourceReport.branches` that has no user rows at all — the
+ * exact same zero-filled data the live "By source" grids render from, so
+ * history can never disagree with what the page showed on the day it was
+ * captured.
+ *
+ * Sourced from `sourceReport` (not `report`) because it is a strict
+ * superset: summing a source-segmented row set across source_id for a given
+ * (org_id, assigned_user_id) recovers the plain, non-source total exactly —
+ * see getSnapshotForDate, which does that summing at read time. Writing only
+ * one table keyed this way means the plain and per-source compare views can
+ * never drift apart the way two independently-written tables could.
  *
  * Idempotent (ON CONFLICT ... DO UPDATE): re-running for the same tenant/day
  * overwrites those rows rather than duplicating them.
  */
-export async function upsertReportSnapshot(report: TenantReport): Promise<void> {
+export async function upsertReportSnapshot(
+  report: TenantReport,
+  sourceReport: { branches: SourceBranchRow[]; users: SourceUserRow[] },
+): Promise<void> {
   return withServiceTx(async (tx) => {
-    const coveredOrgIds = new Set(report.users.map((u) => u.org_id));
+    const covered = new Set(sourceReport.users.map((u) => `${u.org_id}:${u.source_id ?? 'null'}`));
 
-    for (const u of report.users) {
+    for (const u of sourceReport.users) {
       await tx.execute(sql`
         INSERT INTO lms.lead_report_snapshot
-          (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned, report_date,
+          (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned,
+           source_id, source_label, report_date,
            total_leads, new_count, new_leads_today, unassigned_count, followup_scheduled,
            followup_overdue, converted_count, unqualified_count)
         VALUES (
           ${report.tenant_id}::uuid, ${u.org_id}::uuid, ${u.org_name}, ${u.assigned_user_id}::uuid,
-          ${u.assignee}, ${u.is_unassigned}, ${u.report_date}::date,
+          ${u.assignee}, ${u.is_unassigned}, ${u.source_id}::uuid, ${u.source_label}, ${u.report_date}::date,
           ${u.total_leads}, ${u.new_count}, ${u.new_leads_today}, ${u.unassigned_count},
           ${u.followup_scheduled}, ${u.followup_overdue}, ${u.converted_count}, ${u.unqualified_count}
         )
-        ON CONFLICT (tenant_id, org_id, assigned_user_id, report_date) DO UPDATE SET
+        ON CONFLICT (tenant_id, org_id, assigned_user_id, source_id, report_date) DO UPDATE SET
           org_name = EXCLUDED.org_name, assignee = EXCLUDED.assignee, is_unassigned = EXCLUDED.is_unassigned,
+          source_label = EXCLUDED.source_label,
           total_leads = EXCLUDED.total_leads, new_count = EXCLUDED.new_count,
           new_leads_today = EXCLUDED.new_leads_today, unassigned_count = EXCLUDED.unassigned_count,
           followup_scheduled = EXCLUDED.followup_scheduled, followup_overdue = EXCLUDED.followup_overdue,
@@ -208,33 +221,40 @@ export async function upsertReportSnapshot(report: TenantReport): Promise<void> 
       `);
     }
 
-    for (const b of report.branches) {
-      if (b.is_total || !b.org_id || coveredOrgIds.has(b.org_id)) continue;
+    for (const b of sourceReport.branches) {
+      if (b.is_total || !b.org_id) continue;
+      if (covered.has(`${b.org_id}:${b.source_id ?? 'null'}`)) continue;
       await tx.execute(sql`
         INSERT INTO lms.lead_report_snapshot
-          (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned, report_date,
+          (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned,
+           source_id, source_label, report_date,
            total_leads, new_count, new_leads_today, unassigned_count, followup_scheduled,
            followup_overdue, converted_count, unqualified_count)
         VALUES (
-          ${report.tenant_id}::uuid, ${b.org_id}::uuid, ${b.org_name}, NULL, 'Unassigned', TRUE, ${b.report_date}::date,
+          ${report.tenant_id}::uuid, ${b.org_id}::uuid, ${b.org_name}, NULL, 'Unassigned', TRUE,
+          ${b.source_id}::uuid, ${b.source_label}, ${b.report_date}::date,
           0, 0, 0, 0, 0, 0, 0, 0
         )
-        ON CONFLICT (tenant_id, org_id, assigned_user_id, report_date) DO UPDATE SET
-          org_name = EXCLUDED.org_name, captured_at = CLOCK_TIMESTAMP()
+        ON CONFLICT (tenant_id, org_id, assigned_user_id, source_id, report_date) DO UPDATE SET
+          org_name = EXCLUDED.org_name, source_label = EXCLUDED.source_label, captured_at = CLOCK_TIMESTAMP()
       `);
     }
   });
 }
 
 /**
- * The prior day's (or any historical day's) report, reconstructed from
- * lms.lead_report_snapshot for the public report page's compare view.
- * `null` when nothing was recorded for that tenant/date — expected for any
- * day before the snapshot job first ran, not an error condition.
+ * The prior day's (or any historical day's) PLAIN report (no source
+ * breakdown), reconstructed from lms.lead_report_snapshot for the "By branch"
+ * / "By assignee" compare view. `null` when nothing was recorded for that
+ * tenant/date — expected for any day before the snapshot job first ran, not
+ * an error condition.
  *
- * Branch/rollup totals are derived with the same GROUPING SETS technique
- * tenantBranchReportQuery uses over live data (see its header comment) — the
- * snapshot table stores per-assignee rows only, never a separate branch total.
+ * The table now stores one row per (branch, assignee, source); this query
+ * SUMs across source_id per (org_id, assigned_user_id) to recover the same
+ * combined-across-sources total the pre-source-tracking version of this table
+ * stored directly. Branch/rollup totals are derived with the same GROUPING
+ * SETS technique tenantBranchReportQuery uses over live data — see that
+ * function's header comment.
  */
 export async function getSnapshotForDate(
   tenantId: string,
@@ -242,8 +262,20 @@ export async function getSnapshotForDate(
 ): Promise<{ branches: BranchReportRow[]; users: UserReportRow[] } | null> {
   return withServiceTx(async (tx) => {
     const users = (await tx.execute(sql`
-      SELECT * FROM lms.lead_report_snapshot
+      SELECT
+        tenant_id, org_id, MAX(org_name) AS org_name, assigned_user_id, MAX(assignee) AS assignee,
+        (assigned_user_id IS NULL) AS is_unassigned, ${date}::date AS report_date,
+        SUM(total_leads)::INT        AS total_leads,
+        SUM(new_count)::INT          AS new_count,
+        SUM(new_leads_today)::INT    AS new_leads_today,
+        SUM(unassigned_count)::INT   AS unassigned_count,
+        SUM(followup_scheduled)::INT AS followup_scheduled,
+        SUM(followup_overdue)::INT   AS followup_overdue,
+        SUM(converted_count)::INT    AS converted_count,
+        SUM(unqualified_count)::INT  AS unqualified_count
+      FROM lms.lead_report_snapshot
       WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
+      GROUP BY tenant_id, org_id, assigned_user_id
       ORDER BY org_name, is_unassigned DESC, assignee
     `)) as Array<Record<string, unknown>>;
     if (users.length === 0) return null;
@@ -270,6 +302,188 @@ export async function getSnapshotForDate(
     `)) as Array<Record<string, unknown>>;
 
     return { branches: branches.map(toBranchRow), users: users.map(toUserRow) };
+  });
+}
+
+/**
+ * The prior day's (or any historical day's) SOURCE-segmented report, for the
+ * public page's "By source" grids and the Source column on "By assignee".
+ * `null` when nothing was recorded for that tenant/date — same "no history
+ * yet" case as getSnapshotForDate, not an error.
+ *
+ * Per-source branch rollups use the same GROUPING SETS technique as the live
+ * sourceBranchQuery, just over stored rows instead of lms.marketing_leads.
+ */
+export async function getSourceSnapshotForDate(
+  tenantId: string,
+  date: string,
+): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] } | null> {
+  return withServiceTx(async (tx) => {
+    const users = (await tx.execute(sql`
+      SELECT * FROM lms.lead_report_snapshot
+      WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
+      ORDER BY org_name, source_label, is_unassigned DESC, assignee
+    `)) as Array<Record<string, unknown>>;
+    if (users.length === 0) return null;
+
+    const branches = (await tx.execute(sql`
+      SELECT
+        ${tenantId}::uuid AS tenant_id,
+        org_id,
+        CASE WHEN GROUPING(org_id) = 1 THEN 'ALL BRANCHES' ELSE MAX(org_name) END AS org_name,
+        source_id,
+        MAX(source_label) AS source_label,
+        (GROUPING(org_id) = 1) AS is_total,
+        ${date}::date AS report_date,
+        SUM(total_leads)::INT        AS total_leads,
+        SUM(new_count)::INT          AS new_count,
+        SUM(new_leads_today)::INT    AS new_leads_today,
+        SUM(unassigned_count)::INT   AS unassigned_count,
+        SUM(followup_scheduled)::INT AS followup_scheduled,
+        SUM(followup_overdue)::INT   AS followup_overdue,
+        SUM(converted_count)::INT    AS converted_count,
+        SUM(unqualified_count)::INT  AS unqualified_count
+      FROM lms.lead_report_snapshot
+      WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
+      GROUP BY GROUPING SETS ((org_id, source_id), (source_id))
+      ORDER BY source_label, is_total, org_name
+    `)) as Array<Record<string, unknown>>;
+
+    return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lead-source segmented report (public report page only — see
+// public-report.render.ts).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per (branch, source) row, zero-filled — a branch with no leads from a given
+ * source still gets a row, same "zero row, not a missing row" guarantee as
+ * lms.vw_lead_report_branch — plus one "ALL BRANCHES" rollup row per source.
+ *
+ * The rollup is summed from `counters` directly (not from the zero-filled
+ * per-branch rows), so it can never disagree with what a manual SUM() over
+ * those rows would show — same reasoning as tenantBranchReportQuery's rollup.
+ *
+ * 'Unknown' is the bucket for ml.source_id IS NULL, mirroring the "Unassigned"
+ * convention used for assigned_user_id IS NULL elsewhere in this file.
+ */
+function sourceBranchQuery(tenantId: string) {
+  return sql`
+    WITH counters AS (
+      SELECT
+        ml.org_id,
+        ml.source_id,
+        COUNT(*)                                                         AS total_leads,
+        COUNT(*) FILTER (WHERE ls.name = 'new')                          AS new_count,
+        COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
+                             = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
+        COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)              AS unassigned_count,
+        COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                           AND ml.scheduled_at >= NOW())                 AS followup_scheduled,
+        COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                           AND ml.scheduled_at <  NOW())                 AS followup_overdue,
+        COUNT(*) FILTER (WHERE ls.name = 'converted')                    AS converted_count,
+        COUNT(*) FILTER (WHERE ls.name = 'unqualified')                  AS unqualified_count
+      FROM lms.marketing_leads ml
+      JOIN entity.organizations o ON o.id = ml.org_id
+      LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
+      WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
+      GROUP BY ml.org_id, ml.source_id
+    ),
+    sources AS (
+      SELECT id, label FROM lms.lead_sources WHERE tenant_id = ${tenantId}::uuid AND is_active
+      UNION ALL
+      SELECT NULL::uuid, 'Unknown'
+    )
+    SELECT
+      o.tenant_id, o.id AS org_id, o.name AS org_name,
+      src.id AS source_id, src.label AS source_label,
+      (NOW() AT TIME ZONE o.timezone)::date AS report_date,
+      FALSE AS is_total,
+      COALESCE(c.total_leads,        0)::INT AS total_leads,
+      COALESCE(c.new_count,          0)::INT AS new_count,
+      COALESCE(c.new_leads_today,    0)::INT AS new_leads_today,
+      COALESCE(c.unassigned_count,   0)::INT AS unassigned_count,
+      COALESCE(c.followup_scheduled, 0)::INT AS followup_scheduled,
+      COALESCE(c.followup_overdue,   0)::INT AS followup_overdue,
+      COALESCE(c.converted_count,    0)::INT AS converted_count,
+      COALESCE(c.unqualified_count,  0)::INT AS unqualified_count
+    FROM entity.organizations o
+    CROSS JOIN sources src
+    LEFT JOIN counters c ON c.org_id = o.id AND c.source_id IS NOT DISTINCT FROM src.id
+    WHERE o.tenant_id = ${tenantId}::uuid AND NOT o.is_deleted
+
+    UNION ALL
+
+    SELECT
+      ${tenantId}::uuid AS tenant_id, NULL AS org_id, 'ALL BRANCHES' AS org_name,
+      src.id AS source_id, src.label AS source_label,
+      CURRENT_DATE AS report_date,
+      TRUE AS is_total,
+      COALESCE(SUM(c.total_leads),        0)::INT AS total_leads,
+      COALESCE(SUM(c.new_count),          0)::INT AS new_count,
+      COALESCE(SUM(c.new_leads_today),    0)::INT AS new_leads_today,
+      COALESCE(SUM(c.unassigned_count),   0)::INT AS unassigned_count,
+      COALESCE(SUM(c.followup_scheduled), 0)::INT AS followup_scheduled,
+      COALESCE(SUM(c.followup_overdue),   0)::INT AS followup_overdue,
+      COALESCE(SUM(c.converted_count),    0)::INT AS converted_count,
+      COALESCE(SUM(c.unqualified_count),  0)::INT AS unqualified_count
+    FROM sources src
+    LEFT JOIN counters c ON c.source_id IS NOT DISTINCT FROM src.id
+    GROUP BY src.id, src.label
+
+    ORDER BY source_label, is_total, org_name
+  `;
+}
+
+/**
+ * Per (branch, assignee, source) row — no zero-fill, same as
+ * lms.vw_lead_report_user: a branch/assignee/source combination with no leads
+ * produces no row. 'Unknown' bucket for ml.source_id IS NULL, as above.
+ */
+function sourceUserQuery(tenantId: string) {
+  return sql`
+    SELECT
+      o.tenant_id, ml.org_id, o.name AS org_name,
+      ml.assigned_user_id,
+      COALESCE(u.full_name, 'Unassigned') AS assignee,
+      (ml.assigned_user_id IS NULL) AS is_unassigned,
+      ml.source_id,
+      COALESCE(src.label, 'Unknown') AS source_label,
+      (NOW() AT TIME ZONE o.timezone)::date AS report_date,
+      COUNT(*)::INT                                                      AS total_leads,
+      COUNT(*) FILTER (WHERE ls.name = 'new')::INT                       AS new_count,
+      COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
+                           = (NOW()          AT TIME ZONE o.timezone)::date)::INT AS new_leads_today,
+      COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)::INT            AS unassigned_count,
+      COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                         AND ml.scheduled_at >= NOW())::INT               AS followup_scheduled,
+      COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                         AND ml.scheduled_at <  NOW())::INT               AS followup_overdue,
+      COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                  AS converted_count,
+      COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT                AS unqualified_count
+    FROM lms.marketing_leads ml
+    JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
+    LEFT JOIN lms.lead_stage ls   ON ls.id  = ml.stage_id  AND ls.tenant_id = o.tenant_id
+    LEFT JOIN iam.users u         ON u.id   = ml.assigned_user_id AND NOT u.is_deleted
+    LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
+    WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
+    GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone, ml.assigned_user_id, u.full_name,
+             ml.source_id, src.label
+    ORDER BY org_name, source_label, is_unassigned DESC, assignee
+  `;
+}
+
+export async function getTenantSourceReport(
+  tenantId: string,
+): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] }> {
+  return withServiceTx(async (tx) => {
+    const branches = (await tx.execute(sourceBranchQuery(tenantId))) as Array<Record<string, unknown>>;
+    const users = (await tx.execute(sourceUserQuery(tenantId))) as Array<Record<string, unknown>>;
+    return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
   });
 }
 

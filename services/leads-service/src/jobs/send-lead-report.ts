@@ -126,10 +126,14 @@ async function main() {
 
       // Side-effect, not the job's main purpose: a dry run must stay
       // side-effect-free, and a failure here must never block the email —
-      // the report data was already computed correctly either way.
+      // the report data was already computed correctly either way. The
+      // source-segmented report is fetched only for the snapshot write (the
+      // email itself doesn't show it) — it's what lets the public report
+      // page's "By source" grids compare against a prior day.
       if (!args.dryRun) {
         try {
-          await repo.upsertReportSnapshot(report);
+          const sourceReport = await repo.getTenantSourceReport(tenant.tenant_id);
+          await repo.upsertReportSnapshot(report, sourceReport);
         } catch (err) {
           console.warn(`${LOG} ${tenant.tenant_name}: snapshot write failed —`, err);
         }

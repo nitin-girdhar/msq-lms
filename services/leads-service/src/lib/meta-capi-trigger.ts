@@ -22,7 +22,7 @@ const log = createLogger({ service: 'leads-service', nodeEnv: config.nodeEnv });
  * (a separate service, so it cannot be imported). Both match the source rows
  * seeded by db_scripts/reference_data/04_lms_catalog_templates.sql.
  */
-export const META_LEAD_SOURCE_NAMES: readonly string[] = ['facebook', 'instagram'];
+export const META_LEAD_SOURCE_NAMES: readonly string[] = ['facebook', 'instagram', 'whatsapp'];
 
 interface AutoTriggerResponse {
   success?: boolean;

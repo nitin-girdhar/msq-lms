@@ -48,6 +48,20 @@ def import_lead(cur, page: dict, form: dict, raw_lead: dict, verdict: dict, mapp
     # backfilled lead to today.
     lead_created_at = parse_created_time(raw_lead.get("created_time")) or parse_created_time(page.get("since"))
 
+    # Meta returns `platform` per-lead — prefer it over the form-level
+    # platform (itself just mapping["platform"], the static per-form config
+    # value stamped by download_page_leads.py) when it's present and known.
+    meta_platform = raw_lead.get("platform")
+    if meta_platform and meta_platform in PLATFORM_TO_LEAD_SOURCE:
+        resolved_platform = meta_platform
+    else:
+        if meta_platform:
+            log.warning(
+                "form=%s meta_lead_id=%s: unrecognized platform=%r from Meta, falling back to form mapping",
+                form["form_id"], raw_lead.get("id"), meta_platform,
+            )
+        resolved_platform = form.get("platform") or "fb"
+
     # The lead payload as ext.meta_leads expects it. page_id/form_id come from
     # the Page we downloaded from, not from the lead body — the whole point of
     # the page-first rewrite is that the form the lead actually lives on is
@@ -56,7 +70,7 @@ def import_lead(cur, page: dict, form: dict, raw_lead: dict, verdict: dict, mapp
         **raw_lead,
         "page_id": page["page_id"],
         "form_id": form["form_id"],
-        "platform": form.get("platform") or "fb",
+        "platform": resolved_platform,
     }
     source = PLATFORM_TO_LEAD_SOURCE.get(enriched["platform"])
     ad_campaign_id = resolve_ad_campaign_id(cur, org_id, reconcile.safe_bigint(raw_lead.get("campaign_id")))

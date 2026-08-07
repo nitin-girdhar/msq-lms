@@ -51,7 +51,7 @@ from common.output import CsvWriter
 
 log = config.setup_logging("sync_leads")
 
-PLATFORM_TO_LEAD_SOURCE = {"fb": "facebook", "ig": "instagram"}
+PLATFORM_TO_LEAD_SOURCE = {"fb": "facebook", "ig": "instagram", "wa": "whatsapp"}
 
 # The Meta-side page/account reorganisation that broke form_id-driven syncing.
 # Everything from here on needs (re-)pulling; older leads are already in the DB
@@ -289,7 +289,18 @@ def sync_form(cur, integration, client: MetaGraphClient, mapping, form_id: str, 
         )
 
     for raw_lead in leads:
-        raw_lead.setdefault("platform", mapping["platform"])
+        # Meta returns `platform` per-lead — prefer it over the static
+        # per-(page,form) mapping["platform"] config value, which is now only
+        # a fallback for when Meta omits the field or returns something we
+        # don't recognize yet (never drop/error the lead over it).
+        meta_platform = raw_lead.get("platform")
+        if not meta_platform or meta_platform not in PLATFORM_TO_LEAD_SOURCE:
+            if meta_platform:
+                log.warning(
+                    "form=%s meta_lead_id=%s: unrecognized platform=%r from Meta, falling back to mapping",
+                    form_id, raw_lead.get("id"), meta_platform,
+                )
+            raw_lead["platform"] = mapping["platform"]
         raw_lead.setdefault("page_id", mapping["page_id"])
         raw_lead["form_id"] = form_id
         result = process_lead(cur, mapping, raw_lead, mappings, dry_run, debug_writers)

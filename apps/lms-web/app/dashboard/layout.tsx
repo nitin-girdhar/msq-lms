@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { NotificationProvider, productOrigins, authOrigin, usableProducts, landingFor } from '@platform/ui-kit';
+import { NotificationProvider, productOrigins, authOrigin, adminWebOrigin, usableProducts, landingFor } from '@platform/ui-kit';
 import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
 import { requireSession } from '@platform/ui-kit/server';
 import { DASHBOARD_NAV } from '@/src/config/navigation';
@@ -42,6 +42,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           homeHref="/dashboard/leads"
           title="Fitclass - Lead Management System"
           notificationSlot={<NotificationBell key="notification-bell" />}
+          adminWebUrl={adminWebOrigin()}
         />
         <MobileSidebar actor={session} items={DASHBOARD_NAV} />
         <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">

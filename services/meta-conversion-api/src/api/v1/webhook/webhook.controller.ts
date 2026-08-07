@@ -2,7 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { getIntegrationById, getGlobalIntegration, type MetaIntegration } from '../../../services/integration.service.js';
 import { fetchLeadFromMeta } from '../../../services/meta-api.service.js';
-import { syncLeadToDatabase } from '../../../services/lead-sync.service.js';
+import { syncLeadToDatabase, resolveLeadPlatform, isMetaTestLead } from '../../../services/lead-sync.service.js';
 import { resolveOrgId, resolveTenantAndOrg } from '../../../services/page-org-map.service.js';
 import { verifyHmacSignature } from '../../../lib/hmac.js';
 import { pgNotify } from '@platform/db';
@@ -154,6 +154,23 @@ export async function handleWebhookPost(
 
         const tenantId = integration.tenant_id ?? ('tenantId' in mapping ? mapping.tenantId : undefined);
 
+        if (isMetaTestLead(rawLead.field_data)) {
+          request.log.info(
+            {
+              evt: 'webhook.lead_skipped_test_lead',
+              metaLeadId: leadId,
+              orgId: mapping.orgId,
+              tenantId,
+              pageId: change.value.page_id,
+              formId: formId ?? null,
+              integrationId: integration.id,
+            },
+            'Skipped Meta test lead (placeholder field data)',
+          );
+          results.push({ leadId, status: 'skipped_test_lead' });
+          continue;
+        }
+
         // Meta Graph API returns created_time as an ISO string; the
         // webhook change event carries it as a unix timestamp number.
         // Prefer the webhook value (already a number) and fall back to
@@ -166,11 +183,20 @@ export async function handleWebhookPost(
           if (!Number.isNaN(parsed)) createdTime = parsed;
         }
 
+        // Meta returns `platform` per-lead (a single form/campaign can run across
+        // Facebook, Instagram, and WhatsApp placements at once) — prefer that over
+        // the static per-(page,form) mapping.platform config value, which is now
+        // only a fallback for when Meta omits the field or returns an unrecognized
+        // value (never crash/drop the lead over an unexpected platform string).
+        const platform = resolveLeadPlatform(rawLead.platform, mapping.platform, (rawValue) => {
+          request.log.warn({ evt: 'webhook.unknown_platform', leadId, rawValue }, 'Unrecognized Meta lead platform');
+        });
+
         const syncResult = await syncLeadToDatabase(mapping.orgId, {
           id: rawLead.id,
           form_id: formId ?? 'unknown',
           page_id: change.value.page_id,
-          platform: mapping.platform,
+          platform,
           ...(createdTime !== undefined ? { created_time: createdTime } : {}),
           ...(rawLead.ad_id !== undefined || change.value.ad_id !== undefined
             ? { ad_id: rawLead.ad_id ?? change.value.ad_id }

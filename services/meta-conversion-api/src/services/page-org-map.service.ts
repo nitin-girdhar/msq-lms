@@ -1,9 +1,10 @@
 import { sql } from 'drizzle-orm';
 import { withServiceTx, withRoleTx, type RoleTxContext } from '@platform/db';
+import type { MetaLeadPlatform } from './lead-sync.service.js';
 
 export interface ResolvedOrgMapping {
   orgId: string;
-  platform: 'fb' | 'ig';
+  platform: MetaLeadPlatform;
 }
 
 // Routes a webhook event to the owning org. form_id is authoritative (a form
@@ -23,7 +24,7 @@ export async function resolveOrgId(
             WHERE tenant_id = ${tenantId}::uuid AND form_id = ${formId}::bigint AND is_active = true
             LIMIT 1`,
       );
-      const row = (rows as unknown as Array<{ org_id: string; platform: 'fb' | 'ig' }>)[0];
+      const row = (rows as unknown as Array<{ org_id: string; platform: MetaLeadPlatform }>)[0];
       if (row) return { orgId: row.org_id, platform: row.platform };
     }
 
@@ -34,7 +35,7 @@ export async function resolveOrgId(
           ORDER BY created_at DESC
           LIMIT 1`,
     );
-    const pageRow = (pageRows as unknown as Array<{ org_id: string; platform: 'fb' | 'ig' }>)[0];
+    const pageRow = (pageRows as unknown as Array<{ org_id: string; platform: MetaLeadPlatform }>)[0];
     return pageRow ? { orgId: pageRow.org_id, platform: pageRow.platform } : null;
   });
 }
@@ -59,7 +60,7 @@ export async function resolveTenantAndOrg(
             WHERE form_id = ${formId}::bigint AND is_active = true
             LIMIT 1`,
       );
-      const row = (rows as unknown as Array<{ tenant_id: string; org_id: string; platform: 'fb' | 'ig' }>)[0];
+      const row = (rows as unknown as Array<{ tenant_id: string; org_id: string; platform: MetaLeadPlatform }>)[0];
       if (row) return { tenantId: row.tenant_id, orgId: row.org_id, platform: row.platform };
     }
 
@@ -70,7 +71,7 @@ export async function resolveTenantAndOrg(
           ORDER BY created_at DESC
           LIMIT 1`,
     );
-    const pageRow = (pageRows as unknown as Array<{ tenant_id: string; org_id: string; platform: 'fb' | 'ig' }>)[0];
+    const pageRow = (pageRows as unknown as Array<{ tenant_id: string; org_id: string; platform: MetaLeadPlatform }>)[0];
     return pageRow ? { tenantId: pageRow.tenant_id, orgId: pageRow.org_id, platform: pageRow.platform } : null;
   });
 }
@@ -81,7 +82,7 @@ export interface PageFormOrgMapping {
   org_id: string;
   page_id: string;
   form_id: string;
-  platform: 'fb' | 'ig';
+  platform: MetaLeadPlatform;
   is_active: boolean;
 }
 
@@ -101,7 +102,7 @@ export interface CreatePageFormOrgMappingInput {
   org_id: string;
   page_id: string;
   form_id: string;
-  platform: 'fb' | 'ig';
+  platform: MetaLeadPlatform;
 }
 
 export async function createPageFormOrgMapping(

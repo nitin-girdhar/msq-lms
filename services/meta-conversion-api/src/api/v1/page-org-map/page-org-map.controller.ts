@@ -9,7 +9,7 @@ const CreateMappingSchema = z.object({
   org_id: z.string().uuid(),
   page_id: z.string().regex(/^\d+$/, 'page_id must be a numeric Meta Page ID'),
   form_id: z.string().regex(/^\d+$/, 'form_id must be a numeric Meta Form ID'),
-  platform: z.enum(['fb', 'ig']),
+  platform: z.enum(['fb', 'ig', 'wa']),
 });
 
 const UpdateMappingSchema = z.object({
