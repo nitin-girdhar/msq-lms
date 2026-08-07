@@ -13,7 +13,11 @@ export async function assignmentsRouter(app: FastifyInstance) {
   const gate = [authenticate, requireModule('lms')] as const;
 
   app.get('/assignments',       { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_VIEW), validate({ query: listAssignmentsQuerySchema })] }, ctrl.listAll);
-  app.get('/assignments/mine',  { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_VIEW), validate({ query: leadsHistoryQuerySchema })] }, ctrl.listMine);
+  // This endpoint backs the Leads History tab's data fetch, not the
+  // Assignments tab — gate it on LMS_HISTORY_VIEW so hiding Assignments
+  // (lms.assignments / lms.assignments.view) doesn't collaterally break
+  // Leads History.
+  app.get('/assignments/mine',  { preHandler: [...gate, requireCapability(CAPABILITY.LMS_HISTORY_VIEW), validate({ query: leadsHistoryQuerySchema })] }, ctrl.listMine);
   app.get('/assignments/:id',   { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_VIEW)] }, ctrl.getById);
   app.post('/assignments',      { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_ASSIGN, 'You do not have permission to assign leads'), validate({ body: createAssignmentSchema })] }, ctrl.create);
   app.patch('/assignments/:id', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_EDIT, 'You do not have permission to edit assignments'), validate({ body: updateAssignmentSchema })] }, ctrl.reassign);

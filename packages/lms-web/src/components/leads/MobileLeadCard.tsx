@@ -1,5 +1,6 @@
 import type { LeadView } from '../../types/leads';
 import { StatusBadge } from './StatusBadge';
+import { SourceBadge } from './SourceBadge';
 import { LeadAssigneeBadge } from './LeadAssigneeBadge';
 
 interface Props {
@@ -66,10 +67,10 @@ export function MobileLeadCard({ lead, isNew, statusLabelMap, onEditClick, onHis
       <div className="h-px bg-[#F1F5F9] mx-4" />
 
       <div className="px-4 py-3 flex flex-col gap-2">
-        {lead.org_name && (
+        {(lead.source || lead.source_label) && (
           <div className="flex items-start gap-2">
-            <span className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide w-20 shrink-0 pt-0.5">Branch</span>
-            <span className="text-sm text-[#0F172A]">{lead.org_name}</span>
+            <span className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide w-20 shrink-0 pt-0.5">Source</span>
+            <SourceBadge value={lead.source} label={lead.source_label} />
           </div>
         )}
         {lead.address_line1 && (

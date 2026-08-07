@@ -76,6 +76,8 @@ export interface AssignmentView {
   lead_stage_outcome_label: string | null;
   lead_created_at: string;
   is_terminated: boolean;
+  lead_source: string | null;
+  lead_source_label: string | null;
   branch: string;
   org_id: string;
   assigned_to: string;

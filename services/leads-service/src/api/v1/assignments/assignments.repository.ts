@@ -153,6 +153,7 @@ export interface LeadsHistoryFilters {
   dateTo?: string | undefined;
   stageIds?: string[] | undefined;
   outcomeIds?: string[] | undefined;
+  sourceIds?: string[] | undefined;
   activeOnly: boolean;
   page: number;
   pageSize: number;
@@ -185,6 +186,9 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
     if (filters.outcomeIds?.length) {
       conditions.push(sql`ml.outcome_id = ANY(${sqlUuidArr(filters.outcomeIds)})`);
     }
+    if (filters.sourceIds?.length) {
+      conditions.push(sql`ml.source_id = ANY(${sqlUuidArr(filters.sourceIds)})`);
+    }
     if (filters.activeOnly) {
       conditions.push(sql`ls.is_terminated = FALSE`);
     }
@@ -208,6 +212,8 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
         ls.is_terminated,
         lso.name            AS lead_stage_outcome,
         lso.label           AS lead_stage_outcome_label,
+        src.name            AS lead_source,
+        src.label           AS lead_source_label,
         ml.created_at       AS lead_created_at,
         ml.updated_at       AS assigned_at,
         ml.is_active, ml.superseded_by,
@@ -218,6 +224,7 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
       JOIN iam.users u              ON u.id  = ml.assigned_user_id
       LEFT JOIN iam.user_roles ur   ON ur.id = u.role_id
       LEFT JOIN lms.lead_stage_outcome lso ON lso.id = ml.outcome_id
+      LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
       WHERE ${where}
       ORDER BY ml.created_at DESC
       LIMIT ${filters.pageSize} OFFSET ${offset}

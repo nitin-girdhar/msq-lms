@@ -12,6 +12,7 @@ export const leadsHistoryQuerySchema = z.object({
   date_to:     z.string().optional(),
   stage_ids:   z.string().optional(),
   outcome_ids: z.string().optional(),
+  source_ids:  z.string().optional(),
   org_ids:     z.string().optional(),
   assigned_to: z.string().optional(),
   active_only: z.coerce.boolean().optional().default(true),

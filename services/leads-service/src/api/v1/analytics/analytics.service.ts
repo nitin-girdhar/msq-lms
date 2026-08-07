@@ -30,6 +30,10 @@ export async function getUserReport(orgId: string, userId: string, isTenantWide:
   return repo.getUserReport(orgId, userId, isTenantWide);
 }
 
+export async function getSourceReport(orgId: string, userId: string, isTenantWide: boolean) {
+  return repo.getSourceReport(orgId, userId, isTenantWide);
+}
+
 /**
  * On-demand send of the same email the cron job sends, to the caller's tenant
  * admins. Tenant-wide access is enforced in the controller.

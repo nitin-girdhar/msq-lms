@@ -13,6 +13,7 @@ import { applyLeadFilter } from '../lib/leads/filter';
 import { LeadHistoryModal } from './LeadHistoryModal';
 import { useIsMobile } from '@platform/ui-kit';
 import { StatusBadge } from './leads/StatusBadge';
+import { SourceBadge } from './leads/SourceBadge';
 import { LeadAssigneeBadge } from './leads/LeadAssigneeBadge';
 import { MobileLeadCard } from './leads/MobileLeadCard';
 import { LeadEditModal } from './leads/LeadEditModal';
@@ -110,8 +111,12 @@ export default function LeadsTable({
       valueGetter: (p) => p.data?.phone ?? '',
     },
     {
-      colId: 'branch', headerName: 'Branch', width: 150, minWidth: 120, sortable: true, filter: true, editable: false,
-      valueGetter: (p) => p.data?.org_name ?? '',
+      colId: 'source', headerName: 'Lead Source', width: 150, minWidth: 130, sortable: true, filter: true, editable: false,
+      valueGetter: (p) => p.data?.source_label ?? p.data?.source ?? '',
+      cellRenderer: (p: ICellRendererParams<LeadView>) => (
+        <SourceBadge value={p.data?.source ?? null} label={p.data?.source_label ?? null} />
+      ),
+      cellStyle: { display: 'flex', alignItems: 'center' } as Record<string, string>,
     },
     {
       colId: '__assignee', headerName: 'Assigned To', width: 170, minWidth: 130, sortable: true, filter: true, editable: false,

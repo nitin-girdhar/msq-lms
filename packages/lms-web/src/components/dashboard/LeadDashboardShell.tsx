@@ -10,6 +10,7 @@ import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useLocationFilters } from '../../hooks/useLocationFilters';
 import { useLeadSources } from '../../hooks/useLeadSources';
 import StatsCards from '../StatsCards';
+import { SourceBreakdown } from '../leads/SourceBreakdown';
 import LeadsTable from '../LeadsTable';
 import FollowUpsShell from '../leads/FollowUpsShell';
 import { DownloadButton } from '@platform/ui-kit';
@@ -212,6 +213,7 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
           onFilterChange={handleFilterChange}
           hideUnassigned={!canSeeUnassignedCard(getRulesForTenant(actor.tenant_id), actor.rank)}
         />
+        <SourceBreakdown leads={leads} />
       </div>
 
       {/* Toolbar */}

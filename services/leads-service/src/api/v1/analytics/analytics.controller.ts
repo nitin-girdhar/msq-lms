@@ -51,6 +51,14 @@ export class AnalyticsController {
     return reply.send({ success: true, data });
   };
 
+  getSourceReport = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role } = request.auth;
+    if (!checkAnalyticsAccess(request.auth)) throw new ForbiddenError('Access restricted to administrators');
+    const isTenantWide = role === 'super_admin' || role === 'tenant_admin';
+    const data = await service.getSourceReport(org_id, user_id, isTenantWide);
+    return reply.send({ success: true, data });
+  };
+
   /**
    * Sends the tenant-wide report on demand, to the tenant's own admins.
    *

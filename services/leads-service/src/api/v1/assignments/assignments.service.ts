@@ -136,6 +136,7 @@ export interface LeadsHistoryParams {
   dateTo?: string;
   stageIds?: string[];
   outcomeIds?: string[];
+  sourceIds?: string[];
   orgIds?: string[];
   assignedTo?: string[];
   activeOnly: boolean;
@@ -156,6 +157,7 @@ export async function listLeadsHistory(
     dateTo: params.dateTo,
     stageIds: params.stageIds,
     outcomeIds: params.outcomeIds,
+    sourceIds: params.sourceIds,
     activeOnly: params.activeOnly,
     page: params.page,
     pageSize: params.pageSize,

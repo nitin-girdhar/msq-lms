@@ -370,7 +370,7 @@ export async function getSourceSnapshotForDate(
  * 'Unknown' is the bucket for ml.source_id IS NULL, mirroring the "Unassigned"
  * convention used for assigned_user_id IS NULL elsewhere in this file.
  */
-function sourceBranchQuery(tenantId: string) {
+function sourceBranchQuery(tenantId: string, orgId?: string) {
   return sql`
     WITH counters AS (
       SELECT
@@ -391,6 +391,7 @@ function sourceBranchQuery(tenantId: string) {
       JOIN entity.organizations o ON o.id = ml.org_id
       LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
       WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
+        ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
       GROUP BY ml.org_id, ml.source_id
     ),
     sources AS (
@@ -415,7 +416,9 @@ function sourceBranchQuery(tenantId: string) {
     CROSS JOIN sources src
     LEFT JOIN counters c ON c.org_id = o.id AND c.source_id IS NOT DISTINCT FROM src.id
     WHERE o.tenant_id = ${tenantId}::uuid AND NOT o.is_deleted
+      ${orgId ? sql`AND o.id = ${orgId}::uuid` : sql``}
 
+    ${orgId ? sql`` : sql`
     UNION ALL
 
     SELECT
@@ -434,6 +437,7 @@ function sourceBranchQuery(tenantId: string) {
     FROM sources src
     LEFT JOIN counters c ON c.source_id IS NOT DISTINCT FROM src.id
     GROUP BY src.id, src.label
+    `}
 
     ORDER BY source_label, is_total, org_name
   `;
@@ -444,7 +448,7 @@ function sourceBranchQuery(tenantId: string) {
  * lms.vw_lead_report_user: a branch/assignee/source combination with no leads
  * produces no row. 'Unknown' bucket for ml.source_id IS NULL, as above.
  */
-function sourceUserQuery(tenantId: string) {
+function sourceUserQuery(tenantId: string, orgId?: string) {
   return sql`
     SELECT
       o.tenant_id, ml.org_id, o.name AS org_name,
@@ -471,6 +475,7 @@ function sourceUserQuery(tenantId: string) {
     LEFT JOIN iam.users u         ON u.id   = ml.assigned_user_id AND NOT u.is_deleted
     LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
     WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
+      ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
     GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone, ml.assigned_user_id, u.full_name,
              ml.source_id, src.label
     ORDER BY org_name, source_label, is_unassigned DESC, assignee
@@ -483,6 +488,34 @@ export async function getTenantSourceReport(
   return withServiceTx(async (tx) => {
     const branches = (await tx.execute(sourceBranchQuery(tenantId))) as Array<Record<string, unknown>>;
     const users = (await tx.execute(sourceUserQuery(tenantId))) as Array<Record<string, unknown>>;
+    return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
+  });
+}
+
+/**
+ * Authenticated, RLS-scoped counterpart to getTenantSourceReport (which uses
+ * withServiceTx and is reserved for the cron job / public report, where there
+ * is no session actor). Tenant-wide callers get every branch + an "ALL
+ * BRANCHES" rollup per source, same as the branch/user report endpoints;
+ * others get their one org's source breakdown only.
+ */
+export async function getSourceReport(
+  orgId: string,
+  userId: string,
+  isTenantWide: boolean,
+): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] }> {
+  if (isTenantWide) {
+    const tenantId = await resolveTenantId(orgId);
+    return withRoleTx({ role: 'tenant_admin', org_id: orgId, tenant_id: tenantId, user_id: userId }, async (tx) => {
+      const branches = (await tx.execute(sourceBranchQuery(tenantId))) as Array<Record<string, unknown>>;
+      const users = (await tx.execute(sourceUserQuery(tenantId))) as Array<Record<string, unknown>>;
+      return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
+    });
+  }
+  const tenantId = await resolveTenantId(orgId);
+  return withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => {
+    const branches = (await tx.execute(sourceBranchQuery(tenantId, orgId))) as Array<Record<string, unknown>>;
+    const users = (await tx.execute(sourceUserQuery(tenantId, orgId))) as Array<Record<string, unknown>>;
     return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
   });
 }

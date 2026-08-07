@@ -20,5 +20,6 @@ export async function analyticsRouter(app: FastifyInstance) {
   // deployment before the route worked anywhere.
   app.get('/analytics/report/branches',     { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ANALYTICS_VIEW, 'Access restricted to administrators')] }, ctrl.getBranchReport);
   app.get('/analytics/report/users',        { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ANALYTICS_VIEW, 'Access restricted to administrators')] }, ctrl.getUserReport);
+  app.get('/analytics/report/sources',      { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ANALYTICS_VIEW, 'Access restricted to administrators')] }, ctrl.getSourceReport);
   app.post('/analytics/report/send',        { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ANALYTICS_VIEW, 'Access restricted to administrators')] }, ctrl.sendReportNow);
 }

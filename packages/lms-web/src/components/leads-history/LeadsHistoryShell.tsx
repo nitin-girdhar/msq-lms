@@ -11,8 +11,10 @@ import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../
 import { useLeadsHistory } from '../../hooks/useLeadsHistory';
 import type { LeadsHistoryFilters } from '../../hooks/useLeadsHistory';
 import { Pagination, DownloadButton, users as usersApi, orgs as orgsApi } from '@platform/ui-kit';
+import { lead_sources as leadSourcesApi } from '../../lib/api/client';
 import AssigneeBadge from '../assignments/AssigneeBadge';
 import { StatusBadge } from '../leads/StatusBadge';
+import { SourceBadge } from '../leads/SourceBadge';
 import { LeadHistoryModal } from '../LeadHistoryModal';
 import { buildFilename, exportRows, type ExportColumn, type ExportRowsFormat as ExportFormat } from '@platform/ui-kit';
 import '@platform/ui-kit/ag-grid.css';
@@ -25,6 +27,7 @@ interface Props {
 
 interface UserOption { id: string; label: string }
 interface OrgOption { id: string; name: string }
+interface SourceOption { id: string; name: string; label: string }
 
 function defaultDateFrom(): string {
   const d = new Date();
@@ -45,6 +48,7 @@ const EXPORT_COLUMNS: ExportColumn<AssignmentView>[] = [
   { header: 'Name', value: (a) => a.lead_full_name ?? '' },
   { header: 'Phone', value: (a) => a.lead_phone ?? '' },
   { header: 'Branch', value: (a) => a.branch },
+  { header: 'Lead Source', value: (a) => a.lead_source_label ?? a.lead_source ?? '' },
   { header: 'Stage', value: (a) => a.lead_stage_label ?? a.lead_stage ?? '' },
   { header: 'Outcome', value: (a) => a.lead_stage_outcome_label ?? '' },
   { header: 'Assigned To', value: (a) => a.assigned_rep_name ?? '' },
@@ -69,9 +73,11 @@ export default function LeadsHistoryShell({ actor }: Props) {
   const [selectedOutcomes, setSelectedOutcomes] = useState<string[]>([]);
   const [selectedOrgs, setSelectedOrgs] = useState<string[]>([]);
   const [selectedAssignees, setSelectedAssignees] = useState<string[]>([]);
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
 
   const [assignableUsers, setAssignableUsers] = useState<UserOption[]>([]);
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
+  const [sources, setSources] = useState<SourceOption[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
 
   const {
@@ -97,9 +103,10 @@ export default function LeadsHistoryShell({ actor }: Props) {
       outcome_ids: selectedOutcomes.length ? selectedOutcomes.join(',') : undefined,
       org_ids: selectedOrgs.length ? selectedOrgs.join(',') : undefined,
       assigned_to: selectedAssignees.length ? selectedAssignees.join(',') : undefined,
+      source_ids: selectedSources.length ? selectedSources.join(',') : undefined,
       active_only: false,
     };
-  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, activeStageIds]);
+  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, activeStageIds]);
 
   // Initial fetch — needs stageOptions to know active stage IDs
   const initialFetched = useRef(false);
@@ -124,6 +131,17 @@ export default function LeadsHistoryShell({ actor }: Props) {
     })();
     return () => { cancelled = true; };
   }, [showOrgFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const json = await leadSourcesApi.list();
+        if (!cancelled) setSources(Array.isArray(json.data) ? json.data : []);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // "Relevant users" for the picked org — still capped by the actor's own scope
   // (team scope never asks the backend for another org's users at all; org/tenant/all
@@ -187,6 +205,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
     setSelectedOutcomes([]);
     setSelectedOrgs([]);
     setSelectedAssignees([]);
+    setSelectedSources([]);
     // Also clear any per-column filter/sort applied directly in the grid, so Reset
     // fully returns to the same state as when this page was first loaded.
     gridRef.current?.api.setFilterModel(null);
@@ -215,6 +234,14 @@ export default function LeadsHistoryShell({ actor }: Props) {
       // Only flexible column — branch/org names vary in length, so leftover
       // width goes here instead of being spread thinly across every column.
       headerName: 'Branch', field: 'branch', flex: 1, minWidth: 140, filter: true, sortable: true,
+    },
+    {
+      headerName: 'Lead Source', width: 150, minWidth: 130, filter: true, sortable: true,
+      valueGetter: (p) => p.data?.lead_source_label ?? p.data?.lead_source ?? '',
+      cellRenderer: (p: ICellRendererParams<AssignmentView>) => (
+        <SourceBadge value={p.data?.lead_source ?? null} label={p.data?.lead_source_label ?? null} />
+      ),
+      cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
       // Same StatusBadge + labelMap as the main leads grid — colors come from
@@ -318,6 +345,15 @@ export default function LeadsHistoryShell({ actor }: Props) {
             />
           </FilterField>
 
+          <FilterField label="Source">
+            <MultiCheckDropdown
+              placeholder="All sources"
+              options={sources.map((s) => ({ value: s.id, label: s.label }))}
+              selected={selectedSources}
+              onChange={setSelectedSources}
+            />
+          </FilterField>
+
           {showOrgFilter && orgs.length > 1 && (
             <FilterField label="Org">
               <select
@@ -404,6 +440,8 @@ export default function LeadsHistoryShell({ actor }: Props) {
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#64748B]">
                     <span>{a.branch}</span>
+                    <span>·</span>
+                    <SourceBadge value={a.lead_source} label={a.lead_source_label} />
                     <span>·</span>
                     <AssigneeBadge user={a.assigned_rep_name || a.assigned_rep_email ? { name: a.assigned_rep_name, email: a.assigned_rep_email ?? '' } : null} />
                     <span>·</span>

@@ -26,6 +26,7 @@ export class AssignmentsController {
         ...(q.date_to ? { dateTo: q.date_to } : {}),
         ...(q.stage_ids ? { stageIds: q.stage_ids.split(',').filter(Boolean) } : {}),
         ...(q.outcome_ids ? { outcomeIds: q.outcome_ids.split(',').filter(Boolean) } : {}),
+        ...(q.source_ids ? { sourceIds: q.source_ids.split(',').filter(Boolean) } : {}),
         ...(q.org_ids ? { orgIds: q.org_ids.split(',').filter(Boolean) } : {}),
         ...(q.assigned_to ? { assignedTo: q.assigned_to.split(',').filter(Boolean) } : {}),
       },

@@ -139,7 +139,7 @@ export const assignments = {
     ).toString();
     return request<{
       success: true;
-      data: import('../../types/leads').LeadView[];
+      data: import('../../types/leads').AssignmentView[];
       total: number;
       page: number;
       page_size: number;
@@ -175,7 +175,7 @@ export const campaigns = {
 // ── Lead Sources ─────────────────────────────────────────────────────────────
 
 export const lead_sources = {
-  list: () => request<{ success: true; data: Array<{ id: string; name: string }> }>('/lead-sources'),
+  list: () => request<{ success: true; data: Array<{ id: string; name: string; label: string; is_active: boolean }> }>('/lead-sources'),
 };
 
 // ── Lookups (lead-form data: stages, stage outcomes, cities) ─────────────────
@@ -211,6 +211,16 @@ export const analytics = {
   campaigns: () => request<{ success: true; data: unknown[] }>('/analytics/dashboard/campaigns'),
   performance: () => request<{ success: true; data: unknown }>('/analytics/performance'),
   pipeline: () => request<{ success: true; data: unknown[] }>('/analytics/pipeline'),
+  branchReport: () =>
+    request<{ success: true; data: import('../../types/analytics').BranchReportRow[] }>('/analytics/report/branches'),
+  sourceReport: () =>
+    request<{
+      success: true;
+      data: {
+        branches: import('../../types/analytics').SourceBranchRow[];
+        users: import('../../types/analytics').SourceUserRow[];
+      };
+    }>('/analytics/report/sources'),
 };
 
 // ── Activities ────────────────────────────────────────────────────────────────
