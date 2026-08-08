@@ -55,10 +55,6 @@ export function canOpenUsers(actor: CapabilityHolder): boolean {
   return holdsUsableNode(actor, CAPABILITY.LMS_USERS);
 }
 
-export function canOpenApiClients(actor: CapabilityHolder): boolean {
-  return holdsUsableNode(actor, CAPABILITY.PLATFORM_API_TOKENS);
-}
-
 /**
  * /dashboard/team has no nav entry and no page node of its own — it is the
  * team-scoped slice of the people directory.

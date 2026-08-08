@@ -23,7 +23,6 @@ export const DASHBOARD_NAV: readonly NavItem[] = [
   { id: 'bulk-assign',   label: 'Bulk Assign',   href: '/dashboard/bulk-assign',   capability: CAPABILITY.LMS_LEADS_ASSIGN_BULK, exact: true },
   { id: 'analytics',     label: 'Analytics',     href: '/dashboard/analytics',     capability: CAPABILITY.LMS_ANALYTICS },
   { id: 'users',         label: 'Users',         href: '/dashboard/users',         capability: CAPABILITY.LMS_USERS },
-  { id: 'api-clients',   label: 'API Tokens',    href: '/dashboard/api-clients',   capability: CAPABILITY.PLATFORM_API_TOKENS },
 ] as const;
 
 /** The CRM nav entries this user may actually open. */
