@@ -17,7 +17,7 @@ export default async function AssignmentsPage() {
 
   const [assignmentsRes, candidatesRes] = await Promise.all([
     fetch(`${GATEWAY_URL}/assignments`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
-    fetch(`${GATEWAY_URL}/users/assignable`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
+    fetch(`${GATEWAY_URL}/users/assignable?product=lms`, { headers: { cookie: cookieHeader }, cache: 'no-store' }),
   ]);
 
   let assignments: AssignmentView[] = [];

@@ -102,7 +102,7 @@ export default function AssignLeadModal({
     let cancelled = false;
     setOrgCandidatesLoading(true);
     usersApi
-      .assignable({ orgId })
+      .assignable({ product: 'lms', orgId })
       .then((res) => {
         if (!cancelled) setOrgCandidates((res.data ?? []) as SessionUser[]);
       })

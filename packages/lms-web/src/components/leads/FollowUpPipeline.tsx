@@ -11,14 +11,17 @@ interface FollowUpEnriched {
   leadFullName: string;
   leadPhone: string | null;
   leadStage: string;
+  leadStageLabel: string | null;
   assignedRepName: string;
   assignedRepEmail: string;
   isOverdue: boolean;
   minutesOverdue: number | null;
   followUpStatus: string;
+  followUpStatusLabel: string | null;
   scheduledAt: string;
   lastInteractionAt: string | null;
   lastInteractionType: string | null;
+  lastInteractionTypeLabel: string | null;
   notes: string | null;
 }
 
@@ -52,7 +55,7 @@ function followUpToLeadView(item: FollowUpEnriched): LeadView {
     lead_id: item.leadId, org_id: '', org_name: '', first_name: '', middle_name: null, last_name: '',
     full_name: item.leadFullName, phone: item.leadPhone, email: null, address_line1: null,
     city: null, city_name: null, state_name: null, country_name: null,
-    stage: item.leadStage, stage_label: item.leadStage.replace(/_/g, ' '), source: null, source_label: null,
+    stage: item.leadStage, stage_label: item.leadStageLabel ?? item.leadStage.replace(/_/g, ' '), source: null, source_label: null,
     followup_required: false, is_rejected: false, is_terminated: false,
     outcome: null, outcome_label: null, outcome_comment: null, stage_id: '', outcome_id: null,
     scheduled_at: item.scheduledAt, is_followup_overdue: item.isOverdue,
@@ -140,7 +143,7 @@ export function FollowUpPipeline({ assignedRepId, overdueOnly }: Props) {
                   <p className="text-xs text-[#64748B]">{item.leadPhone}</p>
                 )}
                 <span className="mt-0.5 inline-block rounded-full border border-[#E2E8F0] bg-[#F1F5F9] px-2 py-0.5 text-xs text-[#475569]">
-                  {item.leadStage.replace(/_/g, ' ')}
+                  {item.leadStageLabel ?? item.leadStage.replace(/_/g, ' ')}
                 </span>
               </td>
               <td className="px-4 py-3">
@@ -152,7 +155,7 @@ export function FollowUpPipeline({ assignedRepId, overdueOnly }: Props) {
                   <OverdueBadge minutes={item.minutesOverdue ?? 0} />
                 ) : (
                   <span className="inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-                    {item.followUpStatus.replace(/_/g, ' ')}
+                    {item.followUpStatusLabel ?? item.followUpStatus.replace(/_/g, ' ')}
                   </span>
                 )}
               </td>
@@ -164,7 +167,7 @@ export function FollowUpPipeline({ assignedRepId, overdueOnly }: Props) {
                   <>
                     <p className="text-xs">{formatDate(item.lastInteractionAt)}</p>
                     {item.lastInteractionType && (
-                      <p className="text-xs text-[#94A3B8]">{item.lastInteractionType}</p>
+                      <p className="text-xs text-[#94A3B8]">{item.lastInteractionTypeLabel ?? item.lastInteractionType}</p>
                     )}
                   </>
                 ) : (

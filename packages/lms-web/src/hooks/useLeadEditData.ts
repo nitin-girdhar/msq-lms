@@ -85,7 +85,7 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
     let cancelled = false;
     (async () => {
       try {
-        const json = await usersApi.assignable();
+        const json = await usersApi.assignable({ product: 'lms' });
         if (cancelled) return;
         const raw = Array.isArray(json.data) ? json.data as Record<string, unknown>[] : [];
         setCandidates(raw.map((u) => ({

@@ -35,9 +35,11 @@ interface TimelineEvent {
   note: string | null;
   followupId: string | null;
   followupStatus: string | null;
+  followupStatusLabel: string | null;
   scheduledAt: string | null;
   completedAt: string | null;
   interactionType: string | null;
+  interactionTypeLabel: string | null;
 }
 
 interface EventGroup {
@@ -80,7 +82,13 @@ function StatusPill({
   );
 }
 
-function FollowUpPill({ status }: { status: string | null }) {
+function FollowUpPill({
+  status,
+  statusLabel,
+}: {
+  status: string | null;
+  statusLabel?: string | null;
+}) {
   if (!status) return null;
   const cfg: Record<string, string> = {
     pending: "bg-amber-100 text-amber-700",
@@ -88,9 +96,9 @@ function FollowUpPill({ status }: { status: string | null }) {
     missed: "bg-red-100 text-red-700",
     rescheduled: "bg-blue-100 text-blue-700",
   };
-  const label = status
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const label =
+    statusLabel ??
+    status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   return (
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${cfg[status] ?? "bg-gray-100 text-gray-600"}`}
@@ -381,7 +389,7 @@ function GroupedEventCard({
               />
             </svg>
             <span>Follow-up</span>
-            <FollowUpPill status={fu.followupStatus} />
+            <FollowUpPill status={fu.followupStatus} statusLabel={fu.followupStatusLabel} />
             {fu.scheduledAt && (
               <span className="text-xs font-normal text-[#64748B]">
                 {fu.followupStatus === "completed" ? "completed" : "scheduled"}{" "}
@@ -414,11 +422,12 @@ function GroupedEventCard({
         >
           <InteractionIcon type={ix.interactionType} />
           <span>
-            {ix.interactionType
-              ? ix.interactionType
-                  .replace(/_/g, " ")
-                  .replace(/\b\w/g, (c) => c.toUpperCase())
-              : "Interaction"}{" "}
+            {ix.interactionTypeLabel ??
+              (ix.interactionType
+                ? ix.interactionType
+                    .replace(/_/g, " ")
+                    .replace(/\b\w/g, (c) => c.toUpperCase())
+                : "Interaction")}{" "}
             Logged
           </span>
         </div>

@@ -27,14 +27,17 @@ interface FollowUpItem {
   leadFullName: string;
   leadPhone: string | null;
   leadStage: string;
+  leadStageLabel: string | null;
   assignedRepName: string;
   assignedRepEmail: string;
   isOverdue: boolean | null;
   minutesOverdue: number | null;
   followUpStatus: string | null;
+  followUpStatusLabel: string | null;
   scheduledAt: string | null;
   lastInteractionAt: string | null;
   lastInteractionType: string | null;
+  lastInteractionTypeLabel: string | null;
   notes: string | null;
 }
 
@@ -64,10 +67,10 @@ function overdueDuration(mins: number): string {
 const EXPORT_COLS: ExportColumn<FollowUpItem>[] = [
   { header: 'Lead', value: (f) => f.leadFullName },
   { header: 'Phone', value: (f) => f.leadPhone ?? '' },
-  { header: 'Stage', value: (f) => f.leadStage.replace(/_/g, ' ') },
+  { header: 'Stage', value: (f) => f.leadStageLabel ?? f.leadStage.replace(/_/g, ' ') },
   { header: 'Assigned To', value: (f) => f.assignedRepName },
   { header: 'Email', value: (f) => f.assignedRepEmail },
-  { header: 'Status', value: (f) => f.followUpStatus },
+  { header: 'Status', value: (f) => f.followUpStatusLabel ?? f.followUpStatus },
   { header: 'Scheduled', value: (f) => (f.scheduledAt ? formatDate(f.scheduledAt) : 'Not scheduled') },
   { header: 'Notes', value: (f) => f.notes ?? '' },
 ];
@@ -202,7 +205,7 @@ function FollowUpGrid({ items, onEdit, onHistory, type }: { items: FollowUpItem[
     },
     {
       headerName: 'Stage', field: 'leadStage', flex: 1, minWidth: 100, filter: true, sortable: true,
-      valueFormatter: (p) => p.value?.replace(/_/g, ' ') ?? '',
+      valueGetter: (p) => p.data?.leadStageLabel ?? p.data?.leadStage.replace(/_/g, ' ') ?? '',
     },
     {
       headerName: 'Assigned To', field: 'assignedRepName', flex: 2, minWidth: 140, filter: true, sortable: true,

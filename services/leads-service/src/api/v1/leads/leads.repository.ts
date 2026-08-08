@@ -146,9 +146,11 @@ export async function getLeadTimeline(ctx: RoleTxContext, leadId: string) {
         note,
         followup_id       AS "followupId",
         followup_status   AS "followupStatus",
+        followup_status_label AS "followupStatusLabel",
         scheduled_at      AS "scheduledAt",
         completed_at      AS "completedAt",
-        interaction_type  AS "interactionType"
+        interaction_type  AS "interactionType",
+        interaction_type_label AS "interactionTypeLabel"
       FROM lms.vw_lead_followup_timeline
       WHERE lead_id = ${leadId}
       ORDER BY event_at DESC
@@ -229,6 +231,7 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
         ml.full_name                      AS "leadFullName",
         ml.phone                          AS "leadPhone",
         lstg.name                         AS "leadStage",
+        lstg.label                        AS "leadStageLabel",
         u.full_name                       AS "assignedRepName",
         u.email                           AS "assignedRepEmail",
         (ml.scheduled_at < NOW())         AS "isOverdue",
@@ -236,9 +239,11 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
              THEN (EXTRACT(EPOCH FROM (NOW() - ml.scheduled_at)) / 60)::int
              ELSE NULL END                AS "minutesOverdue",
         fs.name                           AS "followUpStatus",
+        fs.label                          AS "followUpStatusLabel",
         ml.scheduled_at                   AS "scheduledAt",
         li.created_at                     AS "lastInteractionAt",
         it.name                          AS "lastInteractionType",
+        it.label                         AS "lastInteractionTypeLabel",
         lf.notes                         AS "notes"
       FROM lms.marketing_leads ml
       JOIN lms.lead_stage lstg ON lstg.id = ml.stage_id

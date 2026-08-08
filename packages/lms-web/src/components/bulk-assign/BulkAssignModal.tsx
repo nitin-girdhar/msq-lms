@@ -31,7 +31,7 @@ export default function BulkAssignModal({ open, onClose, orgId, leadIds, onAssig
     let cancelled = false;
     setCandidatesLoading(true);
     usersApi
-      .assignable({ orgId, maxRank: LMS_RANKS.SSE })
+      .assignable({ product: 'lms', orgId, maxRank: LMS_RANKS.SSE })
       .then((res) => {
         if (!cancelled) setCandidates((res.data ?? []) as SessionUser[]);
       })
