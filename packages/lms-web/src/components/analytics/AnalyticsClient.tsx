@@ -321,13 +321,15 @@ function SummaryTable({
   onToggleExpand?: (key: string) => void;
   renderExpanded?: (key: string) => ReactNode;
 }) {
-  if (!rows.length) return null;
   const expandable = !!onToggleExpand;
   return (
     <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
       <div className="border-b border-[#F1F5F9] px-4 py-2.5">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{title}</h3>
       </div>
+      {!rows.length ? (
+        <p className="px-4 py-6 text-center text-xs text-[#94A3B8]">No data yet.</p>
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[#F8FAFC] text-left text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
@@ -385,6 +387,7 @@ function SummaryTable({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

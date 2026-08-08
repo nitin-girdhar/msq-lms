@@ -26,6 +26,8 @@ export interface SourceUserRow extends LeadReportMetrics {
   org_name: string;
   assigned_user_id: string | null;
   assignee: string;
+  /** NULL for the Unassigned bucket, which has no role. */
+  role_label: string | null;
   is_unassigned: boolean;
   source_id: string | null;
   source_label: string;
@@ -58,6 +60,7 @@ export function toSourceUserRow(row: Record<string, unknown>): SourceUserRow {
     org_name: str(row['org_name'], '(unnamed branch)'),
     assigned_user_id: assignedUserId,
     assignee: str(row['assignee'], 'Unassigned'),
+    role_label: row['role_label'] == null ? null : String(row['role_label']),
     is_unassigned: row['is_unassigned'] === true || assignedUserId === null,
     source_id: nullableId(row['source_id']),
     source_label: str(row['source_label'], 'Unknown'),

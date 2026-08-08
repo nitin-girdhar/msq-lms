@@ -452,6 +452,12 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
  * Per (branch, assignee, source) row — no zero-fill, same as
  * lms.vw_lead_report_user: a branch/assignee/source combination with no leads
  * produces no row. 'Unknown' bucket for ml.source_id IS NULL, as above.
+ *
+ * Ordered by assignee then source (not source then assignee) so every source
+ * an assignee has leads in sits together in the grid instead of scattered
+ * across separate source-first blocks. role_label rides along per assignee
+ * (NULL for the Unassigned bucket) so the render can disambiguate two
+ * distinct users who share a full_name.
  */
 function sourceUserQuery(tenantId: string, orgId?: string) {
   return sql`
@@ -459,6 +465,7 @@ function sourceUserQuery(tenantId: string, orgId?: string) {
       o.tenant_id, ml.org_id, o.name AS org_name,
       ml.assigned_user_id,
       COALESCE(u.full_name, 'Unassigned') AS assignee,
+      ur.label AS role_label,
       (ml.assigned_user_id IS NULL) AS is_unassigned,
       ml.source_id,
       COALESCE(src.label, 'Unknown') AS source_label,
@@ -478,12 +485,14 @@ function sourceUserQuery(tenantId: string, orgId?: string) {
     JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
     LEFT JOIN lms.lead_stage ls   ON ls.id  = ml.stage_id  AND ls.tenant_id = o.tenant_id
     LEFT JOIN iam.users u         ON u.id   = ml.assigned_user_id AND NOT u.is_deleted
+    LEFT JOIN iam.user_roles ur   ON ur.id  = u.role_id
+                                 AND (ur.tenant_id = o.tenant_id OR ur.tenant_id IS NULL)
     LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
     WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
       ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
     GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone, ml.assigned_user_id, u.full_name,
-             ml.source_id, src.label
-    ORDER BY org_name, source_label, is_unassigned DESC, assignee
+             ur.label, ml.source_id, src.label
+    ORDER BY org_name, is_unassigned DESC, assignee, source_label
   `;
 }
 

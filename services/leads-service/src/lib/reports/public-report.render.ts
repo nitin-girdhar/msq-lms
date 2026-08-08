@@ -119,7 +119,11 @@ function branchTable(branches: BranchReportRow[], compare: BranchReportRow[] | n
  * always the label, never a raw source_id/name). Same branch-banded layout as
  * the plain version, just keyed by (branch, assignee, source) instead of
  * (branch, assignee), so one assignee can appear more than once per branch —
- * once per source their leads came from.
+ * once per source their leads came from. Rows within a branch stay in the
+ * order sourceUserQuery returned them (assignee, then source), so an
+ * assignee's rows sit together instead of scattered by source, and the role
+ * badge next to the name disambiguates two different users who share a
+ * full_name.
  */
 function sourceUserTable(users: SourceUserRow[], compare: SourceUserRow[] | null, hasCompare: boolean): string {
   if (users.length === 0) return '<p class="note">No leads assigned in any branch.</p>';
@@ -138,7 +142,8 @@ function sourceUserTable(users: SourceUserRow[], compare: SourceUserRow[] | null
     body.push(`<tr><th colspan="${COLUMNS.length + 3}" style="text-align:left;background:#e9eefb;">${escapeHtml(orgName)}</th></tr>`);
     for (const u of rows) {
       const compareRow = byKey.get(`${u.org_id}:${u.assigned_user_id ?? 'unassigned'}:${u.source_id ?? 'unknown'}`);
-      body.push(`<tr><td>${escapeHtml(u.source_label)}</td><td>${escapeHtml(u.assignee)}</td>${metricCells(u, compareRow, hasCompare)}</tr>`);
+      const assigneeLabel = u.role_label ? `${escapeHtml(u.assignee)} <span class="cmp">(${escapeHtml(u.role_label)})</span>` : escapeHtml(u.assignee);
+      body.push(`<tr><td>${escapeHtml(u.source_label)}</td><td>${assigneeLabel}</td>${metricCells(u, compareRow, hasCompare)}</tr>`);
     }
   }
 
