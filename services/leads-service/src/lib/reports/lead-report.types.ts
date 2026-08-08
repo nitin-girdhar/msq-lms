@@ -15,6 +15,7 @@ export interface LeadReportMetrics {
   total_leads: number;
   new_count: number;
   new_leads_today: number;
+  new_leads_this_month: number;
   unassigned_count: number;
   followup_scheduled: number;
   followup_overdue: number;
@@ -58,6 +59,7 @@ const METRIC_KEYS = [
   'total_leads',
   'new_count',
   'new_leads_today',
+  'new_leads_this_month',
   'unassigned_count',
   'followup_scheduled',
   'followup_overdue',

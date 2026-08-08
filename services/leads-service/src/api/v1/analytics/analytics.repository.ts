@@ -98,6 +98,7 @@ function tenantBranchReportQuery(tenantId: string) {
       SUM(total_leads)::INT        AS total_leads,
       SUM(new_count)::INT          AS new_count,
       SUM(new_leads_today)::INT    AS new_leads_today,
+      SUM(new_leads_this_month)::INT AS new_leads_this_month,
       SUM(unassigned_count)::INT   AS unassigned_count,
       SUM(followup_scheduled)::INT AS followup_scheduled,
       SUM(followup_overdue)::INT   AS followup_overdue,
@@ -359,13 +360,17 @@ export async function getSourceSnapshotForDate(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Per (branch, source) row, zero-filled — a branch with no leads from a given
- * source still gets a row, same "zero row, not a missing row" guarantee as
- * lms.vw_lead_report_branch — plus one "ALL BRANCHES" rollup row per source.
+ * Per (branch, source) row — no zero-fill: a branch/source combination with no
+ * leads produces no row, and a source with no leads anywhere in the tenant
+ * produces no rows (and no "ALL BRANCHES" rollup) at all. Deliberately
+ * different from tenantBranchReportQuery, which zero-fills every branch —
+ * "By source" is meant to show only where lead data actually exists, per
+ * product ask, so a tenant with sources configured but unused doesn't render
+ * a wall of empty grids.
  *
- * The rollup is summed from `counters` directly (not from the zero-filled
- * per-branch rows), so it can never disagree with what a manual SUM() over
- * those rows would show — same reasoning as tenantBranchReportQuery's rollup.
+ * The rollup is summed from `counters` directly, so it can never disagree
+ * with what a manual SUM() over the per-branch rows would show — same
+ * reasoning as tenantBranchReportQuery's rollup.
  *
  * 'Unknown' is the bucket for ml.source_id IS NULL, mirroring the "Unassigned"
  * convention used for assigned_user_id IS NULL elsewhere in this file.
@@ -404,18 +409,18 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       src.id AS source_id, src.label AS source_label,
       (NOW() AT TIME ZONE o.timezone)::date AS report_date,
       FALSE AS is_total,
-      COALESCE(c.total_leads,        0)::INT AS total_leads,
-      COALESCE(c.new_count,          0)::INT AS new_count,
-      COALESCE(c.new_leads_today,    0)::INT AS new_leads_today,
-      COALESCE(c.unassigned_count,   0)::INT AS unassigned_count,
-      COALESCE(c.followup_scheduled, 0)::INT AS followup_scheduled,
-      COALESCE(c.followup_overdue,   0)::INT AS followup_overdue,
-      COALESCE(c.converted_count,    0)::INT AS converted_count,
-      COALESCE(c.unqualified_count,  0)::INT AS unqualified_count
-    FROM entity.organizations o
-    CROSS JOIN sources src
-    LEFT JOIN counters c ON c.org_id = o.id AND c.source_id IS NOT DISTINCT FROM src.id
-    WHERE o.tenant_id = ${tenantId}::uuid AND NOT o.is_deleted
+      c.total_leads::INT        AS total_leads,
+      c.new_count::INT          AS new_count,
+      c.new_leads_today::INT    AS new_leads_today,
+      c.unassigned_count::INT   AS unassigned_count,
+      c.followup_scheduled::INT AS followup_scheduled,
+      c.followup_overdue::INT   AS followup_overdue,
+      c.converted_count::INT    AS converted_count,
+      c.unqualified_count::INT  AS unqualified_count
+    FROM counters c
+    JOIN entity.organizations o ON o.id = c.org_id AND NOT o.is_deleted
+    JOIN sources src ON src.id IS NOT DISTINCT FROM c.source_id
+    WHERE o.tenant_id = ${tenantId}::uuid
       ${orgId ? sql`AND o.id = ${orgId}::uuid` : sql``}
 
     ${orgId ? sql`` : sql`
@@ -426,16 +431,16 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       src.id AS source_id, src.label AS source_label,
       CURRENT_DATE AS report_date,
       TRUE AS is_total,
-      COALESCE(SUM(c.total_leads),        0)::INT AS total_leads,
-      COALESCE(SUM(c.new_count),          0)::INT AS new_count,
-      COALESCE(SUM(c.new_leads_today),    0)::INT AS new_leads_today,
-      COALESCE(SUM(c.unassigned_count),   0)::INT AS unassigned_count,
-      COALESCE(SUM(c.followup_scheduled), 0)::INT AS followup_scheduled,
-      COALESCE(SUM(c.followup_overdue),   0)::INT AS followup_overdue,
-      COALESCE(SUM(c.converted_count),    0)::INT AS converted_count,
-      COALESCE(SUM(c.unqualified_count),  0)::INT AS unqualified_count
-    FROM sources src
-    LEFT JOIN counters c ON c.source_id IS NOT DISTINCT FROM src.id
+      SUM(c.total_leads)::INT        AS total_leads,
+      SUM(c.new_count)::INT          AS new_count,
+      SUM(c.new_leads_today)::INT    AS new_leads_today,
+      SUM(c.unassigned_count)::INT   AS unassigned_count,
+      SUM(c.followup_scheduled)::INT AS followup_scheduled,
+      SUM(c.followup_overdue)::INT   AS followup_overdue,
+      SUM(c.converted_count)::INT    AS converted_count,
+      SUM(c.unqualified_count)::INT  AS unqualified_count
+    FROM counters c
+    JOIN sources src ON src.id IS NOT DISTINCT FROM c.source_id
     GROUP BY src.id, src.label
     `}
 

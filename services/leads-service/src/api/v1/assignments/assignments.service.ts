@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import type { RoleTxContext } from '@platform/db';
-import type { CreateAssignmentInput, UpdateAssignmentInput } from '@lms/validation';
+import type { CreateAssignmentInput, UpdateAssignmentInput, BulkAssignInput } from '@lms/validation';
 import { LMS_RANKS, canAssignToUser, getRulesForTenant, getLeadsHistoryAssignedToScope } from '@lms/authz';
 import type { LeadsHistoryFilters } from './assignments.repository.js';
 import { BadRequestError, ForbiddenError, NotFoundError, ConflictError } from '../../../lib/errors.js';
@@ -129,6 +130,73 @@ export async function unassignLead(ctx: RoleTxContext, actorRank: number, leadId
     assigned_user_id: null,
     actor_id: ctx.user_id,
   });
+}
+
+export async function bulkAssignLeads(ctx: RoleTxContext, actorRank: number, data: BulkAssignInput) {
+  if (actorRank < LMS_RANKS.SSE) throw new ForbiddenError('Insufficient permissions to bulk-assign leads');
+
+  const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
+  if (!targetUser || !targetUser['is_active']) {
+    throw new BadRequestError('Target user not found or inactive');
+  }
+
+  const targetRank = Number(targetUser['rank'] ?? 0);
+  // Stricter than canAssignToUser: bulk assignment always targets individual
+  // contributors, capped at SSE, regardless of how senior the actor is —
+  // not "anyone below the actor" like single-lead assignment allows.
+  if (targetRank > LMS_RANKS.SSE) {
+    throw new ForbiddenError('Bulk assignment can only target Senior Sales Executives and below');
+  }
+  if (!canAssignToUser(actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
+    throw new ForbiddenError('You cannot assign leads to this user');
+  }
+
+  const leadIds = [...new Set(data.lead_ids)];
+  const leads = await repo.getLeadsForBulkAssignment(ctx, leadIds);
+  if (leads.length !== leadIds.length) {
+    throw new NotFoundError('One or more leads were not found');
+  }
+
+  const orgIds = new Set(leads.map((l) => l.org_id));
+  if (orgIds.size > 1) {
+    throw new BadRequestError('All selected leads must belong to the same org');
+  }
+  const [leadsOrgId] = orgIds;
+  if (leadsOrgId !== targetUser['org_id']) {
+    throw new BadRequestError('The assignee must belong to the org the leads live in');
+  }
+
+  const previousAssigneeByLead = new Map(leads.map((l) => [l.id, l.assigned_user_id]));
+  const updated = await repo.bulkAssignLeads(ctx, { leadIds, assignedTo: data.assigned_to });
+  const batchId = randomUUID();
+
+  await Promise.all(updated.map((row) => {
+    const leadId = String(row['id']);
+    const previousAssignee = previousAssigneeByLead.get(leadId) ?? null;
+    return logActivity({
+      action_type: previousAssignee ? 'assignment_reassigned' : 'assignment_created',
+      performed_by: ctx.user_id,
+      lead_id: leadId,
+      org_id: ctx.org_id,
+      old_value: { assigned_to: previousAssignee },
+      new_value: { assigned_to: data.assigned_to, bulk: true, batch_id: batchId },
+    });
+  }));
+
+  for (const row of updated) {
+    publishEvent('lead:updated', {
+      lead_id: String(row['id']),
+      org_id: row['org_id'],
+      tenant_id: ctx.tenant_id,
+      assigned_user_id: data.assigned_to,
+      actor_id: ctx.user_id,
+    });
+  }
+
+  const updatedIds = new Set(updated.map((row) => String(row['id'])));
+  const skipped = leadIds.filter((id) => !updatedIds.has(id));
+
+  return { updated: updated.length, skipped };
 }
 
 export interface LeadsHistoryParams {

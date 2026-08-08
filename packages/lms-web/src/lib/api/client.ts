@@ -129,6 +129,12 @@ export const assignments = {
   remove: (id: string) =>
     request<void>(`/assignments/${id}`, { method: 'DELETE' }),
 
+  bulkAssign: (data: { lead_ids: string[]; assigned_to: string }) =>
+    request<{ success: true; data: { updated: number; skipped: string[] } }>('/assignments/bulk', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   leadsHistory: (params: Record<string, string | number | boolean | undefined> = {}) => {
     const qs = new URLSearchParams(
       Object.fromEntries(
@@ -213,6 +219,8 @@ export const analytics = {
   pipeline: () => request<{ success: true; data: unknown[] }>('/analytics/pipeline'),
   branchReport: () =>
     request<{ success: true; data: import('../../types/analytics').BranchReportRow[] }>('/analytics/report/branches'),
+  userReport: () =>
+    request<{ success: true; data: import('../../types/analytics').UserReportRow[] }>('/analytics/report/users'),
   sourceReport: () =>
     request<{
       success: true;

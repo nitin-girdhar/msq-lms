@@ -48,6 +48,13 @@ html, body { min-height: 100%; }
    overflowing child (e.g. the org-tab strip) needs to scroll. */
 body { overflow-x: hidden; }
 
+/* Without this, overscrolling past the top of a tall mobile page (natural
+   document scroll, per the viewport policy above) triggers the browser's
+   native pull-to-refresh — reloading the page and snapping scroll back to
+   the top. `contain` stops the overscroll from propagating past the body
+   without disabling normal scrolling or swipe-back navigation. */
+html, body { overscroll-behavior-y: contain; }
+
 /* ── AG Grid wrapper ─────────────────────────────────────────────────────────
    overflow:hidden clips rows to the card's rounded corners.
    The grid itself manages scroll via alwaysShowHorizontalScroll /

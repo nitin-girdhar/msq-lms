@@ -8,6 +8,7 @@ export { default as LeadDashboardShell } from './components/dashboard/LeadDashbo
 export { default as FollowUpsShell } from './components/leads/FollowUpsShell';
 export { default as LeadsHistoryShell } from './components/leads-history/LeadsHistoryShell';
 export { default as AssignmentsClient } from './components/assignments/AssignmentsClient';
+export { default as BulkAssignClient } from './components/bulk-assign/BulkAssignClient';
 export { default as AnalyticsClient } from './components/analytics/AnalyticsClient';
 export { LeadHistoryModal } from './components/LeadHistoryModal';
 

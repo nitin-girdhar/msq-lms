@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { CreateAssignmentInput, UpdateAssignmentInput } from '@lms/validation';
+import type { CreateAssignmentInput, UpdateAssignmentInput, BulkAssignInput } from '@lms/validation';
 import * as service from './assignments.service.js';
 import type { ListAssignmentsQuery, LeadsHistoryQuery } from './assignments.schema.js';
 
@@ -63,6 +63,13 @@ export class AssignmentsController {
     const data = request.body as UpdateAssignmentInput;
     await service.reassignLead({ org_id, user_id, role, tenant_id }, rank, id, data);
     return reply.status(204).send();
+  };
+
+  bulkAssign = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const data = request.body as BulkAssignInput;
+    const result = await service.bulkAssignLeads({ org_id, user_id, role, tenant_id }, rank, data);
+    return reply.send({ success: true, data: result });
   };
 
   unassign = async (request: FastifyRequest, reply: FastifyReply) => {

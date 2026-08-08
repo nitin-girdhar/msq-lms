@@ -4,7 +4,7 @@ import { requireCapability } from '../../../middleware/require-capability.middle
 import { CAPABILITY } from '@platform/rbac';
 import { requireModule } from '../../../middleware/require-module.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
-import { createAssignmentSchema, updateAssignmentSchema } from '@lms/validation';
+import { createAssignmentSchema, updateAssignmentSchema, bulkAssignSchema } from '@lms/validation';
 import { listAssignmentsQuerySchema, leadsHistoryQuerySchema } from './assignments.schema.js';
 import { AssignmentsController } from './assignments.controller.js';
 
@@ -20,6 +20,7 @@ export async function assignmentsRouter(app: FastifyInstance) {
   app.get('/assignments/mine',  { preHandler: [...gate, requireCapability(CAPABILITY.LMS_HISTORY_VIEW), validate({ query: leadsHistoryQuerySchema })] }, ctrl.listMine);
   app.get('/assignments/:id',   { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_VIEW)] }, ctrl.getById);
   app.post('/assignments',      { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_ASSIGN, 'You do not have permission to assign leads'), validate({ body: createAssignmentSchema })] }, ctrl.create);
+  app.post('/assignments/bulk', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_ASSIGN_BULK, 'You do not have permission to bulk-assign leads'), validate({ body: bulkAssignSchema })] }, ctrl.bulkAssign);
   app.patch('/assignments/:id', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_EDIT, 'You do not have permission to edit assignments'), validate({ body: updateAssignmentSchema })] }, ctrl.reassign);
   app.delete('/assignments/:id',{ preHandler: [...gate, requireCapability(CAPABILITY.LMS_ASSIGNMENTS_DELETE, 'You do not have permission to delete assignments')] }, ctrl.unassign);
 }

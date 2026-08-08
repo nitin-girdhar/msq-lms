@@ -86,7 +86,7 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
 export async function getUserForAssignment(ctx: RoleTxContext, targetUserId: string) {
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
-      SELECT u.id, u.full_name, u.email, u.is_active, u.is_deleted,
+      SELECT u.id, u.org_id, u.full_name, u.email, u.is_active, u.is_deleted,
              ur.rank, ur.name AS role_name
       FROM iam.users u
       JOIN iam.user_roles ur ON ur.id = u.role_id
@@ -129,6 +129,31 @@ export async function reassignLead(ctx: RoleTxContext, data: {
     `)) as Array<Record<string, unknown>>;
 
     return { result: rows[0] ?? null, previous_assignee: before?.assigned_user_id ?? null };
+  });
+}
+
+export async function getLeadsForBulkAssignment(ctx: RoleTxContext, leadIds: string[]) {
+  return withRoleTx(ctx, async (tx) => {
+    return (await tx.execute(sql`
+      SELECT id, org_id, assigned_user_id
+      FROM lms.marketing_leads
+      WHERE id = ANY(${sqlUuidArr(leadIds)}) AND NOT is_deleted
+    `)) as Array<{ id: string; org_id: string; assigned_user_id: string | null }>;
+  });
+}
+
+export async function bulkAssignLeads(ctx: RoleTxContext, data: {
+  leadIds: string[];
+  assignedTo: string;
+}) {
+  return withRoleTx(ctx, async (tx) => {
+    return (await tx.execute(sql`
+      UPDATE lms.marketing_leads
+      SET assigned_user_id = ${data.assignedTo}::uuid
+      WHERE id = ANY(${sqlUuidArr(data.leadIds)}) AND NOT is_deleted
+        AND assigned_user_id IS DISTINCT FROM ${data.assignedTo}::uuid
+      RETURNING id, org_id, assigned_user_id
+    `)) as Array<Record<string, unknown>>;
   });
 }
 

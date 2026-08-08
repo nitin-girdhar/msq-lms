@@ -2,6 +2,7 @@ export interface LeadReportMetrics {
   total_leads: number;
   new_count: number;
   new_leads_today: number;
+  new_leads_this_month: number;
   unassigned_count: number;
   followup_scheduled: number;
   followup_overdue: number;
@@ -36,5 +37,16 @@ export interface SourceUserRow extends LeadReportMetrics {
   is_unassigned: boolean;
   source_id: string | null;
   source_label: string;
+  report_date: string;
+}
+
+export interface UserReportRow extends LeadReportMetrics {
+  tenant_id: string;
+  org_id: string;
+  org_name: string;
+  assigned_user_id: string | null;
+  assignee: string;
+  assignee_email: string | null;
+  is_unassigned: boolean;
   report_date: string;
 }

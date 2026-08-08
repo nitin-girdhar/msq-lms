@@ -222,7 +222,6 @@ export function renderPublicReportHtml(report: TenantReport, opts: PublicReportO
 <body>
 <h1>Daily Lead Report</h1>
 <p class="subtitle">${escapeHtml(report.tenant_name)} &middot; ${escapeHtml(report.report_date)}</p>
-${legend()}
 ${compareForm(report, opts)}
 ${compareMissing ? `<p class="note">No snapshot recorded for ${escapeHtml(opts.compareDate ?? '')} yet.</p>` : ''}
 <h2>By source</h2>
@@ -231,6 +230,7 @@ ${sourceBranchGrids(opts.sourceBranches, opts.sourceCompareSnapshot?.branches ??
 ${branchTable(report.branches, opts.compareSnapshot?.branches ?? null, hasCompare)}
 <h2>By assignee</h2>
 ${sourceUserTable(opts.sourceUsers, opts.sourceCompareSnapshot?.users ?? null, hasCompare)}
+${legend()}
 <footer>Counts are a live snapshot at load time.${hasCompare ? ` Second value in each cell is ${escapeHtml(opts.compareDate ?? '')}.` : ''}</footer>
 </body>
 </html>`;

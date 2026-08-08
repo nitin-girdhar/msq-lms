@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 import {
   Bar,
@@ -16,7 +16,7 @@ import {
   YAxis,
 } from 'recharts';
 import { analytics } from '../../lib/api/client';
-import type { BranchReportRow, SourceBranchRow } from '../../types/analytics';
+import type { BranchReportRow, SourceBranchRow, UserReportRow } from '../../types/analytics';
 
 interface Props {
   actorRank: number;
@@ -35,6 +35,27 @@ const SERIES = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300'
 const STATUS = { good: '#0ca30c', warning: '#fab219', serious: '#ec835a', critical: '#d03b3b' };
 const INK = { primary: '#0F172A', secondary: '#64748B', muted: '#898781', grid: '#E2E8F0', surface: '#FFFFFF' };
 
+// Mirrors leads-service's lib/reports/pending-action.ts (computePendingActionPct
+// + its 4 bands) so the live dashboard's badge matches the public report's
+// exactly. Duplicated rather than shared because the two live in separate
+// packages (frontend vs. backend service) with no shared code path today.
+const PENDING_ACTION_BANDS = [
+  { upperBound: 20, bg: '#16a34a', text: '#ffffff' },
+  { upperBound: 40, bg: '#eab308', text: '#1f2937' },
+  { upperBound: 60, bg: '#f97316', text: '#ffffff' },
+  { upperBound: Infinity, bg: '#dc2626', text: '#ffffff' },
+] as const;
+
+function pendingActionPct(row: { total_leads: number; new_count: number; followup_overdue: number }): number | null {
+  if (row.total_leads <= 0) return null;
+  return Math.round((100 * (row.new_count + row.followup_overdue)) / row.total_leads);
+}
+
+function pendingActionBand(pct: number | null) {
+  if (pct === null) return null;
+  return PENDING_ACTION_BANDS.find((b) => pct < b.upperBound) ?? PENDING_ACTION_BANDS[PENDING_ACTION_BANDS.length - 1];
+}
+
 export default function AnalyticsClient(_props: Props) {
   const { data: pipelineData, isLoading: pipelineLoading } = useSWR('analytics/pipeline', () => analytics.pipeline(), {
     revalidateOnFocus: false,
@@ -45,16 +66,68 @@ export default function AnalyticsClient(_props: Props) {
   const { data: sourceData, isLoading: sourceLoading } = useSWR('analytics/report/sources', () => analytics.sourceReport(), {
     revalidateOnFocus: false,
   });
+  // Not folded into the main `isLoading` gate below — it only backs the branch
+  // drill-down, so the rest of the page shouldn't wait on it.
+  const { data: userData } = useSWR('analytics/report/users', () => analytics.userReport(), {
+    revalidateOnFocus: false,
+  });
+
+  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
 
   const isLoading = pipelineLoading || branchLoading || sourceLoading;
   const pipeline = (pipelineData?.data ?? []) as PipelineStage[];
   const branches = (branchData?.data ?? []) as BranchReportRow[];
   const sourceBranches = (sourceData?.data?.branches ?? []) as SourceBranchRow[];
+  const userRows = (userData?.data ?? []) as UserReportRow[];
 
   const isTenantWide = branches.length > 1 || branches.some((b) => b.is_total);
   const totalRow = branches.find((b) => b.is_total) ?? branches[0] ?? null;
   const branchRows = branches.filter((b) => !b.is_total);
   const sourceRows = sourceBranches.filter((s) => !s.is_total);
+
+  // Per-branch user breakdown for the "By Branch" table's expand row. Keyed by
+  // org_name (the id the branch SummaryTable rows use as their identity, since
+  // BranchReportRow's org_id can be null on the rollup row branchRows already
+  // excludes).
+  const usersByBranch = useMemo(() => {
+    const m = new Map<string, UserReportRow[]>();
+    for (const u of userRows) {
+      const list = m.get(u.org_name);
+      if (list) list.push(u);
+      else m.set(u.org_name, [u]);
+    }
+    return m;
+  }, [userRows]);
+
+  const sourceSummaryRows = useMemo(
+    () => sourceRows.map((s) => ({
+      key: s.source_id ?? s.source_label,
+      label: s.source_label,
+      total: s.total_leads,
+      neew: s.new_count,
+      unassigned: s.unassigned_count,
+      overdue: s.followup_overdue,
+      converted: s.converted_count,
+      unqualified: s.unqualified_count,
+      pendingPct: pendingActionPct(s),
+    })),
+    [sourceRows],
+  );
+
+  const branchSummaryRows = useMemo(
+    () => branchRows.map((b) => ({
+      key: b.org_name,
+      label: b.org_name,
+      total: b.total_leads,
+      neew: b.new_count,
+      unassigned: b.unassigned_count,
+      overdue: b.followup_overdue,
+      converted: b.converted_count,
+      unqualified: b.unqualified_count,
+      pendingPct: pendingActionPct(b),
+    })),
+    [branchRows],
+  );
 
   return (
     <div className="space-y-8 p-4 sm:p-6">
@@ -72,8 +145,9 @@ export default function AnalyticsClient(_props: Props) {
       ) : (
         <>
           {/* ── KPI strip ─────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
             <StatCard label="Total Leads" value={totalRow.total_leads} />
+            <StatCard label="New This Month" value={totalRow.new_leads_this_month} accent={STATUS.good} />
             <StatCard label="New Today" value={totalRow.new_leads_today} accent={STATUS.good} />
             <StatCard label="Unassigned" value={totalRow.unassigned_count} accent={STATUS.warning} />
             <StatCard label="Follow-up Overdue" value={totalRow.followup_overdue} accent={STATUS.critical} />
@@ -104,30 +178,14 @@ export default function AnalyticsClient(_props: Props) {
           <div>
             <h2 className="mb-3 text-sm font-semibold text-[#0F172A]">Detailed Summary</h2>
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <SummaryTable
-                title="By Source"
-                rows={sourceRows.map((s) => ({
-                  label: s.source_label,
-                  total: s.total_leads,
-                  neew: s.new_count,
-                  unassigned: s.unassigned_count,
-                  overdue: s.followup_overdue,
-                  converted: s.converted_count,
-                  unqualified: s.unqualified_count,
-                }))}
-              />
+              <SummaryTable title="By Source" rows={sourceSummaryRows} />
               {isTenantWide && branchRows.length > 1 ? (
                 <SummaryTable
                   title="By Branch"
-                  rows={branchRows.map((b) => ({
-                    label: b.org_name,
-                    total: b.total_leads,
-                    neew: b.new_count,
-                    unassigned: b.unassigned_count,
-                    overdue: b.followup_overdue,
-                    converted: b.converted_count,
-                    unqualified: b.unqualified_count,
-                  }))}
+                  rows={branchSummaryRows}
+                  expandedKey={expandedBranch}
+                  onToggleExpand={(key) => setExpandedBranch((cur) => (cur === key ? null : key))}
+                  renderExpanded={(key) => <BranchUsersTable users={usersByBranch.get(key) ?? []} />}
                 />
               ) : (
                 <StatusSummaryTable row={totalRow} />
@@ -230,6 +288,7 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
 }
 
 interface SummaryRow {
+  key: string;
   label: string;
   total: number;
   neew: number;
@@ -237,10 +296,33 @@ interface SummaryRow {
   overdue: number;
   converted: number;
   unqualified: number;
+  pendingPct: number | null;
 }
 
-function SummaryTable({ title, rows }: { title: string; rows: SummaryRow[] }) {
+function PendingBadge({ pct }: { pct: number | null }) {
+  const band = pendingActionBand(pct);
+  if (pct === null || !band) return <span className="text-[#CBD5E1]">—</span>;
+  return (
+    <span
+      className="inline-flex min-w-[34px] items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+      style={{ background: band.bg, color: band.text }}
+    >
+      {pct}%
+    </span>
+  );
+}
+
+function SummaryTable({
+  title, rows, expandedKey, onToggleExpand, renderExpanded,
+}: {
+  title: string;
+  rows: SummaryRow[];
+  expandedKey?: string | null;
+  onToggleExpand?: (key: string) => void;
+  renderExpanded?: (key: string) => ReactNode;
+}) {
   if (!rows.length) return null;
+  const expandable = !!onToggleExpand;
   return (
     <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
       <div className="border-b border-[#F1F5F9] px-4 py-2.5">
@@ -257,24 +339,89 @@ function SummaryTable({ title, rows }: { title: string; rows: SummaryRow[] }) {
               <th className="px-3 py-2 text-right">Overdue</th>
               <th className="px-3 py-2 text-right">Converted</th>
               <th className="px-3 py-2 text-right">Unqualified</th>
+              <th className="px-3 py-2 text-right">Pending Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F1F5F9]">
-            {rows.map((r) => (
-              <tr key={r.label} className="text-[#0F172A]">
-                <td className="px-4 py-2 font-medium">{r.label}</td>
-                <td className="px-3 py-2 text-right font-semibold tabular-nums">{r.total}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.neew}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.unassigned}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.overdue}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.converted}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.unqualified}</td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const isOpen = expandable && expandedKey === r.key;
+              return (
+                <Fragment key={r.key}>
+                  <tr
+                    className={`text-[#0F172A] ${expandable ? 'cursor-pointer hover:bg-[#F8FAFC]' : ''}`}
+                    onClick={expandable ? () => onToggleExpand!(r.key) : undefined}
+                  >
+                    <td className="px-4 py-2 font-medium">
+                      <span className="flex items-center gap-1.5">
+                        {expandable && (
+                          <svg
+                            className={`h-3 w-3 shrink-0 text-[#94A3B8] transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                            viewBox="0 0 20 20" fill="currentColor"
+                          >
+                            <path fillRule="evenodd" d="M7.21 5.23a.75.75 0 011.06-.02l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.04-1.08L11.17 10 7.23 6.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                        {r.label}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums">{r.total}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.neew}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.unassigned}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.overdue}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.converted}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.unqualified}</td>
+                    <td className="px-3 py-2 text-right"><PendingBadge pct={r.pendingPct} /></td>
+                  </tr>
+                  {isOpen && renderExpanded && (
+                    <tr key={`${r.key}-expanded`}>
+                      <td colSpan={8} className="bg-[#F8FAFC] p-0">
+                        {renderExpanded(r.key)}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+function BranchUsersTable({ users }: { users: UserReportRow[] }) {
+  if (!users.length) {
+    return <p className="px-4 py-3 text-xs text-[#94A3B8]">No leads assigned in this branch.</p>;
+  }
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">
+        <tr>
+          <th className="px-4 py-1.5 pl-9">Assignee</th>
+          <th className="px-3 py-1.5 text-right">Total</th>
+          <th className="px-3 py-1.5 text-right">New</th>
+          <th className="px-3 py-1.5 text-right">Overdue</th>
+          <th className="px-3 py-1.5 text-right">Converted</th>
+          <th className="px-3 py-1.5 text-right">Pending Action</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-[#E2E8F0]">
+        {users.map((u) => (
+          <tr key={u.assigned_user_id ?? 'unassigned'} className="text-[#0F172A]">
+            <td className="px-4 py-1.5 pl-9 font-medium">
+              {u.is_unassigned
+                ? <span className="italic text-[#94A3B8]">Unassigned</span>
+                : u.assignee}
+            </td>
+            <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{u.total_leads}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.new_count}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.followup_overdue}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.converted_count}</td>
+            <td className="px-3 py-1.5 text-right"><PendingBadge pct={pendingActionPct(u)} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

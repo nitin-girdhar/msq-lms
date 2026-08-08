@@ -8,6 +8,7 @@ import { assignmentsRouter } from './assignments/assignments.router.js';
 import { analyticsRouter } from './analytics/analytics.router.js';
 import { publicReportRouter } from './public-report/public-report.router.js';
 import { internalRouter } from './internal/internal.router.js';
+import { publicReadRouter } from './public-read/public-read.router.js';
 // Tenant-scoped lookup/role admin (N-6): super_admin manages LMS reference data
 // within a selected tenant. Moved here from admin-service so the write executes
 // in the schema-owning service under tenant RLS (never root_service). Half A =
@@ -31,6 +32,7 @@ export async function v1Router(app: FastifyInstance) {
   await app.register(analyticsRouter);
   await app.register(publicReportRouter);
   await app.register(internalRouter);
+  await app.register(publicReadRouter);
   await app.register(lmsRolesRouter);
   await app.register(leadStageRouter);
   await app.register(leadStageOutcomeRouter);

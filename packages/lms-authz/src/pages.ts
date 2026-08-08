@@ -37,6 +37,16 @@ export function canOpenAssignments(actor: CapabilityHolder): boolean {
   return holdsUsableNode(actor, CAPABILITY.LMS_ASSIGNMENTS);
 }
 
+/**
+ * Bulk Lead Assignment has no page node of its own — it's an operation scope
+ * under lms.leads, gated the same way canOpenTeam gates a scope: a plain
+ * can() check rather than holdsUsableNode(), since there's no sub-tree of
+ * operations beneath it to require being "usable".
+ */
+export function canOpenBulkAssign(actor: CapabilityHolder): boolean {
+  return can(actor, CAPABILITY.LMS_LEADS_ASSIGN_BULK);
+}
+
 export function canOpenAnalytics(actor: CapabilityHolder): boolean {
   return holdsUsableNode(actor, CAPABILITY.LMS_ANALYTICS);
 }
