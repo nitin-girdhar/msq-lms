@@ -51,14 +51,19 @@ export default function BulkAssignClient({ actor }: Props) {
     };
   }, [orgId]);
 
+  // Bulk assign only makes sense for leads still in play — converted/
+  // unqualified (any terminal stage) are excluded up front, same rule
+  // listAssignmentsFiltered's activeOnly uses for Leads History.
+  const openLeads = useMemo(() => leads.filter((l) => !l.is_terminated), [leads]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return leads;
-    return leads.filter((l) => {
+    if (!q) return openLeads;
+    return openLeads.filter((l) => {
       const hay = `${l.full_name} ${l.phone ?? ''} ${l.stage_label} ${l.assigned_rep_name ?? ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [leads, search]);
+  }, [openLeads, search]);
 
   const allFilteredSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.lead_id));
 
@@ -96,7 +101,7 @@ export default function BulkAssignClient({ actor }: Props) {
       <div>
         <h1 className="text-2xl font-bold text-[#0F172A]">Bulk Assign</h1>
         <p className="mt-1 text-xs text-[#64748B]">
-          Select leads and hand them all to one person in a single action.
+          Select open leads (excludes converted/unqualified) and hand them all to one person in a single action.
         </p>
       </div>
 
@@ -188,7 +193,13 @@ export default function BulkAssignClient({ actor }: Props) {
               {!leadsLoading && filtered.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-xs text-[#64748B]">
-                    No leads match.
+                    {search
+                      ? 'No leads match.'
+                      : leads.length > 0
+                        ? 'No open leads here — every lead in this branch is converted or unqualified.'
+                        : orgs.length > 1
+                          ? 'No leads in this branch. Try another branch from the dropdown above.'
+                          : 'No leads in this branch.'}
                   </td>
                 </tr>
               )}

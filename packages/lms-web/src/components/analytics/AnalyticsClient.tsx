@@ -25,7 +25,7 @@ interface Props {
 
 interface PipelineStage {
   stage: string;
-  stageLabel: string;
+  stage_label: string;
   count: number;
 }
 
@@ -159,7 +159,7 @@ export default function AnalyticsClient(_props: Props) {
           </div>
 
           {/* ── Charts ────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4">
             <ChartCard title="By Source" subtitle="Share of total leads">
               <SourcePieChart rows={sourceRows} />
             </ChartCard>
@@ -177,7 +177,7 @@ export default function AnalyticsClient(_props: Props) {
           {/* ── Detailed summary grid ────────────────────────────────── */}
           <div>
             <h2 className="mb-3 text-sm font-semibold text-[#0F172A]">Detailed Summary</h2>
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4">
               <SummaryTable title="By Source" rows={sourceSummaryRows} />
               {isTenantWide && branchRows.length > 1 ? (
                 <SummaryTable
@@ -476,7 +476,7 @@ function PipelineTable({ pipeline }: { pipeline: PipelineStage[] }) {
         <tbody className="divide-y divide-[#F1F5F9]">
           {pipeline.map((s) => (
             <tr key={s.stage} className="text-[#0F172A]">
-              <td className="px-4 py-2.5">{s.stageLabel}</td>
+              <td className="px-4 py-2.5">{s.stage_label}</td>
               <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{s.count}</td>
             </tr>
           ))}

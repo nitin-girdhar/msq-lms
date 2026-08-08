@@ -1,5 +1,5 @@
 import { sql, asc } from 'drizzle-orm';
-import { withServiceTx, withRoleTx } from '@platform/db';
+import { withRoleTx } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { marketingLeadsTable, leadStageTable, leadStageOutcomeTable } from '@platform/db/schema';
 
@@ -260,8 +260,12 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
   });
 }
 
-export async function getStageAndOutcomeOptions() {
-  return withServiceTx(async (tx) => {
+// lms.lead_stage / lead_stage_outcome are tenant-scoped (N-6 Half B). Read
+// under withRoleTx so RLS scopes rows to the caller's tenant — a
+// withServiceTx (BYPASSRLS) read would leak every tenant's stage catalog
+// into this filter, as it previously did here.
+export async function getStageAndOutcomeOptions(ctx: RoleTxContext) {
+  return withRoleTx(ctx, async (tx) => {
     const [stageOptions, stageOutcomes] = await Promise.all([
       tx.select({
         id: leadStageTable.id,

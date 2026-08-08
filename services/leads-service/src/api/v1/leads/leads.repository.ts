@@ -265,8 +265,13 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
   });
 }
 
-export async function getStageOptions() {
-  return withServiceTx(async (tx) => {
+// lms.lead_stage / lead_stage_outcome are tenant-scoped (N-6 Half B). Read
+// under withRoleTx so RLS scopes rows to the caller's tenant (via current
+// org) — a withServiceTx (BYPASSRLS) read would leak every tenant's stage
+// catalog into the dropdown, as it previously did here. See
+// lookups.repository.ts:getLookups for the same pattern.
+export async function getStageOptions(ctx: RoleTxContext) {
+  return withRoleTx(ctx, async (tx) => {
     return tx.select({
       id: leadStageTable.id,
       name: leadStageTable.name,
@@ -280,8 +285,8 @@ export async function getStageOptions() {
   });
 }
 
-export async function getStageOutcomes(stageId?: string) {
-  return withServiceTx(async (tx) => {
+export async function getStageOutcomes(ctx: RoleTxContext, stageId?: string) {
+  return withRoleTx(ctx, async (tx) => {
     const where = stageId ? eq(leadStageOutcomeTable.stageId, stageId) : undefined;
     return tx.select({
       id: leadStageOutcomeTable.id,
@@ -377,6 +382,7 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
 interface CurrentLeadRow {
   stage_id: string | null;
   outcome_id: string | null;
+  outcome_comment: string | null;
   source_name: string | null;
   updated_at: Date | string;
 }
@@ -395,35 +401,51 @@ async function assertOutcomeCommentIsKeepable(
   current: CurrentLeadRow,
   data: UpdateLeadInput,
 ): Promise<void> {
-  if (typeof data.outcome_comment !== 'string' || data.outcome_comment.trim() === '') return;
-
   const stageId = data.stage_id !== undefined ? data.stage_id : current.stage_id;
   const outcomeId = data.outcome_id !== undefined ? data.outcome_id : current.outcome_id;
+
+  // The trigger requires a non-empty outcome_comment whenever the resulting
+  // outcome has requires_comment = TRUE, regardless of whether this request
+  // touched outcome_comment at all. Check the outcome the row will end up
+  // with, not just what was submitted, so an outcome-only PATCH that leaves
+  // a required comment unset is rejected here instead of 500-ing on the raw
+  // Postgres RAISE.
+  if (outcomeId) {
+    const finalComment = data.outcome_comment !== undefined ? data.outcome_comment : current.outcome_comment;
+    const outcomeMetaRows = (await tx.execute(sql`
+      SELECT stage_id::text AS stage_id, requires_comment FROM lms.lead_stage_outcome
+      WHERE id = ${outcomeId}::uuid
+    `)) as unknown as Array<{ stage_id: string | null; requires_comment: boolean | null }>;
+    const outcomeMeta = outcomeMetaRows[0];
+
+    if (outcomeMeta?.requires_comment && (typeof finalComment !== 'string' || finalComment.trim() === '')) {
+      throw new BadRequestError(
+        'This outcome requires a comment describing the reason. Please provide one.',
+      );
+    }
+
+    // The outcome must belong to the stage the row will end up in; otherwise the
+    // trigger either raises (explicit cross-stage outcome) or silently drops both
+    // the outcome and the comment (outcome inherited across a stage change).
+    //
+    // Only reject on a stage we can actually see a mismatch for. This SELECT runs
+    // under the caller's RLS, so an outcome row that is invisible here (e.g. a
+    // catalog row whose tenant_id was never backfilled) returns nothing — that is
+    // not evidence of a cross-stage pick, and claiming so would reject a
+    // legitimate save. Defer to the trigger, which is the authority.
+    const outcomeStageId = outcomeMeta?.stage_id;
+    if (outcomeStageId !== undefined && outcomeStageId !== stageId) {
+      throw new BadRequestError(
+        'The selected outcome does not belong to this lead\'s stage, so the outcome and its comment cannot be saved. Pick an outcome that belongs to the stage.',
+      );
+    }
+  }
+
+  if (typeof data.outcome_comment !== 'string' || data.outcome_comment.trim() === '') return;
 
   if (!outcomeId) {
     throw new BadRequestError(
       'outcome_comment can only be saved together with an outcome. Select an outcome for this lead, or clear the comment.',
-    );
-  }
-
-  // The outcome must belong to the stage the row will end up in; otherwise the
-  // trigger either raises (explicit cross-stage outcome) or silently drops both
-  // the outcome and the comment (outcome inherited across a stage change).
-  //
-  // Only reject on a stage we can actually see a mismatch for. This SELECT runs
-  // under the caller's RLS, so an outcome row that is invisible here (e.g. a
-  // catalog row whose tenant_id was never backfilled) returns nothing — that is
-  // not evidence of a cross-stage pick, and claiming so would reject a
-  // legitimate save. Defer to the trigger, which is the authority.
-  const outcomeRows = (await tx.execute(sql`
-    SELECT stage_id::text AS stage_id FROM lms.lead_stage_outcome
-    WHERE id = ${outcomeId}::uuid
-  `)) as unknown as Array<{ stage_id: string | null }>;
-
-  const outcomeStageId = outcomeRows[0]?.stage_id;
-  if (outcomeStageId !== undefined && outcomeStageId !== stageId) {
-    throw new BadRequestError(
-      'The selected outcome does not belong to this lead\'s stage, so the outcome and its comment cannot be saved. Pick an outcome that belongs to the stage.',
     );
   }
 }
@@ -453,7 +475,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
     // scalar subquery rather than a join on purpose: FOR UPDATE would otherwise
     // try to lock lms.lead_sources too.
     const currentRows = (await tx.execute(sql`
-      SELECT stage_id::text AS stage_id, outcome_id::text AS outcome_id, updated_at,
+      SELECT stage_id::text AS stage_id, outcome_id::text AS outcome_id, outcome_comment, updated_at,
              (SELECT name FROM lms.lead_sources WHERE id = ml.source_id) AS source_name
       FROM lms.marketing_leads ml
       WHERE id = ${leadId}::uuid AND org_id = ${ctx.org_id}::uuid AND NOT is_deleted

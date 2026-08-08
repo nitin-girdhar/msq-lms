@@ -27,10 +27,10 @@ export async function deleteCampaign(ctx: RoleTxContext, campaignId: string) {
   return repo.deleteCampaign(ctx, campaignId);
 }
 
-export async function listMarketingPlatforms() {
-  return repo.listMarketingPlatforms();
+export async function listMarketingPlatforms(ctx: RoleTxContext) {
+  return repo.listMarketingPlatforms(ctx);
 }
 
-export async function listCampaignStatuses() {
-  return repo.listCampaignStatuses();
+export async function listCampaignStatuses(ctx: RoleTxContext) {
+  return repo.listCampaignStatuses(ctx);
 }

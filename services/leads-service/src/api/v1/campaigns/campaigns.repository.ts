@@ -1,5 +1,5 @@
 import { sql, eq, and, asc } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@platform/db';
+import { withRoleTx } from '@platform/db';
 import type { RoleTxContext, DrizzleTx } from '@platform/db';
 import {
   adCampaignsTable,
@@ -129,8 +129,12 @@ export async function deleteCampaign(ctx: RoleTxContext, campaignId: string) {
   });
 }
 
-export async function listMarketingPlatforms() {
-  return withServiceTx(async (tx) => {
+// marketing.marketing_platforms / campaign_statuses are tenant-scoped (N-6
+// Half B). Read under withRoleTx so RLS scopes rows to the caller's tenant —
+// a withServiceTx (BYPASSRLS) read would leak every tenant's catalog into
+// the dropdown, as it previously did here.
+export async function listMarketingPlatforms(ctx: RoleTxContext) {
+  return withRoleTx(ctx, async (tx) => {
     return tx.select({
       id: marketingPlatformsTable.id,
       name: marketingPlatformsTable.name,
@@ -139,8 +143,8 @@ export async function listMarketingPlatforms() {
   });
 }
 
-export async function listCampaignStatuses() {
-  return withServiceTx(async (tx) => {
+export async function listCampaignStatuses(ctx: RoleTxContext) {
+  return withRoleTx(ctx, async (tx) => {
     return tx.select({
       id: campaignStatusesTable.id,
       name: campaignStatusesTable.name,

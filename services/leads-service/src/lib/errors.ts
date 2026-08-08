@@ -62,6 +62,14 @@ export function translatePgError(error: unknown): AppError | null {
     return new NotFoundError('The referenced record was not found or is not accessible');
   }
 
+  // lms.check_lead_stage_outcome() RAISEs (SQLSTATE P0001) when a required
+  // outcome_comment is missing, or when a cross-stage outcome is selected.
+  // The repository pre-checks both cases, but this is a backstop for any
+  // path that reaches the trigger directly.
+  if (/outcome_comment is required|Cross-stage outcome selection is not allowed/i.test(message)) {
+    return new BadRequestError(message);
+  }
+
   switch (code) {
     case '23505': // unique_violation
     case '23P01': // exclusion_violation

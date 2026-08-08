@@ -86,12 +86,12 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
   return repo.listFollowUps(ctx, filters);
 }
 
-export async function getStageOptions() {
-  return repo.getStageOptions();
+export async function getStageOptions(ctx: RoleTxContext) {
+  return repo.getStageOptions(ctx);
 }
 
-export async function getStageOutcomes(stageId?: string) {
-  return repo.getStageOutcomes(stageId);
+export async function getStageOutcomes(ctx: RoleTxContext, stageId?: string) {
+  return repo.getStageOutcomes(ctx, stageId);
 }
 
 export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {

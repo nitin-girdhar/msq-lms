@@ -43,13 +43,15 @@ export class CampaignsController {
     return reply.status(204).send();
   };
 
-  listPlatforms = async (_request: FastifyRequest, reply: FastifyReply) => {
-    const platforms = await service.listMarketingPlatforms();
+  listPlatforms = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id } = request.auth;
+    const platforms = await service.listMarketingPlatforms({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: platforms });
   };
 
-  listStatuses = async (_request: FastifyRequest, reply: FastifyReply) => {
-    const statuses = await service.listCampaignStatuses();
+  listStatuses = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id } = request.auth;
+    const statuses = await service.listCampaignStatuses({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: statuses });
   };
 }

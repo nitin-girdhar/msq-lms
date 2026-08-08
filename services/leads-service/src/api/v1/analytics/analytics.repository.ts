@@ -373,7 +373,11 @@ export async function getSourceSnapshotForDate(
  * reasoning as tenantBranchReportQuery's rollup.
  *
  * 'Unknown' is the bucket for ml.source_id IS NULL, mirroring the "Unassigned"
- * convention used for assigned_user_id IS NULL elsewhere in this file.
+ * convention used for assigned_user_id IS NULL elsewhere in this file. Also
+ * the bucket a lead's source_id falls into once looked up if that source was
+ * later deactivated/deleted — LEFT JOIN + COALESCE, same as sourceUserQuery,
+ * so a stale source_id doesn't drop the lead's counters row from the whole
+ * report the way an INNER JOIN against only *active* sources previously did.
  */
 function sourceBranchQuery(tenantId: string, orgId?: string) {
   return sql`
@@ -398,15 +402,10 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
         ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
       GROUP BY ml.org_id, ml.source_id
-    ),
-    sources AS (
-      SELECT id, label FROM lms.lead_sources WHERE tenant_id = ${tenantId}::uuid AND is_active
-      UNION ALL
-      SELECT NULL::uuid, 'Unknown'
     )
     SELECT
       o.tenant_id, o.id AS org_id, o.name AS org_name,
-      src.id AS source_id, src.label AS source_label,
+      c.source_id AS source_id, COALESCE(src.label, 'Unknown') AS source_label,
       (NOW() AT TIME ZONE o.timezone)::date AS report_date,
       FALSE AS is_total,
       c.total_leads::INT        AS total_leads,
@@ -419,7 +418,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       c.unqualified_count::INT  AS unqualified_count
     FROM counters c
     JOIN entity.organizations o ON o.id = c.org_id AND NOT o.is_deleted
-    JOIN sources src ON src.id IS NOT DISTINCT FROM c.source_id
+    LEFT JOIN lms.lead_sources src ON src.id = c.source_id
     WHERE o.tenant_id = ${tenantId}::uuid
       ${orgId ? sql`AND o.id = ${orgId}::uuid` : sql``}
 
@@ -428,7 +427,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
 
     SELECT
       ${tenantId}::uuid AS tenant_id, NULL AS org_id, 'ALL BRANCHES' AS org_name,
-      src.id AS source_id, src.label AS source_label,
+      c.source_id AS source_id, COALESCE(src.label, 'Unknown') AS source_label,
       CURRENT_DATE AS report_date,
       TRUE AS is_total,
       SUM(c.total_leads)::INT        AS total_leads,
@@ -440,8 +439,8 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       SUM(c.converted_count)::INT    AS converted_count,
       SUM(c.unqualified_count)::INT  AS unqualified_count
     FROM counters c
-    JOIN sources src ON src.id IS NOT DISTINCT FROM c.source_id
-    GROUP BY src.id, src.label
+    LEFT JOIN lms.lead_sources src ON src.id = c.source_id
+    GROUP BY c.source_id, src.label
     `}
 
     ORDER BY source_label, is_total, org_name

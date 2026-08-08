@@ -160,14 +160,16 @@ export class LeadsController {
     return reply.status(201).send({ success: true, data: result });
   };
 
-  getStageOptions = async (_request: FastifyRequest, reply: FastifyReply) => {
-    const stages = await service.getStageOptions();
+  getStageOptions = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id } = request.auth;
+    const stages = await service.getStageOptions({ org_id, user_id, role, tenant_id });
     return reply.send({ success: true, data: stages });
   };
 
   getStageOutcomes = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { org_id, user_id, role, tenant_id } = request.auth;
     const q = request.query as { stage_id?: string };
-    const outcomes = await service.getStageOutcomes(q.stage_id);
+    const outcomes = await service.getStageOutcomes({ org_id, user_id, role, tenant_id }, q.stage_id);
     return reply.send({ success: true, data: outcomes });
   };
 }

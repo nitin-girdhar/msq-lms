@@ -77,7 +77,11 @@ export function LeadEditModal({
   const filteredOutcomes = stageOutcomes.filter(o => o.stage_id === selectedStageId);
   const hasOutcomes      = filteredOutcomes.length > 0;
   const selectedOutcome  = filteredOutcomes.find(o => o.id === outcomeId);
-  const notesRequired    = showRejection && (selectedOutcome?.requires_comment ?? false);
+  // Reflects the DB rule for whichever outcome is selected — including an
+  // outcome-only edit with no stage change — since
+  // lms.check_lead_stage_outcome() enforces requires_comment regardless of
+  // whether the stage moved.
+  const outcomeCommentRequired = selectedOutcome?.requires_comment ?? false;
 
   const currentAssigneeName = (() => {
     if (!origAssigneeId) return null;
@@ -119,6 +123,11 @@ export function LeadEditModal({
           value: selectedStatus,
           ...(outcomeId !== '' ? { outcomeId } : {}),
           ...(transitionNote.trim() ? { transitionNote: transitionNote.trim() } : {}),
+          // The DB rejects a save when the selected outcome requires a comment
+          // (lms.check_lead_stage_outcome) but only `outcome_comment` satisfies
+          // that check — transition_note is a separate audit-log field. Reuse
+          // the same Notes text there rather than adding a second textarea.
+          ...(outcomeCommentRequired && transitionNote.trim() ? { outcomeComment: transitionNote.trim() } : {}),
           ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
         });
         leadWritten = true;
@@ -133,6 +142,7 @@ export function LeadEditModal({
         await leadsApi.update(lead.lead_id, {
           outcome_id: outcomeId,
           ...(transitionNote.trim() ? { transition_note: transitionNote.trim() } : {}),
+          ...(outcomeCommentRequired && transitionNote.trim() ? { outcome_comment: transitionNote.trim() } : {}),
           ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
         });
         leadWritten = true;

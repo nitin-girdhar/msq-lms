@@ -267,7 +267,7 @@ export async function listLeadsHistory(
 
   const [result, options] = await Promise.all([
     repo.listAssignmentsFiltered(ctx, filters),
-    repo.getStageAndOutcomeOptions(),
+    repo.getStageAndOutcomeOptions(ctx),
   ]);
 
   return { ...result, ...options };
