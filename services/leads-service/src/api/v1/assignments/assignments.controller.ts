@@ -29,6 +29,8 @@ export class AssignmentsController {
         ...(q.source_ids ? { sourceIds: q.source_ids.split(',').filter(Boolean) } : {}),
         ...(q.org_ids ? { orgIds: q.org_ids.split(',').filter(Boolean) } : {}),
         ...(q.assigned_to ? { assignedTo: q.assigned_to.split(',').filter(Boolean) } : {}),
+        ...(q.sort_by ? { sortBy: q.sort_by } : {}),
+        ...(q.sort_dir ? { sortDir: q.sort_dir } : {}),
       },
     );
 

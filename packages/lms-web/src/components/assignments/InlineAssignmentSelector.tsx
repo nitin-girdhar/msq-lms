@@ -102,7 +102,8 @@ export default function InlineAssignmentSelector({
   }, [candidates, search]);
 
   const currentAssigneeLabel = (() => {
-    if (!existing) return null;
+    // No assignee at all — same "nothing to show" case as having no record.
+    if (!existing?.assigned_to) return null;
     if (existing.assigned_rep_name) return existing.assigned_rep_name;
     if (existing.assigned_rep_email) return existing.assigned_rep_email;
     const inList = candidatesById.get(existing.assigned_to);

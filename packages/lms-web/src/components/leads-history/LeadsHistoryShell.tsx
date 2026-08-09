@@ -5,7 +5,13 @@ import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import type { SessionUser } from '@platform/types';
-import { getRulesForTenant, canSeeAssignedToFilter, getLeadsHistoryAssignedToScope } from '@lms/authz';
+import {
+  getRulesForTenant,
+  canSeeAssignedToFilter,
+  getLeadsHistoryAssignedToScope,
+  canViewUnassignedLeads,
+  UNASSIGNED_ASSIGNEE,
+} from '@lms/authz';
 import { canSeeOrgFilter } from '@platform/authz';
 import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../types/leads';
 import { useLeadsHistory } from '../../hooks/useLeadsHistory';
@@ -51,16 +57,36 @@ const EXPORT_COLUMNS: ExportColumn<AssignmentView>[] = [
   { header: 'Lead Source', value: (a) => a.lead_source_label ?? a.lead_source ?? '' },
   { header: 'Stage', value: (a) => a.lead_stage_label ?? a.lead_stage ?? '' },
   { header: 'Outcome', value: (a) => a.lead_stage_outcome_label ?? '' },
-  { header: 'Assigned To', value: (a) => a.assigned_rep_name ?? '' },
+  { header: 'Assigned To', value: (a) => assigneeLabel(a) },
   { header: 'Created', value: (a) => formatDate(a.lead_created_at) },
 ];
 
 const ACTIVE_STAGE_NAMES = new Set(['new', 'contacting', 'qualified']);
 
+// A lead is genuinely unassigned only when assigned_to is null. A missing name
+// with a non-null assigned_to means the assignee is not readable by this caller
+// (soft-deleted, or outside their org) — a different thing entirely.
+// Grid colIds the API can sort on. Columns outside this set keep AG Grid's
+// client-side sort, which only orders the rows currently loaded.
+const SERVER_SORT_KEYS = ['created_at', 'assignee', 'stage', 'branch'] as const;
+type ServerSortKey = (typeof SERVER_SORT_KEYS)[number];
+
+function isServerSortKey(id: string | null | undefined): id is ServerSortKey {
+  return !!id && (SERVER_SORT_KEYS as readonly string[]).includes(id);
+}
+
+function assigneeLabel(a: AssignmentView | undefined): string {
+  if (!a?.assigned_to) return 'Unassigned';
+  return a.assigned_rep_name ?? 'Unknown user';
+}
+
 
 export default function LeadsHistoryShell({ actor }: Props) {
   const rules = useMemo(() => getRulesForTenant(actor.tenant_id), [actor.tenant_id]);
   const showAssignedTo = canSeeAssignedToFilter(rules, actor.rank);
+  // Gated on canViewUnassignedLeads rather than showAssignedTo: the two are
+  // separately tunable per tenant, and only this one governs unassigned leads.
+  const showUnassignedOption = canViewUnassignedLeads(rules, actor.rank);
   const showOrgFilter = canSeeOrgFilter(actor.role);
   const scope = getLeadsHistoryAssignedToScope(rules, actor.rank, actor.role);
 
@@ -74,6 +100,10 @@ export default function LeadsHistoryShell({ actor }: Props) {
   const [selectedOrgs, setSelectedOrgs] = useState<string[]>([]);
   const [selectedAssignees, setSelectedAssignees] = useState<string[]>([]);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  // Sorting is server-side for the columns the API can order by, so that e.g.
+  // sorting by assignee clusters all unassigned leads across the whole result
+  // set rather than only within the 25 rows currently loaded.
+  const [sort, setSort] = useState<{ by: ServerSortKey; dir: 'asc' | 'desc' } | null>(null);
 
   const [assignableUsers, setAssignableUsers] = useState<UserOption[]>([]);
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
@@ -105,8 +135,10 @@ export default function LeadsHistoryShell({ actor }: Props) {
       assigned_to: selectedAssignees.length ? selectedAssignees.join(',') : undefined,
       source_ids: selectedSources.length ? selectedSources.join(',') : undefined,
       active_only: false,
+      sort_by: sort?.by,
+      sort_dir: sort?.dir,
     };
-  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, activeStageIds]);
+  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, activeStageIds, sort]);
 
   // Initial fetch — needs stageOptions to know active stage IDs
   const initialFetched = useRef(false);
@@ -181,9 +213,19 @@ export default function LeadsHistoryShell({ actor }: Props) {
 
   // Previously-picked assignee may not belong to the newly-selected org — clear it
   // rather than silently keep filtering by a user who's no longer in the visible list.
+  // "Unassigned" is org-agnostic, so it survives the switch.
   useEffect(() => {
-    setSelectedAssignees([]);
+    setSelectedAssignees((prev) => (prev.includes(UNASSIGNED_ASSIGNEE) ? [UNASSIGNED_ASSIGNEE] : []));
   }, [selectedOrgId]);
+
+  const assigneeOptions = useMemo(
+    () => [
+      // First, so it isn't buried in a long user list.
+      ...(showUnassignedOption ? [{ value: UNASSIGNED_ASSIGNEE, label: 'Unassigned' }] : []),
+      ...assignableUsers.map((u) => ({ value: u.id, label: u.label })),
+    ],
+    [showUnassignedOption, assignableUsers],
+  );
 
   const statusLabelMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -206,6 +248,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
     setSelectedOrgs([]);
     setSelectedAssignees([]);
     setSelectedSources([]);
+    setSort(null);
     // Also clear any per-column filter/sort applied directly in the grid, so Reset
     // fully returns to the same state as when this page was first loaded.
     gridRef.current?.api.setFilterModel(null);
@@ -216,6 +259,19 @@ export default function LeadsHistoryShell({ actor }: Props) {
   const handleExport = (format: ExportFormat) => {
     exportRows(data, EXPORT_COLUMNS, buildFilename(['leads-history']), format);
   };
+
+  // Re-query on sort so the ordering spans every page, not just the loaded one.
+  // The grid still sorts the returned page itself; the server orders assignees
+  // by COALESCE(full_name,'Unassigned') so both agree on where unassigned sits
+  // and rows don't jump after the fetch.
+  const handleSortChanged = useCallback(() => {
+    const sorted = gridRef.current?.api.getColumnState().find((c) => c.sort);
+    const next = sorted && isServerSortKey(sorted.colId)
+      ? { by: sorted.colId, dir: sorted.sort === 'asc' ? 'asc' as const : 'desc' as const }
+      : null;
+    setSort(next);
+    fetchData({ ...buildFilters(1, pageSize), sort_by: next?.by, sort_dir: next?.dir });
+  }, [buildFilters, fetchData, pageSize]);
 
   const columnDefs = useMemo((): ColDef<AssignmentView>[] => [
     {
@@ -233,7 +289,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
     {
       // Only flexible column — branch/org names vary in length, so leftover
       // width goes here instead of being spread thinly across every column.
-      headerName: 'Branch', field: 'branch', flex: 1, minWidth: 140, filter: true, sortable: true,
+      headerName: 'Branch', field: 'branch', colId: 'branch', flex: 1, minWidth: 140, filter: true, sortable: true,
     },
     {
       headerName: 'Lead Source', width: 150, minWidth: 130, filter: true, sortable: true,
@@ -267,20 +323,25 @@ export default function LeadsHistoryShell({ actor }: Props) {
     },
     {
       // Matches the main leads grid's Assigned To cell exactly (plain text, no pill/avatar).
-      headerName: 'Assigned To', width: 170, minWidth: 130, filter: true, sortable: true,
-      valueGetter: (p) => p.data?.assigned_rep_name ?? 'Unassigned',
+      headerName: 'Assigned To', colId: 'assignee', width: 170, minWidth: 130, filter: true, sortable: true,
+      // Three-way, keyed on assigned_to rather than the name: iam.users is now
+      // LEFT JOINed, so a lead assigned to a user outside the caller's org or a
+      // soft-deleted one comes back with assigned_to set but no name. Keying on
+      // the name alone would mislabel those as "Unassigned".
+      valueGetter: (p) => assigneeLabel(p.data),
       cellRenderer: (p: ICellRendererParams<AssignmentView>) => {
-        const name = p.data?.assigned_rep_name ?? null;
+        const label = assigneeLabel(p.data);
+        const unassigned = !p.data?.assigned_to;
         return (
-          <span style={{ color: name ? '#0F172A' : '#94A3B8', fontStyle: name ? 'normal' : 'italic' }}>
-            {name ?? 'Unassigned'}
+          <span style={{ color: unassigned ? '#94A3B8' : '#0F172A', fontStyle: unassigned ? 'italic' : 'normal' }}>
+            {label}
           </span>
         );
       },
       cellStyle: { display: 'flex', alignItems: 'center' },
     },
     {
-      headerName: 'Created', width: 130, filter: true, sortable: true,
+      headerName: 'Created', colId: 'created_at', width: 130, filter: true, sortable: true,
       valueGetter: (p) => p.data?.lead_created_at ?? '',
       valueFormatter: (p) => formatDate(p.value),
     },
@@ -373,7 +434,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
             <FilterField label="Assigned To">
               <MultiCheckDropdown
                 placeholder="All"
-                options={assignableUsers.map((u) => ({ value: u.id, label: u.label }))}
+                options={assigneeOptions}
                 selected={selectedAssignees}
                 onChange={setSelectedAssignees}
                 disabled={loadingUsers}
@@ -420,6 +481,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
                 enableCellTextSelection
                 alwaysShowHorizontalScroll
                 getRowId={(p) => p.data.id}
+                onSortChanged={handleSortChanged}
               />
             </div>
 

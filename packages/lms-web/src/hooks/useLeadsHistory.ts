@@ -15,6 +15,8 @@ export interface LeadsHistoryFilters {
   org_ids?: string | undefined;
   assigned_to?: string | undefined;
   active_only?: boolean | undefined;
+  sort_by?: 'created_at' | 'assignee' | 'stage' | 'branch' | undefined;
+  sort_dir?: 'asc' | 'desc' | undefined;
   [key: string]: string | number | boolean | undefined;
 }
 

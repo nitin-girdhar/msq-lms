@@ -80,7 +80,9 @@ export interface AssignmentView {
   lead_source_label: string | null;
   branch: string;
   org_id: string;
-  assigned_to: string;
+  // Null for an unassigned lead — Leads History returns these since the
+  // unassigned filter was added.
+  assigned_to: string | null;
   assigned_rep_name: string | null;
   assigned_rep_email: string | null;
   assigned_rep_role: string | null;

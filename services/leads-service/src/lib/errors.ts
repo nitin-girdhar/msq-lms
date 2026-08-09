@@ -50,11 +50,18 @@ export class UnauthorizedError extends AppError {
  * never a leaked `"Internal server error"` carrying the raw DB string — for the
  * known constraint/RAISE cases. Returns null when the error is not a recognised
  * DB error, so the handler can fall through to a generic 500. See Issue #3.
+ *
+ * drizzle-orm wraps the driver's real error in `DrizzleQueryError`, whose own
+ * `message` is just "Failed query: ...params: ..." — the actual Postgres
+ * `code`/`message` (what this function needs) live on `.cause`, one level
+ * down. Checking only the top-level error meant every constraint/exclusion
+ * violation quietly missed this backstop and fell through as an unhandled
+ * 500 leaking the raw query/params to the client instead of a clean 4xx.
  */
 export function translatePgError(error: unknown): AppError | null {
-  const e = error as { code?: string; message?: string };
-  const code = e?.code;
-  const message = e?.message ?? '';
+  const top = error as { code?: string; message?: string; cause?: { code?: string; message?: string } };
+  const code = top?.code ?? top?.cause?.code;
+  const message = `${top?.message ?? ''} ${top?.cause?.message ?? ''}`;
 
   // Org-scope / ownership RAISE from the FK-org-scope triggers (SQLSTATE P0001):
   // the caller referenced a lead/user/campaign outside their visible org.

@@ -1,8 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import type { RoleTxContext } from '@platform/db';
 import type { CreateAssignmentInput, UpdateAssignmentInput, BulkAssignInput } from '@lms/validation';
-import { LMS_RANKS, canAssignToUser, getRulesForTenant, getLeadsHistoryAssignedToScope } from '@lms/authz';
-import type { LeadsHistoryFilters } from './assignments.repository.js';
+import {
+  LMS_RANKS,
+  canAssignToUser,
+  getRulesForTenant,
+  getLeadsHistoryAssignedToScope,
+  canViewUnassignedLeads,
+  UNASSIGNED_ASSIGNEE,
+} from '@lms/authz';
+import type { LeadsHistoryFilters, UnassignedMode, LeadsHistorySortKey, SortDirection } from './assignments.repository.js';
 import { BadRequestError, ForbiddenError, NotFoundError, ConflictError } from '../../../lib/errors.js';
 import { logActivity } from '@platform/audit-log';
 import { publishEvent } from '../../../events/publisher.js';
@@ -208,8 +215,28 @@ export interface LeadsHistoryParams {
   orgIds?: string[];
   assignedTo?: string[];
   activeOnly: boolean;
+  sortBy?: LeadsHistorySortKey;
+  sortDir?: SortDirection;
   page: number;
   pageSize: number;
+}
+
+/**
+ * Splits the `assigned_to` filter into real user ids and the "unassigned"
+ * sentinel, dropping the sentinel entirely for callers who may not see
+ * unassigned leads.
+ *
+ * Dropping rather than rejecting is deliberate: the sentinel can only reach us
+ * from a stale or hand-rolled client, and the fallback — the caller's normal
+ * scoped view — leaks nothing. A 403 here would break any client that kept
+ * filter state across a role change.
+ */
+export function parseAssignedTo(assignedTo: string[] | undefined, canSeeUnassigned: boolean) {
+  const raw = assignedTo ?? [];
+  return {
+    userIds: raw.filter((v) => v !== UNASSIGNED_ASSIGNEE),
+    unassignedRequested: canSeeUnassigned && raw.includes(UNASSIGNED_ASSIGNEE),
+  };
 }
 
 export async function listLeadsHistory(
@@ -220,6 +247,14 @@ export async function listLeadsHistory(
   const rules = getRulesForTenant(ctx.tenant_id);
   const scope = getLeadsHistoryAssignedToScope(rules, rank, ctx.role);
 
+  const canSeeUnassigned = canViewUnassignedLeads(rules, rank);
+  const sel = parseAssignedTo(params.assignedTo, canSeeUnassigned);
+
+  // Explicitly ticking "Unassigned" narrows to unassigned-only when no user is
+  // also ticked, and unions with the ticked users when one is.
+  const modeFor = (dflt: UnassignedMode): UnassignedMode =>
+    sel.unassignedRequested ? (sel.userIds.length ? 'include' : 'only') : dflt;
+
   const filters: LeadsHistoryFilters = {
     dateFrom: params.dateFrom,
     dateTo: params.dateTo,
@@ -227,22 +262,36 @@ export async function listLeadsHistory(
     outcomeIds: params.outcomeIds,
     sourceIds: params.sourceIds,
     activeOnly: params.activeOnly,
+    sortBy: params.sortBy,
+    sortDir: params.sortDir,
     page: params.page,
     pageSize: params.pageSize,
     orgIds: null,
+    unassignedMode: 'exclude',
   };
 
   switch (scope) {
     case 'none':
+      // Below the team-scope rank: sales_representative, fitness_trainer,
+      // read_only. "None" scope means *your own* leads, and an unassigned lead
+      // is by definition nobody's.
+      //
+      // 'exclude' is hardcoded rather than derived from canSeeUnassigned on
+      // purpose. minRankToViewUnassignedLeads and minRankForLeadsHistoryTeamScope
+      // are both SSE (40) today, so this branch is unreachable for a caller who
+      // can see unassigned leads — but they are two independently tunable
+      // per-tenant knobs. A tenant dropping minRankToViewUnassignedLeads to SE
+      // must not thereby open unassigned rows to every rank-20 user.
       filters.userIds = [ctx.user_id];
+      filters.unassignedMode = 'exclude';
       filters.orgIds = [ctx.org_id];
       break;
     case 'team': {
-      if (params.assignedTo?.length) {
-        filters.userIds = params.assignedTo;
-      } else {
-        const teamIds = await repo.getTeamMemberIds(ctx, ctx.user_id, ctx.org_id);
-        filters.userIds = teamIds;
+      filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
+      if (filters.unassignedMode !== 'only') {
+        filters.userIds = sel.userIds.length
+          ? sel.userIds
+          : await repo.getTeamMemberIds(ctx, ctx.user_id, ctx.org_id);
       }
       // Team scope never crosses orgs — force the actor's own org rather than
       // trusting a client-supplied org_ids param (RLS would collapse it to this
@@ -251,16 +300,19 @@ export async function listLeadsHistory(
       break;
     }
     case 'org':
-      if (params.assignedTo?.length) filters.userIds = params.assignedTo;
+      filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
+      if (filters.unassignedMode !== 'only' && sel.userIds.length) filters.userIds = sel.userIds;
       // Org scope never crosses orgs either — same reasoning as 'team'.
       filters.orgIds = [ctx.org_id];
       break;
     case 'tenant':
-      if (params.assignedTo?.length) filters.userIds = params.assignedTo;
+      filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
+      if (filters.unassignedMode !== 'only' && sel.userIds.length) filters.userIds = sel.userIds;
       filters.orgIds = params.orgIds?.length ? params.orgIds : null;
       break;
     case 'all':
-      if (params.assignedTo?.length) filters.userIds = params.assignedTo;
+      filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
+      if (filters.unassignedMode !== 'only' && sel.userIds.length) filters.userIds = sel.userIds;
       filters.orgIds = params.orgIds?.length ? params.orgIds : null;
       break;
   }

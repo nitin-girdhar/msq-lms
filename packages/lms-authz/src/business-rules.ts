@@ -102,6 +102,17 @@ export function canViewUnassignedLeads(rules: TenantBusinessRules, rank: number)
   return rank >= rules.minRankToViewUnassignedLeads;
 }
 
+// Sentinel used in the Leads History "Assigned To" filter to mean "leads with no
+// assignee". It travels in the same comma-separated `assigned_to` list as real
+// user UUIDs, so it must never collide with one — 'unassigned' cannot parse as a
+// UUID, and the request schema rejects any other non-UUID token.
+//
+// Lives here rather than in @lms/validation because it must be shared by the
+// leads-service and the web package, and only @lms/authz is already a dependency
+// of both. Duplicating the literal on either side would drift silently and turn
+// the filter into a no-op with no error.
+export const UNASSIGNED_ASSIGNEE = 'unassigned';
+
 export function canSeeUnassignedCard(rules: TenantBusinessRules, rank: number): boolean {
   return rank >= rules.minRankForUnassignedCard;
 }

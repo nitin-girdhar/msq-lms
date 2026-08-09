@@ -171,8 +171,25 @@ export async function unassignLead(ctx: RoleTxContext, leadId: string) {
 
 // ── Leads History ──────────────────────────────────────────────────────────
 
+// How unassigned leads (assigned_user_id IS NULL) participate in the result.
+// `userIds` alone cannot express the union case ("Rani OR unassigned"), hence a
+// second axis.
+//
+//   mode      | userIds     | meaning
+//   ----------|-------------|--------------------------------------------------
+//   exclude   | empty       | all assigned leads in scope
+//   exclude   | non-empty   | those users only
+//   include   | empty       | everything — assigned and unassigned
+//   include   | non-empty   | those users OR unassigned
+//   only      | must be []  | unassigned only
+export type UnassignedMode = 'exclude' | 'include' | 'only';
+
 export interface LeadsHistoryFilters {
   userIds?: string[] | undefined;
+  // Required, not optional-with-default: the compiler then forces every scope
+  // branch in the service to state its intent, so a future branch cannot
+  // silently inherit "include" and widen who sees unassigned leads.
+  unassignedMode: UnassignedMode;
   orgIds: string[] | null;
   dateFrom?: string | undefined;
   dateTo?: string | undefined;
@@ -180,22 +197,56 @@ export interface LeadsHistoryFilters {
   outcomeIds?: string[] | undefined;
   sourceIds?: string[] | undefined;
   activeOnly: boolean;
+  sortBy?: LeadsHistorySortKey | undefined;
+  sortDir?: SortDirection | undefined;
   page: number;
   pageSize: number;
 }
+
+// ORDER BY is built from this whitelist only — a client-supplied string is never
+// interpolated into the SQL.
+export type LeadsHistorySortKey = 'created_at' | 'assignee' | 'stage' | 'branch';
+export type SortDirection = 'asc' | 'desc';
+
+const SORT_EXPR: Record<LeadsHistorySortKey, ReturnType<typeof sql>> = {
+  created_at: sql`ml.created_at`,
+  // COALESCE, not `u.full_name NULLS FIRST`: the grid re-sorts its loaded page
+  // client-side off a valueGetter that yields the literal 'Unassigned', so the
+  // server must place unassigned rows where an alphabetical sort on that string
+  // would. Sorting NULLs to one end instead makes rows visibly jump after each
+  // fetch.
+  assignee:   sql`COALESCE(u.full_name, 'Unassigned')`,
+  stage:      sql`ls.label`,
+  branch:     sql`o.name`,
+};
 
 export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: LeadsHistoryFilters) {
   const offset = (filters.page - 1) * filters.pageSize;
 
   return withRoleTx(ctx, async (tx) => {
-    const conditions: ReturnType<typeof sql>[] = [
-      sql`NOT ml.is_deleted`,
-      sql`ml.assigned_user_id IS NOT NULL`,
-    ];
+    const conditions: ReturnType<typeof sql>[] = [sql`NOT ml.is_deleted`];
 
-    if (filters.userIds?.length) {
-      conditions.push(sql`ml.assigned_user_id = ANY(${sqlUuidArr(filters.userIds)})`);
+    // Assignment predicate. The service is responsible for deciding whether the
+    // caller may see unassigned leads at all (see listLeadsHistory); by the time
+    // we get here that decision is already encoded in unassignedMode.
+    if (filters.unassignedMode === 'only') {
+      // 'only' ignores userIds by contract. Fail loudly rather than AND two
+      // contradictory predicates and silently return zero rows.
+      if (filters.userIds?.length) {
+        throw new Error("listAssignmentsFiltered: unassignedMode 'only' cannot be combined with userIds");
+      }
+      conditions.push(sql`ml.assigned_user_id IS NULL`);
+    } else if (filters.unassignedMode === 'exclude') {
+      conditions.push(sql`ml.assigned_user_id IS NOT NULL`);
+      if (filters.userIds?.length) {
+        conditions.push(sql`ml.assigned_user_id = ANY(${sqlUuidArr(filters.userIds)})`);
+      }
+    } else if (filters.userIds?.length) {
+      conditions.push(
+        sql`(ml.assigned_user_id = ANY(${sqlUuidArr(filters.userIds)}) OR ml.assigned_user_id IS NULL)`,
+      );
     }
+    // 'include' with no userIds → no assignment predicate at all.
     if (filters.orgIds !== null && filters.orgIds.length > 0) {
       conditions.push(sql`ml.org_id = ANY(${sqlUuidArr(filters.orgIds)})`);
     }
@@ -215,10 +266,17 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
       conditions.push(sql`ml.source_id = ANY(${sqlUuidArr(filters.sourceIds)})`);
     }
     if (filters.activeOnly) {
-      conditions.push(sql`ls.is_terminated = FALSE`);
+      // IS DISTINCT FROM TRUE, not `= FALSE`: lead_stage is LEFT JOINed because
+      // ml.stage_id is nullable, and `NULL = FALSE` is NULL, which would drop
+      // every stageless lead right back out again. This is the default path —
+      // both the initial page load and Reset send active_only=true.
+      conditions.push(sql`ls.is_terminated IS DISTINCT FROM TRUE`);
     }
 
     const where = sql.join(conditions, sql` AND `);
+
+    const sortExpr = SORT_EXPR[filters.sortBy ?? 'created_at'];
+    const sortDir = filters.sortDir === 'asc' ? sql`ASC` : sql`DESC`;
 
     const rows = (await tx.execute(sql`
       SELECT
@@ -245,13 +303,13 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
         COUNT(*) OVER ()    AS total_count
       FROM lms.marketing_leads ml
       JOIN entity.organizations o   ON o.id  = ml.org_id
-      JOIN lms.lead_stage ls        ON ls.id = ml.stage_id
-      JOIN iam.users u              ON u.id  = ml.assigned_user_id
+      LEFT JOIN lms.lead_stage ls   ON ls.id = ml.stage_id
+      LEFT JOIN iam.users u         ON u.id  = ml.assigned_user_id
       LEFT JOIN iam.user_roles ur   ON ur.id = u.role_id
       LEFT JOIN lms.lead_stage_outcome lso ON lso.id = ml.outcome_id
       LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
       WHERE ${where}
-      ORDER BY ml.created_at DESC
+      ORDER BY ${sortExpr} ${sortDir}, ml.created_at DESC, ml.id
       LIMIT ${filters.pageSize} OFFSET ${offset}
     `)) as Array<Record<string, unknown>>;
 
