@@ -20,18 +20,35 @@ export async function getPipelineByStage(orgId: string, userId: string) {
 
 // ── Daily lead report ───────────────────────────────────────────────────────
 
-/** Tenant-wide callers get every branch + an ALL BRANCHES rollup; others one row. */
+/**
+ * A non-tenant-wide caller's actual branch scope: their single home org, or —
+ * if iam.user_org_mapping maps them to more than one org (e.g. a Fitclass
+ * "Wingman", role org_manager) — that full org_id list. Tenant-wide callers
+ * never need this; they already get every org via the tenant_admin RLS path.
+ */
+async function resolveScopeOrgIds(orgId: string, userId: string): Promise<string[]> {
+  const orgIds = await repo.getUserOrgIds(userId);
+  return orgIds.length > 1 ? orgIds : [orgId];
+}
+
+/** Tenant-wide callers get every branch + an ALL BRANCHES rollup; multi-branch
+ * callers (Wingmen) get their assigned branches + a rollup; others one row. */
 export async function getBranchReport(orgId: string, userId: string, isTenantWide: boolean) {
   if (isTenantWide) return repo.getTenantBranchReport(orgId, userId);
-  return repo.getBranchReport(orgId, userId);
+  const orgIds = await resolveScopeOrgIds(orgId, userId);
+  return orgIds.length > 1 ? repo.getMultiOrgBranchReport(orgIds, userId) : repo.getBranchReport(orgId, userId);
 }
 
 export async function getUserReport(orgId: string, userId: string, isTenantWide: boolean) {
-  return repo.getUserReport(orgId, userId, isTenantWide);
+  if (isTenantWide) return repo.getUserReport(orgId, userId, true);
+  const orgIds = await resolveScopeOrgIds(orgId, userId);
+  return orgIds.length > 1 ? repo.getMultiOrgUserReport(orgIds, userId) : repo.getUserReport(orgId, userId, false);
 }
 
 export async function getSourceReport(orgId: string, userId: string, isTenantWide: boolean) {
-  return repo.getSourceReport(orgId, userId, isTenantWide);
+  if (isTenantWide) return repo.getSourceReport(orgId, userId, true);
+  const orgIds = await resolveScopeOrgIds(orgId, userId);
+  return orgIds.length > 1 ? repo.getMultiOrgSourceReport(orgIds, userId) : repo.getSourceReport(orgId, userId, false);
 }
 
 /**

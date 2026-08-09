@@ -19,6 +19,25 @@ async function resolveTenantId(orgId: string): Promise<string> {
   });
 }
 
+/**
+ * All org_ids one user is actively mapped to via iam.user_org_mapping — used
+ * to detect a multi-branch, non-tenant-wide actor (e.g. a Fitclass "Wingman",
+ * role org_manager) whose session org_id is only their single home org.
+ *
+ * Read with withServiceTx: this is not itself an RLS boundary, it only tells
+ * the caller which per-org org_admin transactions to open next.
+ */
+export async function getUserOrgIds(userId: string): Promise<string[]> {
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT DISTINCT org_id::text AS org_id
+      FROM iam.user_org_mapping
+      WHERE user_id = ${userId}::uuid AND is_active
+    `)) as Array<{ org_id: string }>;
+    return rows.map((r) => r.org_id);
+  });
+}
+
 export async function getOrgPerformanceSnapshot(orgId: string, userId: string) {
   return withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => {
     const rows = (await tx.execute(sql`
@@ -128,6 +147,44 @@ export async function getBranchReport(orgId: string, userId: string) {
   });
 }
 
+const BRANCH_METRIC_KEYS = [
+  'total_leads', 'new_count', 'new_leads_today', 'new_leads_this_month',
+  'unassigned_count', 'followup_scheduled', 'followup_overdue', 'converted_count', 'unqualified_count',
+] as const;
+
+/** Sums the LeadReportMetrics-shaped numeric fields across raw branch rows into one rollup row. */
+function sumBranchRows(rows: Array<Record<string, unknown>>): Record<string, unknown> {
+  const rollup: Record<string, unknown> = {
+    tenant_id: rows[0]?.['tenant_id'] ?? null,
+    org_id: null,
+    org_name: 'ALL BRANCHES',
+    org_timezone: null,
+    report_date: rows.reduce<string | null>((max, r) => {
+      const d = r['report_date'] == null ? null : String(r['report_date']);
+      return d && (!max || d > max) ? d : max;
+    }, null),
+    is_total: true,
+  };
+  for (const key of BRANCH_METRIC_KEYS) {
+    rollup[key] = rows.reduce((sum, r) => sum + Number(r[key] ?? 0), 0);
+  }
+  return rollup;
+}
+
+/**
+ * Combined branch report across exactly the given org_ids (a Wingman's
+ * assigned-branch cluster), NOT a full tenant. Runs getBranchReport's
+ * existing org_admin RLS transaction once per org — the same per-org RLS
+ * boundary already used for single-branch admins — and adds a synthetic
+ * "ALL BRANCHES" rollup row computed in TS, mirroring tenantBranchReportQuery's
+ * shape so the frontend needs no changes.
+ */
+export async function getMultiOrgBranchReport(orgIds: string[], userId: string) {
+  const perOrg = await Promise.all(orgIds.map((orgId) => getBranchReport(orgId, userId)));
+  const rows = perOrg.flat();
+  return [...rows, sumBranchRows(rows)];
+}
+
 /**
  * Per-assignee rows, including one "Unassigned" row per branch.
  *
@@ -152,6 +209,12 @@ export async function getUserReport(orgId: string, userId: string, isTenantWide:
       ORDER BY is_unassigned DESC, assignee
     `)) as Array<Record<string, unknown>>;
   });
+}
+
+/** Combined per-assignee report across a Wingman's assigned-branch cluster. */
+export async function getMultiOrgUserReport(orgIds: string[], userId: string) {
+  const perOrg = await Promise.all(orgIds.map((orgId) => getUserReport(orgId, userId, false)));
+  return perOrg.flat();
 }
 
 /**
@@ -531,6 +594,66 @@ export async function getSourceReport(
     const users = (await tx.execute(sourceUserQuery(tenantId, orgId))) as Array<Record<string, unknown>>;
     return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
   });
+}
+
+/** Sums SourceBranchRow metrics per source into "ALL BRANCHES" rollup rows, one per source. */
+function rollupSourceBranches(rows: SourceBranchRow[]): SourceBranchRow[] {
+  const bySource = new Map<string, SourceBranchRow[]>();
+  for (const r of rows) {
+    const key = r.source_id ?? r.source_label;
+    const list = bySource.get(key);
+    if (list) list.push(r);
+    else bySource.set(key, [r]);
+  }
+  return [...bySource.values()].map((group) => {
+    const first = group[0]!;
+    const rollup: SourceBranchRow = {
+      tenant_id: first.tenant_id,
+      org_id: null,
+      org_name: 'ALL BRANCHES',
+      source_id: first.source_id,
+      source_label: first.source_label,
+      report_date: group.reduce((max, r) => (r.report_date > max ? r.report_date : max), first.report_date),
+      is_total: true,
+      total_leads: 0, new_count: 0, new_leads_today: 0, new_leads_this_month: 0,
+      unassigned_count: 0, followup_scheduled: 0, followup_overdue: 0, converted_count: 0, unqualified_count: 0,
+    };
+    for (const r of group) {
+      rollup.total_leads += r.total_leads;
+      rollup.new_count += r.new_count;
+      rollup.new_leads_today += r.new_leads_today;
+      rollup.new_leads_this_month += r.new_leads_this_month;
+      rollup.unassigned_count += r.unassigned_count;
+      rollup.followup_scheduled += r.followup_scheduled;
+      rollup.followup_overdue += r.followup_overdue;
+      rollup.converted_count += r.converted_count;
+      rollup.unqualified_count += r.unqualified_count;
+    }
+    return rollup;
+  });
+}
+
+/**
+ * Combined source report across exactly the given org_ids (a Wingman's
+ * assigned-branch cluster). Runs the existing org_admin-scoped query once per
+ * org and merges in TS, adding a per-source "ALL BRANCHES" rollup row —
+ * mirrors getTenantSourceReport's shape without using the tenant_admin RLS
+ * bypass for a non-tenant-wide actor.
+ */
+export async function getMultiOrgSourceReport(
+  orgIds: string[],
+  userId: string,
+): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] }> {
+  const tenantId = await resolveTenantId(orgIds[0]!);
+  const perOrg = await Promise.all(orgIds.map((orgId) =>
+    withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => ({
+      branches: (await tx.execute(sourceBranchQuery(tenantId, orgId))) as Array<Record<string, unknown>>,
+      users: (await tx.execute(sourceUserQuery(tenantId, orgId))) as Array<Record<string, unknown>>,
+    })),
+  ));
+  const branchRows = perOrg.flatMap((p) => p.branches).map(toSourceBranchRow);
+  const userRows = perOrg.flatMap((p) => p.users).map(toSourceUserRow);
+  return { branches: [...branchRows, ...rollupSourceBranches(branchRows)], users: userRows };
 }
 
 /**

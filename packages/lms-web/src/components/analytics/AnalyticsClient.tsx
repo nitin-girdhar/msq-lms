@@ -73,6 +73,8 @@ export default function AnalyticsClient(_props: Props) {
   });
 
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const isLoading = pipelineLoading || branchLoading || sourceLoading;
   const pipeline = (pipelineData?.data ?? []) as PipelineStage[];
@@ -98,6 +100,22 @@ export default function AnalyticsClient(_props: Props) {
     }
     return m;
   }, [userRows]);
+
+  // Per-branch breakdown for the "By Source" table's expand row. sourceRows is
+  // already one row per (branch, source), so grouping by source key is enough
+  // — no need to further group by org_name within a key.
+  const branchesBySource = useMemo(() => {
+    const m = new Map<string, SourceBranchRow[]>();
+    for (const s of sourceRows) {
+      const key = s.source_id ?? s.source_label;
+      const list = m.get(key);
+      if (list) list.push(s);
+      else m.set(key, [s]);
+    }
+    return m;
+  }, [sourceRows]);
+
+  const showSourceBranchBreakdown = isTenantWide && branchRows.length > 1;
 
   const sourceSummaryRows = useMemo(
     () => sourceRows.map((s) => ({
@@ -134,7 +152,7 @@ export default function AnalyticsClient(_props: Props) {
       <div>
         <h1 className="text-2xl font-bold text-[#0F172A]">Analytics</h1>
         <p className="mt-1 text-xs text-[#64748B]">
-          Lead performance {isTenantWide ? 'across every branch' : 'for your organisation'} — by source, by branch, and by status.
+          Lead performance {isTenantWide ? 'across your branches' : 'for your organisation'} — by source, by branch, and by status.
         </p>
       </div>
 
@@ -159,7 +177,7 @@ export default function AnalyticsClient(_props: Props) {
           </div>
 
           {/* ── Charts ────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-1 gap-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ChartCard title="By Source" subtitle="Share of total leads">
               <SourcePieChart rows={sourceRows} />
             </ChartCard>
@@ -176,21 +194,45 @@ export default function AnalyticsClient(_props: Props) {
 
           {/* ── Detailed summary grid ────────────────────────────────── */}
           <div>
-            <h2 className="mb-3 text-sm font-semibold text-[#0F172A]">Detailed Summary</h2>
-            <div className="grid grid-cols-1 gap-4">
-              <SummaryTable title="By Source" rows={sourceSummaryRows} />
-              {isTenantWide && branchRows.length > 1 ? (
+            <button
+              type="button"
+              onClick={() => setSummaryOpen((o) => !o)}
+              className="mb-3 flex w-full items-center gap-1.5 text-left text-sm font-semibold text-[#0F172A]"
+            >
+              <svg
+                className={`h-3.5 w-3.5 shrink-0 text-[#94A3B8] transition-transform ${summaryOpen ? 'rotate-90' : ''}`}
+                viewBox="0 0 20 20" fill="currentColor"
+              >
+                <path fillRule="evenodd" d="M7.21 5.23a.75.75 0 011.06-.02l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.04-1.08L11.17 10 7.23 6.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+              </svg>
+              Detailed Summary
+            </button>
+            {summaryOpen && (
+              <div className="grid grid-cols-1 gap-4">
                 <SummaryTable
-                  title="By Branch"
-                  rows={branchSummaryRows}
-                  expandedKey={expandedBranch}
-                  onToggleExpand={(key) => setExpandedBranch((cur) => (cur === key ? null : key))}
-                  renderExpanded={(key) => <BranchUsersTable users={usersByBranch.get(key) ?? []} />}
+                  title="By Source"
+                  rows={sourceSummaryRows}
+                  {...(showSourceBranchBreakdown
+                    ? {
+                      expandedKey: expandedSource,
+                      onToggleExpand: (key: string) => setExpandedSource((cur) => (cur === key ? null : key)),
+                      renderExpanded: (key: string) => <SourceBranchesTable branches={branchesBySource.get(key) ?? []} />,
+                    }
+                    : {})}
                 />
-              ) : (
-                <StatusSummaryTable row={totalRow} />
-              )}
-            </div>
+                {isTenantWide && branchRows.length > 1 ? (
+                  <SummaryTable
+                    title="By Branch"
+                    rows={branchSummaryRows}
+                    expandedKey={expandedBranch}
+                    onToggleExpand={(key) => setExpandedBranch((cur) => (cur === key ? null : key))}
+                    renderExpanded={(key) => <BranchUsersTable users={usersByBranch.get(key) ?? []} />}
+                  />
+                ) : (
+                  <StatusSummaryTable row={totalRow} />
+                )}
+              </div>
+            )}
           </div>
 
           <PipelineTable pipeline={pipeline} />
@@ -421,6 +463,38 @@ function BranchUsersTable({ users }: { users: UserReportRow[] }) {
             <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.followup_overdue}</td>
             <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.converted_count}</td>
             <td className="px-3 py-1.5 text-right"><PendingBadge pct={pendingActionPct(u)} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SourceBranchesTable({ branches }: { branches: SourceBranchRow[] }) {
+  if (!branches.length) {
+    return <p className="px-4 py-3 text-xs text-[#94A3B8]">No branch data for this source.</p>;
+  }
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">
+        <tr>
+          <th className="px-4 py-1.5 pl-9">Branch</th>
+          <th className="px-3 py-1.5 text-right">Total</th>
+          <th className="px-3 py-1.5 text-right">New</th>
+          <th className="px-3 py-1.5 text-right">Overdue</th>
+          <th className="px-3 py-1.5 text-right">Converted</th>
+          <th className="px-3 py-1.5 text-right">Pending Action</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-[#E2E8F0]">
+        {branches.map((b) => (
+          <tr key={b.org_id ?? b.org_name} className="text-[#0F172A]">
+            <td className="px-4 py-1.5 pl-9 font-medium">{b.org_name}</td>
+            <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{b.total_leads}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{b.new_count}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{b.followup_overdue}</td>
+            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{b.converted_count}</td>
+            <td className="px-3 py-1.5 text-right"><PendingBadge pct={pendingActionPct(b)} /></td>
           </tr>
         ))}
       </tbody>
