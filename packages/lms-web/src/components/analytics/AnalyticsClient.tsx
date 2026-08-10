@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import useSWR from 'swr';
 import {
   Bar,
@@ -16,7 +16,12 @@ import {
   YAxis,
 } from 'recharts';
 import { analytics } from '../../lib/api/client';
-import type { BranchReportRow, SourceBranchRow, UserReportRow } from '../../types/analytics';
+import type {
+  BranchReportRow,
+  LeadReportMetrics,
+  SourceBranchRow,
+  SourceUserRow,
+} from '../../types/analytics';
 
 interface Props {
   actorRank: number;
@@ -66,86 +71,160 @@ export default function AnalyticsClient(_props: Props) {
   const { data: sourceData, isLoading: sourceLoading } = useSWR('analytics/report/sources', () => analytics.sourceReport(), {
     revalidateOnFocus: false,
   });
-  // Not folded into the main `isLoading` gate below — it only backs the branch
-  // drill-down, so the rest of the page shouldn't wait on it.
-  const { data: userData } = useSWR('analytics/report/users', () => analytics.userReport(), {
-    revalidateOnFocus: false,
-  });
+  // `/report/users` is no longer fetched: its (branch, assignee) grain is a
+  // strict subset of `/report/sources`.users, which carries the same metrics at
+  // the finer (branch, assignee, source) grain the drill-down needs.
 
-  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
-  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [openBranches, setOpenBranches] = useState<ReadonlySet<string>>(() => new Set());
+  const [openSources, setOpenSources] = useState<ReadonlySet<string>>(() => new Set());
   const [summaryOpen, setSummaryOpen] = useState(false);
 
   const isLoading = pipelineLoading || branchLoading || sourceLoading;
   const pipeline = (pipelineData?.data ?? []) as PipelineStage[];
   const branches = (branchData?.data ?? []) as BranchReportRow[];
   const sourceBranches = (sourceData?.data?.branches ?? []) as SourceBranchRow[];
-  const userRows = (userData?.data ?? []) as UserReportRow[];
+  const sourceUsers = (sourceData?.data?.users ?? []) as SourceUserRow[];
 
   const isTenantWide = branches.length > 1 || branches.some((b) => b.is_total);
   const totalRow = branches.find((b) => b.is_total) ?? branches[0] ?? null;
   const branchRows = branches.filter((b) => !b.is_total);
   const sourceRows = sourceBranches.filter((s) => !s.is_total);
 
-  // Per-branch user breakdown for the "By Branch" table's expand row. Keyed by
-  // org_name (the id the branch SummaryTable rows use as their identity, since
-  // BranchReportRow's org_id can be null on the rollup row branchRows already
-  // excludes).
-  const usersByBranch = useMemo(() => {
-    const m = new Map<string, UserReportRow[]>();
-    for (const u of userRows) {
-      const list = m.get(u.org_name);
-      if (list) list.push(u);
-      else m.set(u.org_name, [u]);
-    }
-    return m;
-  }, [userRows]);
-
-  // Per-branch breakdown for the "By Source" table's expand row. sourceRows is
-  // already one row per (branch, source), so grouping by source key is enough
-  // — no need to further group by org_name within a key.
-  const branchesBySource = useMemo(() => {
+  // Level 2 of the drill-down: a branch's sources. sourceRows is already one row
+  // per (branch, source), so grouping by org_name splits it into per-branch
+  // lists in which each source appears exactly once. org_name (not org_id) is
+  // the join key throughout: BranchReportRow.org_id is nullable, org_name is
+  // not, and it's the identity the branch rows already used.
+  const sourcesByBranch = useMemo(() => {
     const m = new Map<string, SourceBranchRow[]>();
     for (const s of sourceRows) {
-      const key = s.source_id ?? s.source_label;
-      const list = m.get(key);
+      const list = m.get(s.org_name);
       if (list) list.push(s);
-      else m.set(key, [s]);
+      else m.set(s.org_name, [s]);
     }
+    for (const list of m.values()) list.sort((a, b) => b.total_leads - a.total_leads);
     return m;
   }, [sourceRows]);
 
-  const showSourceBranchBreakdown = isTenantWide && branchRows.length > 1;
+  // Level 3: the people working one branch's leads from one source. `?? label`
+  // mirrors the SQL's COALESCE(src.label, 'Unknown') — a deleted source arrives
+  // with a null source_id on both sides, so both sides must fall back the same
+  // way or the child list silently comes back empty.
+  const usersByBranchSource = useMemo(() => {
+    const m = new Map<string, SourceUserRow[]>();
+    for (const u of sourceUsers) {
+      const key = `${u.org_name}::${u.source_id ?? u.source_label}`;
+      const list = m.get(key);
+      if (list) list.push(u);
+      else m.set(key, [u]);
+    }
+    // Matches the backend's own ORDER BY is_unassigned DESC, assignee.
+    for (const list of m.values()) {
+      list.sort((a, b) =>
+        a.is_unassigned !== b.is_unassigned
+          ? Number(b.is_unassigned) - Number(a.is_unassigned)
+          : a.assignee.localeCompare(b.assignee));
+    }
+    return m;
+  }, [sourceUsers]);
 
-  const sourceSummaryRows = useMemo(
-    () => sourceRows.map((s) => ({
-      key: s.source_id ?? s.source_label,
-      label: s.source_label,
-      total: s.total_leads,
-      neew: s.new_count,
-      unassigned: s.unassigned_count,
-      overdue: s.followup_overdue,
-      converted: s.converted_count,
-      unqualified: s.unqualified_count,
-      pendingPct: pendingActionPct(s),
-    })),
-    [sourceRows],
-  );
+  // Tenant actors drill Branch ▸ Source ▸ Assignee; a single-branch actor has no
+  // branch to pick, so the same tree starts one level in, at Source.
+  const branchRooted = isTenantWide && branchRows.length > 1;
 
-  const branchSummaryRows = useMemo(
-    () => branchRows.map((b) => ({
-      key: b.org_name,
-      label: b.org_name,
-      total: b.total_leads,
-      neew: b.new_count,
-      unassigned: b.unassigned_count,
-      overdue: b.followup_overdue,
-      converted: b.converted_count,
-      unqualified: b.unqualified_count,
-      pendingPct: pendingActionPct(b),
-    })),
-    [branchRows],
-  );
+  // Only the rows currently visible, flattened to depth-tagged records. Walking
+  // once per toggle (rather than per row) is what keeps "Expand all" cheap on a
+  // tenant with many branches × sources × staff.
+  const drillRows = useMemo(() => {
+    const out: DrillRow[] = [];
+
+    // Keys are always derived from the row's own org_name, never from a name
+    // threaded in from the branch endpoint — the two payloads must agree for the
+    // child lookup to hit, so there's no reason to give them a second chance to
+    // disagree.
+    const pushSources = (sources: SourceBranchRow[], emptyKey: string, depth: 0 | 1) => {
+      if (!sources.length) {
+        out.push({ key: `${emptyKey}::∅`, depth, label: 'No source data', placeholder: true });
+        return;
+      }
+      for (const s of sources) {
+        const key = `${s.org_name}::${s.source_id ?? s.source_label}`;
+        const isOpen = openSources.has(key);
+        out.push({ key, depth, label: s.source_label, metrics: s, expandable: true, isOpen });
+        if (!isOpen) continue;
+
+        const users = usersByBranchSource.get(key) ?? [];
+        const childDepth = (depth + 1) as 1 | 2;
+        if (!users.length) {
+          out.push({ key: `${key}::∅`, depth: childDepth, label: 'No assignee data', placeholder: true });
+          continue;
+        }
+        for (const u of users) {
+          out.push({
+            key: `${key}::${u.assigned_user_id ?? 'unassigned'}`,
+            depth: childDepth,
+            label: u.is_unassigned ? 'Unassigned' : u.assignee,
+            muted: u.is_unassigned,
+            metrics: u,
+            // unassigned_count is degenerate at this grain — the group is
+            // already keyed by assigned_user_id, so it only ever restates
+            // total_leads or 0. A literal number would read as a measurement.
+            hideUnassigned: true,
+          });
+        }
+      }
+    };
+
+    if (!branchRooted) {
+      // One branch, so there is at most one group — flatten rather than look it
+      // up by name.
+      pushSources([...sourcesByBranch.values()].flat(), 'root', 0);
+      return out;
+    }
+
+    for (const b of branchRows) {
+      const isOpen = openBranches.has(b.org_name);
+      out.push({ key: b.org_name, depth: 0, label: b.org_name, metrics: b, expandable: true, isOpen });
+      if (isOpen) pushSources(sourcesByBranch.get(b.org_name) ?? [], b.org_name, 1);
+    }
+    return out;
+  }, [branchRooted, branchRows, sourcesByBranch, usersByBranchSource, openBranches, openSources]);
+
+  const anyOpen = openBranches.size > 0 || openSources.size > 0;
+
+  const expandAll = () => {
+    setOpenBranches(new Set(branchRows.map((b) => b.org_name)));
+    setOpenSources(new Set(
+      [...sourcesByBranch.entries()].flatMap(([org, list]) =>
+        list.map((s) => `${org}::${s.source_id ?? s.source_label}`)),
+    ));
+  };
+
+  const collapseAll = () => {
+    setOpenBranches(new Set());
+    setOpenSources(new Set());
+  };
+
+  const toggleBranch = (key: string) => {
+    setOpenBranches((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+    // Prune the branch's source keys so reopening it starts collapsed.
+    setOpenSources((cur) => {
+      const next = new Set([...cur].filter((k) => !k.startsWith(`${key}::`)));
+      return next.size === cur.size ? cur : next;
+    });
+  };
+
+  const toggleSource = (key: string) => {
+    setOpenSources((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-8 p-4 sm:p-6">
@@ -209,28 +288,15 @@ export default function AnalyticsClient(_props: Props) {
             </button>
             {summaryOpen && (
               <div className="grid grid-cols-1 gap-4">
-                <SummaryTable
-                  title="By Source"
-                  rows={sourceSummaryRows}
-                  {...(showSourceBranchBreakdown
-                    ? {
-                      expandedKey: expandedSource,
-                      onToggleExpand: (key: string) => setExpandedSource((cur) => (cur === key ? null : key)),
-                      renderExpanded: (key: string) => <SourceBranchesTable branches={branchesBySource.get(key) ?? []} />,
-                    }
-                    : {})}
+                <DrillDownTable
+                  rows={drillRows}
+                  branchRooted={branchRooted}
+                  anyOpen={anyOpen}
+                  onExpandAll={expandAll}
+                  onCollapseAll={collapseAll}
+                  onToggle={(key, depth) => (branchRooted && depth === 0 ? toggleBranch(key) : toggleSource(key))}
                 />
-                {isTenantWide && branchRows.length > 1 ? (
-                  <SummaryTable
-                    title="By Branch"
-                    rows={branchSummaryRows}
-                    expandedKey={expandedBranch}
-                    onToggleExpand={(key) => setExpandedBranch((cur) => (cur === key ? null : key))}
-                    renderExpanded={(key) => <BranchUsersTable users={usersByBranch.get(key) ?? []} />}
-                  />
-                ) : (
-                  <StatusSummaryTable row={totalRow} />
-                )}
+                {!branchRooted && <StatusSummaryTable row={totalRow} />}
               </div>
             )}
           </div>
@@ -329,17 +395,28 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
   );
 }
 
-interface SummaryRow {
+/**
+ * One rendered line of the Branch ▸ Source ▸ Assignee tree, already flattened.
+ * `key` is the full path, so two different branches' "Facebook" rows are
+ * distinct rows with distinct React keys and independent expand state.
+ */
+interface DrillRow {
   key: string;
+  depth: 0 | 1 | 2;
   label: string;
-  total: number;
-  neew: number;
-  unassigned: number;
-  overdue: number;
-  converted: number;
-  unqualified: number;
-  pendingPct: number | null;
+  metrics?: LeadReportMetrics;
+  expandable?: boolean;
+  isOpen?: boolean;
+  muted?: boolean;
+  hideUnassigned?: boolean;
+  placeholder?: boolean;
 }
+
+// Depth carried by indent + ground tint on one shared column grid, rather than
+// nested tables with their own headers (which is why the old child tables'
+// columns didn't line up with their parent's).
+const DEPTH_PAD = ['pl-4', 'pl-9', 'pl-14'] as const;
+const DEPTH_BG = ['bg-white', 'bg-[#F8FAFC]', 'bg-[#F1F5F9]'] as const;
 
 function PendingBadge({ pct }: { pct: number | null }) {
   const band = pendingActionBand(pct);
@@ -354,151 +431,115 @@ function PendingBadge({ pct }: { pct: number | null }) {
   );
 }
 
-function SummaryTable({
-  title, rows, expandedKey, onToggleExpand, renderExpanded,
+function DrillDownTable({
+  rows, branchRooted, anyOpen, onExpandAll, onCollapseAll, onToggle,
 }: {
-  title: string;
-  rows: SummaryRow[];
-  expandedKey?: string | null;
-  onToggleExpand?: (key: string) => void;
-  renderExpanded?: (key: string) => ReactNode;
+  rows: DrillRow[];
+  branchRooted: boolean;
+  anyOpen: boolean;
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
+  onToggle: (key: string, depth: 0 | 1 | 2) => void;
 }) {
-  const expandable = !!onToggleExpand;
   return (
     <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
-      <div className="border-b border-[#F1F5F9] px-4 py-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">{title}</h3>
+      <div className="flex items-center justify-between gap-3 border-b border-[#F1F5F9] px-4 py-2.5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
+          {branchRooted ? 'By Branch → Source → Assignee' : 'By Source → Assignee'}
+        </h3>
+        {rows.length > 0 && (
+          <div className="flex shrink-0 gap-1.5">
+            <button
+              type="button"
+              onClick={onExpandAll}
+              className="rounded-md border border-[#E2E8F0] px-2 py-1 text-[11px] font-semibold text-[#475569] hover:border-[#2a78d6] hover:text-[#2a78d6]"
+            >
+              Expand all
+            </button>
+            <button
+              type="button"
+              onClick={onCollapseAll}
+              disabled={!anyOpen}
+              className="rounded-md border border-[#E2E8F0] px-2 py-1 text-[11px] font-semibold text-[#475569] hover:border-[#2a78d6] hover:text-[#2a78d6] disabled:cursor-default disabled:opacity-40 disabled:hover:border-[#E2E8F0] disabled:hover:text-[#475569]"
+            >
+              Collapse all
+            </button>
+          </div>
+        )}
       </div>
       {!rows.length ? (
         <p className="px-4 py-6 text-center text-xs text-[#94A3B8]">No data yet.</p>
       ) : (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-[#F8FAFC] text-left text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
-            <tr>
-              <th className="px-4 py-2">Name</th>
-              <th className="px-3 py-2 text-right">Total</th>
-              <th className="px-3 py-2 text-right">New</th>
-              <th className="px-3 py-2 text-right">Unassigned</th>
-              <th className="px-3 py-2 text-right">Overdue</th>
-              <th className="px-3 py-2 text-right">Converted</th>
-              <th className="px-3 py-2 text-right">Unqualified</th>
-              <th className="px-3 py-2 text-right">Pending Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#F1F5F9]">
-            {rows.map((r) => {
-              const isOpen = expandable && expandedKey === r.key;
-              return (
-                <Fragment key={r.key}>
-                  <tr
-                    className={`text-[#0F172A] ${expandable ? 'cursor-pointer hover:bg-[#F8FAFC]' : ''}`}
-                    onClick={expandable ? () => onToggleExpand!(r.key) : undefined}
-                  >
-                    <td className="px-4 py-2 font-medium">
-                      <span className="flex items-center gap-1.5">
-                        {expandable && (
-                          <svg
-                            className={`h-3 w-3 shrink-0 text-[#94A3B8] transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                            viewBox="0 0 20 20" fill="currentColor"
-                          >
-                            <path fillRule="evenodd" d="M7.21 5.23a.75.75 0 011.06-.02l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.04-1.08L11.17 10 7.23 6.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
-                          </svg>
-                        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[#F8FAFC] text-left text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+              <tr>
+                <th className="px-4 py-2">Name</th>
+                <th className="px-3 py-2 text-right">Total</th>
+                <th className="px-3 py-2 text-right">New</th>
+                <th className="px-3 py-2 text-right">Unassigned</th>
+                <th className="px-3 py-2 text-right">Overdue</th>
+                <th className="px-3 py-2 text-right">Converted</th>
+                <th className="px-3 py-2 text-right">Unqualified</th>
+                <th className="px-3 py-2 text-right">Pending Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#F1F5F9]">
+              {rows.map((r) => {
+                if (r.placeholder) {
+                  return (
+                    <tr key={r.key} className={DEPTH_BG[r.depth]}>
+                      <td colSpan={8} className={`${DEPTH_PAD[r.depth]} py-2 text-xs italic text-[#94A3B8]`}>
                         {r.label}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right font-semibold tabular-nums">{r.total}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.neew}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.unassigned}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.overdue}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.converted}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{r.unqualified}</td>
-                    <td className="px-3 py-2 text-right"><PendingBadge pct={r.pendingPct} /></td>
-                  </tr>
-                  {isOpen && renderExpanded && (
-                    <tr key={`${r.key}-expanded`}>
-                      <td colSpan={8} className="bg-[#F8FAFC] p-0">
-                        {renderExpanded(r.key)}
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                  );
+                }
+                const m = r.metrics!;
+                return (
+                  <tr
+                    key={r.key}
+                    className={`text-[#0F172A] ${DEPTH_BG[r.depth]} ${r.expandable ? 'cursor-pointer hover:brightness-[0.97]' : ''}`}
+                    onClick={r.expandable ? () => onToggle(r.key, r.depth) : undefined}
+                    {...(r.expandable
+                      ? { role: 'button', tabIndex: 0, 'aria-expanded': !!r.isOpen }
+                      : {})}
+                    onKeyDown={r.expandable
+                      ? (e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return;
+                        e.preventDefault();
+                        onToggle(r.key, r.depth);
+                      }
+                      : undefined}
+                  >
+                    <td className={`${DEPTH_PAD[r.depth]} py-2 pr-4 ${r.depth === 0 ? 'font-semibold' : 'font-medium'}`}>
+                      <span className="flex items-center gap-1.5">
+                        <svg
+                          className={`h-3 w-3 shrink-0 text-[#94A3B8] transition-transform ${r.isOpen ? 'rotate-90' : ''} ${r.expandable ? '' : 'invisible'}`}
+                          viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"
+                        >
+                          <path fillRule="evenodd" d="M7.21 5.23a.75.75 0 011.06-.02l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.04-1.08L11.17 10 7.23 6.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
+                        </svg>
+                        <span className={r.muted ? 'italic text-[#94A3B8]' : ''}>{r.label}</span>
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums">{m.total_leads}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.new_count}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">
+                      {r.hideUnassigned ? <span className="text-[#CBD5E1]">—</span> : m.unassigned_count}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.followup_overdue}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.converted_count}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.unqualified_count}</td>
+                    <td className="px-3 py-2 text-right"><PendingBadge pct={pendingActionPct(m)} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
-  );
-}
-
-function BranchUsersTable({ users }: { users: UserReportRow[] }) {
-  if (!users.length) {
-    return <p className="px-4 py-3 text-xs text-[#94A3B8]">No leads assigned in this branch.</p>;
-  }
-  return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">
-        <tr>
-          <th className="px-4 py-1.5 pl-9">Assignee</th>
-          <th className="px-3 py-1.5 text-right">Total</th>
-          <th className="px-3 py-1.5 text-right">New</th>
-          <th className="px-3 py-1.5 text-right">Overdue</th>
-          <th className="px-3 py-1.5 text-right">Converted</th>
-          <th className="px-3 py-1.5 text-right">Pending Action</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-[#E2E8F0]">
-        {users.map((u) => (
-          <tr key={u.assigned_user_id ?? 'unassigned'} className="text-[#0F172A]">
-            <td className="px-4 py-1.5 pl-9 font-medium">
-              {u.is_unassigned
-                ? <span className="italic text-[#94A3B8]">Unassigned</span>
-                : u.assignee}
-            </td>
-            <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{u.total_leads}</td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.new_count}</td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.followup_overdue}</td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{u.converted_count}</td>
-            <td className="px-3 py-1.5 text-right"><PendingBadge pct={pendingActionPct(u)} /></td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function SourceBranchesTable({ branches }: { branches: SourceBranchRow[] }) {
-  if (!branches.length) {
-    return <p className="px-4 py-3 text-xs text-[#94A3B8]">No branch data for this source.</p>;
-  }
-  return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">
-        <tr>
-          <th className="px-4 py-1.5 pl-9">Branch</th>
-          <th className="px-3 py-1.5 text-right">Total</th>
-          <th className="px-3 py-1.5 text-right">New</th>
-          <th className="px-3 py-1.5 text-right">Overdue</th>
-          <th className="px-3 py-1.5 text-right">Converted</th>
-          <th className="px-3 py-1.5 text-right">Pending Action</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-[#E2E8F0]">
-        {branches.map((b) => (
-          <tr key={b.org_id ?? b.org_name} className="text-[#0F172A]">
-            <td className="px-4 py-1.5 pl-9 font-medium">{b.org_name}</td>
-            <td className="px-3 py-1.5 text-right font-semibold tabular-nums">{b.total_leads}</td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{b.new_count}</td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{b.followup_overdue}</td>
-            <td className="px-3 py-1.5 text-right tabular-nums text-[#64748B]">{b.converted_count}</td>
-            <td className="px-3 py-1.5 text-right"><PendingBadge pct={pendingActionPct(b)} /></td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }
 
