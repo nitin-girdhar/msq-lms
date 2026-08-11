@@ -13,6 +13,7 @@ import {
   UNASSIGNED_ASSIGNEE,
 } from '@lms/authz';
 import { canSeeOrgFilter } from '@platform/authz';
+import { can, CAPABILITY } from '@platform/rbac';
 import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../types/leads';
 import { useLeadsHistory } from '../../hooks/useLeadsHistory';
 import type { LeadsHistoryFilters } from '../../hooks/useLeadsHistory';
@@ -89,6 +90,11 @@ export default function LeadsHistoryShell({ actor }: Props) {
   const showUnassignedOption = canViewUnassignedLeads(rules, actor.rank);
   const showOrgFilter = canSeeOrgFilter(actor.role);
   const scope = getLeadsHistoryAssignedToScope(rules, actor.rank, actor.role);
+
+  // The dialog's own capability, not the Leads page's — a role can hold this
+  // list without holding lms.leads. Hiding the button when it is absent keeps
+  // the control and the call behind it from disagreeing.
+  const mayOpenHistory = can(actor, CAPABILITY.LMS_HISTORY_DETAIL_VIEW);
 
   const [historyLead, setHistoryLead] = useState<AssignmentView | null>(null);
   const gridRef = useRef<AgGridReact<AssignmentView>>(null);
@@ -348,7 +354,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
     {
       headerName: '', width: 80, minWidth: 80, maxWidth: 80, sortable: false, filter: false, resizable: false, pinned: 'right',
       cellRenderer: (p: ICellRendererParams<AssignmentView>) => {
-        if (!p.data) return null;
+        if (!p.data || !mayOpenHistory) return null;
         return (
           <ActionBtn title="History" onClick={() => setHistoryLead(p.data!)}>
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -357,7 +363,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
       },
       cellStyle: { display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
     },
-  ], [statusLabelMap]);
+  ], [statusLabelMap, mayOpenHistory]);
 
   const defaultColDef = useMemo((): ColDef => ({
     resizable: true,
@@ -495,9 +501,11 @@ export default function LeadsHistoryShell({ actor }: Props) {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <StageBadge stage={a.lead_stage_label ?? a.lead_stage} terminated={a.is_terminated} />
-                      <ActionBtn title="History" onClick={() => setHistoryLead(a)}>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </ActionBtn>
+                      {mayOpenHistory && (
+                        <ActionBtn title="History" onClick={() => setHistoryLead(a)}>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </ActionBtn>
+                      )}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#64748B]">

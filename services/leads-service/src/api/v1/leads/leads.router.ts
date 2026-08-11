@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { createLeadSchema, updateLeadSchema, createInteractionSchema, createFollowUpSchema, transferLeadSchema, sendLeadWhatsAppSchema } from '@lms/validation';
 import { authenticate } from '../../../middleware/auth.middleware.js';
-import { requireCapability } from '../../../middleware/require-capability.middleware.js';
+import { requireCapability, requireAnyCapability } from '../../../middleware/require-capability.middleware.js';
 import { CAPABILITY } from '@platform/rbac';
 import { requireModule } from '../../../middleware/require-module.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
@@ -26,14 +26,18 @@ export async function leadsRouter(app: FastifyInstance) {
 
   app.get('/follow-ups', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_FOLLOWUPS_VIEW)] }, ctrl.listFollowUps);
 
-  app.get('/leads/:id', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_VIEW)] }, ctrl.getById);
+  // The three reads behind the Lead History dialog. Reachable from the Leads
+  // page and from Leads History, which are separate nodes in the capability
+  // tree — so either page's read capability opens them, and denying one page
+  // no longer breaks the dialog on the other. Rows stay scoped by RLS.
+  app.get('/leads/:id', { preHandler: [...gate, requireAnyCapability([CAPABILITY.LMS_LEADS_VIEW, CAPABILITY.LMS_HISTORY_DETAIL_VIEW])] }, ctrl.getById);
   app.patch('/leads/:id', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_EDIT, 'Insufficient permissions to edit leads'), validate({ body: updateLeadSchema })] }, ctrl.update);
   app.delete('/leads/:id', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_DELETE, 'You do not have permission to delete leads')] }, ctrl.delete);
 
   app.post('/leads/:id/transfer', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_TRANSFER, 'You do not have permission to transfer leads'), validate({ body: transferLeadSchema })] }, ctrl.transfer);
 
-  app.get('/leads/:id/timeline', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_TIMELINE_VIEW)] }, ctrl.getTimeline);
-  app.get('/leads/:id/form-data', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_VIEW)] }, ctrl.getFormData);
+  app.get('/leads/:id/timeline', { preHandler: [...gate, requireAnyCapability([CAPABILITY.LMS_LEADS_TIMELINE_VIEW, CAPABILITY.LMS_HISTORY_DETAIL_VIEW])] }, ctrl.getTimeline);
+  app.get('/leads/:id/form-data', { preHandler: [...gate, requireAnyCapability([CAPABILITY.LMS_LEADS_VIEW, CAPABILITY.LMS_HISTORY_DETAIL_VIEW])] }, ctrl.getFormData);
   app.get('/leads/:id/interactions', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_VIEW)] }, ctrl.getInteractions);
   app.post('/leads/:id/interactions', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_INTERACTION_LOG, 'You do not have permission to log interactions'), validate({ body: createInteractionSchema })] }, ctrl.createInteraction);
   app.get('/leads/:id/assignment-history', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_TIMELINE_VIEW)] }, ctrl.getAssignmentHistory);

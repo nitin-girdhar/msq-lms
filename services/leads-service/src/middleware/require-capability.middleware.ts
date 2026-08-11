@@ -21,3 +21,23 @@ export function requireCapability(key: CapabilityKey, message?: string) {
     }
   };
 }
+
+// Same gate, satisfied by ANY ONE of several keys.
+//
+// For a read that legitimately hangs off two different pages. The Lead History
+// dialog is the case this exists for: it is opened from a history row, but the
+// three reads behind it (lead, timeline, form submission) sit under the LEADS
+// page in the capability tree. A role that holds Leads History but not Leads —
+// org_admin and tenant_admin, since the 2026-08-07 'lms.leads' deny — then hits
+// a 403 on a screen it is entitled to. Accepting lms.history.detail.view as an
+// alternative lets the history page carry its own permission.
+//
+// Still fails closed: with no key granted, nobody gets through. And it widens
+// only the GATE — which rows come back is RLS's answer, unchanged by this.
+export function requireAnyCapability(keys: readonly CapabilityKey[], message?: string) {
+  return async function anyCapabilityGate(request: FastifyRequest): Promise<void> {
+    if (!keys.some((key) => can(request.auth, key))) {
+      throw new ForbiddenError(message ?? 'You do not have permission to do that');
+    }
+  };
+}
