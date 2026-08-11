@@ -75,19 +75,58 @@ function scopeSourceReport(
   };
 }
 
+/** First day of the calendar month `date` (YYYY-MM-DD) falls in. */
+function monthStart(date: string): string {
+  return `${date.slice(0, 7)}-01`;
+}
+
 export class PublicReportController {
   getReport = async (request: FastifyRequest, reply: FastifyReply) => {
     const { tenantId, orgId } = resolveScope(request);
 
-    const [reportFull, sourceReportFull] = await Promise.all([
-      buildTenantReport(tenantId),
-      analyticsRepo.getTenantSourceReport(tenantId),
-    ]);
-    const report: TenantReport = scopeReport(reportFull, orgId);
+    const {
+      compare: compareRaw,
+      start: startRaw,
+      end: endRaw,
+      key,
+    } = request.query as { compare?: string; start?: string; end?: string; key?: string };
+
+    // The two filters are mutually exclusive; a valid ?compare= wins and
+    // suppresses the range entirely. The form enforces this client-side with a
+    // disabled fieldset, but a hand-built URL can still carry both.
+    const compareDate = compareRaw && DATE_RE.test(compareRaw) ? compareRaw : null;
+
+    // Malformed dates fall back to the default window rather than erroring — a
+    // shared link with a truncated query string should still render.
+    const startParam = !compareDate && startRaw && DATE_RE.test(startRaw) ? startRaw : null;
+    const endParam = !compareDate && endRaw && DATE_RE.test(endRaw) ? endRaw : null;
+    if (startParam && endParam && startParam > endParam) {
+      throw new BadRequestError('start must be on or before end');
+    }
+
+    // Sequential, not Promise.all: the default window is derived from the
+    // report's own tenant-local date (a MAX over the branches' local dates), so
+    // the range has to be known before the source query runs.
+    const reportFull = await buildTenantReport(tenantId);
+    const range = compareDate
+      ? undefined
+      : {
+          start: startParam ?? monthStart(reportFull.report_date),
+          end: endParam ?? reportFull.report_date,
+        };
+
+    const sourceReportFull = await analyticsRepo.getTenantSourceReport(tenantId, range);
+
+    // In range mode the view-derived branch rows are all-time and would
+    // contradict the filtered tree below them, so they are replaced by rows
+    // summed out of the filtered source rows.
+    const rangedFull: TenantReport = range
+      ? { ...reportFull, branches: analyticsRepo.rollupBranchesFromSources(sourceReportFull.branches) }
+      : reportFull;
+
+    const report: TenantReport = scopeReport(rangedFull, orgId);
     const sourceReport = scopeSourceReport(sourceReportFull, orgId);
 
-    const { compare: compareRaw, key } = request.query as { compare?: string; key?: string };
-    const compareDate = compareRaw && DATE_RE.test(compareRaw) ? compareRaw : null;
     const [compareSnapshotFull, sourceCompareSnapshotFull] = compareDate
       ? await Promise.all([
           analyticsRepo.getSnapshotForDate(tenantId, compareDate),
@@ -97,12 +136,14 @@ export class PublicReportController {
     const compareSnapshot = compareSnapshotFull ? scopeReport(compareSnapshotFull, orgId) : null;
     const sourceCompareSnapshot = sourceCompareSnapshotFull ? scopeSourceReport(sourceCompareSnapshotFull, orgId) : null;
 
-    // Carried forward as a hidden field in the compare-date form — a GET form
-    // can't set headers, so the key has to stay in the URL/form either way.
+    // Carried forward as hidden fields in the filter form — a GET form can't set
+    // headers, so the key has to stay in the URL/form either way.
     const html = renderPublicReportHtml(report, {
       compareDate,
       compareSnapshot,
       key: key ?? '',
+      branchId: (request.query as { branch_id?: string }).branch_id ?? '',
+      range: range ?? null,
       sourceBranches: sourceReport.branches,
       sourceUsers: sourceReport.users,
       sourceCompareSnapshot,

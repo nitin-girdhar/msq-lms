@@ -212,23 +212,46 @@ export const locations = {
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
+/**
+ * Optional lead-creation window. The server applies it only when BOTH ends are
+ * present, so passing one alone is the same as passing neither.
+ */
+export interface AnalyticsRange {
+  start?: string;
+  end?: string;
+}
+
+function rangeQs(range: AnalyticsRange = {}): string {
+  const qs = new URLSearchParams(
+    Object.fromEntries(
+      Object.entries(range)
+        .filter(([, v]) => v !== undefined && v !== '')
+        .map(([k, v]) => [k, String(v)]),
+    ),
+  ).toString();
+  return qs ? `?${qs}` : '';
+}
+
 export const analytics = {
   dashboard: () => request<{ success: true; data: unknown }>('/analytics/dashboard'),
   campaigns: () => request<{ success: true; data: unknown[] }>('/analytics/dashboard/campaigns'),
   performance: () => request<{ success: true; data: unknown }>('/analytics/performance'),
-  pipeline: () => request<{ success: true; data: unknown[] }>('/analytics/pipeline'),
-  branchReport: () =>
-    request<{ success: true; data: import('../../types/analytics').BranchReportRow[] }>('/analytics/report/branches'),
-  userReport: () =>
-    request<{ success: true; data: import('../../types/analytics').UserReportRow[] }>('/analytics/report/users'),
-  sourceReport: () =>
+  pipeline: (range?: AnalyticsRange) =>
+    request<{ success: true; data: unknown[] }>(`/analytics/pipeline${rangeQs(range)}`),
+  branchReport: (range?: AnalyticsRange) =>
+    request<{ success: true; data: import('../../types/analytics').BranchReportRow[] }>(
+      `/analytics/report/branches${rangeQs(range)}`),
+  userReport: (range?: AnalyticsRange) =>
+    request<{ success: true; data: import('../../types/analytics').UserReportRow[] }>(
+      `/analytics/report/users${rangeQs(range)}`),
+  sourceReport: (range?: AnalyticsRange) =>
     request<{
       success: true;
       data: {
         branches: import('../../types/analytics').SourceBranchRow[];
         users: import('../../types/analytics').SourceUserRow[];
       };
-    }>('/analytics/report/sources'),
+    }>(`/analytics/report/sources${rangeQs(range)}`),
 };
 
 // ── Activities ────────────────────────────────────────────────────────────────

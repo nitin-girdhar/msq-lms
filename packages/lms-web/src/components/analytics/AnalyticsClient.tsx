@@ -61,23 +61,45 @@ function pendingActionBand(pct: number | null) {
   return PENDING_ACTION_BANDS.find((b) => pct < b.upperBound) ?? PENDING_ACTION_BANDS[PENDING_ACTION_BANDS.length - 1];
 }
 
+// Built from local date parts, NOT toISOString() — that serialises in UTC, so
+// for an IST user between midnight and 05:30 local it reports yesterday, and
+// "today" on the dashboard would silently disagree with the leads list.
+function localDate(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+function today(): string {
+  return localDate(new Date());
+}
+function monthStart(): string {
+  return `${today().slice(0, 7)}-01`;
+}
+
 export default function AnalyticsClient(_props: Props) {
-  const { data: pipelineData, isLoading: pipelineLoading } = useSWR('analytics/pipeline', () => analytics.pipeline(), {
-    revalidateOnFocus: false,
-  });
-  const { data: branchData, isLoading: branchLoading } = useSWR('analytics/report/branches', () => analytics.branchReport(), {
-    revalidateOnFocus: false,
-  });
-  const { data: sourceData, isLoading: sourceLoading } = useSWR('analytics/report/sources', () => analytics.sourceReport(), {
-    revalidateOnFocus: false,
-  });
+  // Lead-creation window every section on this page is filtered by. Defaults to
+  // the current calendar month to date.
+  const [start, setStart] = useState(monthStart);
+  const [end, setEnd] = useState(today);
+
+  // The range is part of every SWR key: without it a filter change would be
+  // served the previous window's cached response.
+  const range = { start, end };
+  const { data: pipelineData, isLoading: pipelineLoading } = useSWR(
+    ['analytics/pipeline', start, end], () => analytics.pipeline(range), { revalidateOnFocus: false },
+  );
+  const { data: branchData, isLoading: branchLoading } = useSWR(
+    ['analytics/report/branches', start, end], () => analytics.branchReport(range), { revalidateOnFocus: false },
+  );
+  const { data: sourceData, isLoading: sourceLoading } = useSWR(
+    ['analytics/report/sources', start, end], () => analytics.sourceReport(range), { revalidateOnFocus: false },
+  );
   // `/report/users` is no longer fetched: its (branch, assignee) grain is a
   // strict subset of `/report/sources`.users, which carries the same metrics at
   // the finer (branch, assignee, source) grain the drill-down needs.
 
   const [openBranches, setOpenBranches] = useState<ReadonlySet<string>>(() => new Set());
   const [openSources, setOpenSources] = useState<ReadonlySet<string>>(() => new Set());
-  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const isLoading = pipelineLoading || branchLoading || sourceLoading;
   const pipeline = (pipelineData?.data ?? []) as PipelineStage[];
@@ -85,9 +107,13 @@ export default function AnalyticsClient(_props: Props) {
   const sourceBranches = (sourceData?.data?.branches ?? []) as SourceBranchRow[];
   const sourceUsers = (sourceData?.data?.users ?? []) as SourceUserRow[];
 
-  const isTenantWide = branches.length > 1 || branches.some((b) => b.is_total);
   const totalRow = branches.find((b) => b.is_total) ?? branches[0] ?? null;
   const branchRows = branches.filter((b) => !b.is_total);
+  // Counted from the real branch rows, never from "an is_total row exists": the
+  // ranged path derives its rollup in TS (rollupBranchesFromSources) and so
+  // emits one even for a single-branch org admin, which the old test read as a
+  // tenant-wide actor.
+  const isTenantWide = branchRows.length > 1;
   const sourceRows = sourceBranches.filter((s) => !s.is_total);
 
   // Level 2 of the drill-down: a branch's sources. sourceRows is already one row
@@ -129,8 +155,10 @@ export default function AnalyticsClient(_props: Props) {
   }, [sourceUsers]);
 
   // Tenant actors drill Branch ▸ Source ▸ Assignee; a single-branch actor has no
-  // branch to pick, so the same tree starts one level in, at Source.
-  const branchRooted = isTenantWide && branchRows.length > 1;
+  // branch to pick, so the same tree starts one level in, at Source. Same test
+  // as isTenantWide today, kept as its own name because it answers a different
+  // question — how the tree is rooted, not who the viewer is.
+  const branchRooted = isTenantWide;
 
   // Only the rows currently visible, flattened to depth-tagged records. Walking
   // once per toggle (rather than per row) is what keeps "Expand all" cheap on a
@@ -232,7 +260,28 @@ export default function AnalyticsClient(_props: Props) {
         <h1 className="text-2xl font-bold text-[#0F172A]">Analytics</h1>
         <p className="mt-1 text-xs text-[#64748B]">
           Lead performance {isTenantWide ? 'across your branches' : 'for your organisation'} — by source, by branch, and by status.
+          {' '}Covers leads <span className="font-medium text-[#475569]">created</span> in the selected window; status
+          counts are as of now.
         </p>
+      </div>
+
+      {/* ── Filters ───────────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          <FilterField label="From">
+            <input type="date" max={end} value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
+          </FilterField>
+          <FilterField label="To">
+            <input type="date" min={start} max={today()} value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
+          </FilterField>
+          <button
+            type="button"
+            onClick={() => { setStart(monthStart()); setEnd(today()); }}
+            className="rounded-lg border border-[#E2E8F0] px-2.5 py-1.5 text-xs font-semibold text-[#475569] hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
+          >
+            This month
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -242,11 +291,16 @@ export default function AnalyticsClient(_props: Props) {
       ) : (
         <>
           {/* ── KPI strip ─────────────────────────────────────────────── */}
+          {/* Every card is a plain count over the selected window. "New This
+              Month" / "New Today" were dropped when the date filter landed:
+              under the default month-to-date range the former just restates
+              Total Leads, and under any other range both describe a period the
+              user did not ask for. */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
             <StatCard label="Total Leads" value={totalRow.total_leads} />
-            <StatCard label="New This Month" value={totalRow.new_leads_this_month} accent={STATUS.good} />
-            <StatCard label="New Today" value={totalRow.new_leads_today} accent={STATUS.good} />
+            <StatCard label="New" value={totalRow.new_count} accent={SERIES[0]} />
             <StatCard label="Unassigned" value={totalRow.unassigned_count} accent={STATUS.warning} />
+            <StatCard label="Follow-up Scheduled" value={totalRow.followup_scheduled} accent={SERIES[6]} />
             <StatCard label="Follow-up Overdue" value={totalRow.followup_overdue} accent={STATUS.critical} />
             <StatCard label="Converted" value={totalRow.converted_count} accent={STATUS.good} />
             <StatCard
@@ -254,6 +308,20 @@ export default function AnalyticsClient(_props: Props) {
               value={totalRow.total_leads ? `${((totalRow.converted_count / totalRow.total_leads) * 100).toFixed(1)}%` : '—'}
             />
           </div>
+
+          {/* ── Detailed summary ──────────────────────────────────────── */}
+          {/* Always rendered, no disclosure: this is the table people work
+              from. Branch rows show expanded by default and Source ▸ Assignee
+              stay collapsed, which is just what an empty openBranches gives. */}
+          <DrillDownTable
+            rows={drillRows}
+            branchRooted={branchRooted}
+            totalRow={branchRooted ? totalRow : null}
+            anyOpen={anyOpen}
+            onExpandAll={expandAll}
+            onCollapseAll={collapseAll}
+            onToggle={(key, depth) => (branchRooted && depth === 0 ? toggleBranch(key) : toggleSource(key))}
+          />
 
           {/* ── Charts ────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -265,43 +333,13 @@ export default function AnalyticsClient(_props: Props) {
             </ChartCard>
           </div>
 
-          {isTenantWide && branchRows.length > 1 && (
+          <PipelineTable pipeline={pipeline} />
+
+          {isTenantWide && (
             <ChartCard title="By Branch" subtitle="Total leads per branch">
               <BranchBarChart rows={branchRows} />
             </ChartCard>
           )}
-
-          {/* ── Detailed summary grid ────────────────────────────────── */}
-          <div>
-            <button
-              type="button"
-              onClick={() => setSummaryOpen((o) => !o)}
-              className="mb-3 flex w-full items-center gap-1.5 text-left text-sm font-semibold text-[#0F172A]"
-            >
-              <svg
-                className={`h-3.5 w-3.5 shrink-0 text-[#94A3B8] transition-transform ${summaryOpen ? 'rotate-90' : ''}`}
-                viewBox="0 0 20 20" fill="currentColor"
-              >
-                <path fillRule="evenodd" d="M7.21 5.23a.75.75 0 011.06-.02l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.04-1.08L11.17 10 7.23 6.29a.75.75 0 01-.02-1.06z" clipRule="evenodd" />
-              </svg>
-              Detailed Summary
-            </button>
-            {summaryOpen && (
-              <div className="grid grid-cols-1 gap-4">
-                <DrillDownTable
-                  rows={drillRows}
-                  branchRooted={branchRooted}
-                  anyOpen={anyOpen}
-                  onExpandAll={expandAll}
-                  onCollapseAll={collapseAll}
-                  onToggle={(key, depth) => (branchRooted && depth === 0 ? toggleBranch(key) : toggleSource(key))}
-                />
-                {!branchRooted && <StatusSummaryTable row={totalRow} />}
-              </div>
-            )}
-          </div>
-
-          <PipelineTable pipeline={pipeline} />
         </>
       )}
     </div>
@@ -432,10 +470,14 @@ function PendingBadge({ pct }: { pct: number | null }) {
 }
 
 function DrillDownTable({
-  rows, branchRooted, anyOpen, onExpandAll, onCollapseAll, onToggle,
+  rows, branchRooted, totalRow, anyOpen, onExpandAll, onCollapseAll, onToggle,
 }: {
   rows: DrillRow[];
   branchRooted: boolean;
+  /** The ALL BRANCHES rollup, pinned below the tree. Null when there is no
+   *  branch level to total (a single-branch actor), where it would just restate
+   *  the one row above it. */
+  totalRow: BranchReportRow | null;
   anyOpen: boolean;
   onExpandAll: () => void;
   onCollapseAll: () => void;
@@ -478,6 +520,7 @@ function DrillDownTable({
                 <th className="px-3 py-2 text-right">Total</th>
                 <th className="px-3 py-2 text-right">New</th>
                 <th className="px-3 py-2 text-right">Unassigned</th>
+                <th className="px-3 py-2 text-right">FollowUp Scheduled</th>
                 <th className="px-3 py-2 text-right">Overdue</th>
                 <th className="px-3 py-2 text-right">Converted</th>
                 <th className="px-3 py-2 text-right">Unqualified</th>
@@ -489,7 +532,7 @@ function DrillDownTable({
                 if (r.placeholder) {
                   return (
                     <tr key={r.key} className={DEPTH_BG[r.depth]}>
-                      <td colSpan={8} className={`${DEPTH_PAD[r.depth]} py-2 text-xs italic text-[#94A3B8]`}>
+                      <td colSpan={9} className={`${DEPTH_PAD[r.depth]} py-2 text-xs italic text-[#94A3B8]`}>
                         {r.label}
                       </td>
                     </tr>
@@ -528,6 +571,9 @@ function DrillDownTable({
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">
                       {r.hideUnassigned ? <span className="text-[#CBD5E1]">—</span> : m.unassigned_count}
                     </td>
+                    {/* No hideUnassigned equivalent: unlike unassigned_count,
+                        followup_scheduled stays a real measurement per assignee. */}
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.followup_scheduled}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.followup_overdue}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.converted_count}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.unqualified_count}</td>
@@ -536,6 +582,24 @@ function DrillDownTable({
                 );
               })}
             </tbody>
+            {/* Outside the tbody map, so expand/collapse never moves or hides
+                it — the rollup is a property of the whole window, not of the
+                tree's current state. */}
+            {totalRow && (
+              <tfoot>
+                <tr className="border-t-2 border-[#CBD5E1] bg-white font-semibold text-[#0F172A]">
+                  <td className="px-4 py-2.5">{totalRow.org_name}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.total_leads}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.new_count}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.unassigned_count}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.followup_scheduled}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.followup_overdue}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.converted_count}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.unqualified_count}</td>
+                  <td className="px-3 py-2.5 text-right"><PendingBadge pct={pendingActionPct(totalRow)} /></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}
@@ -543,33 +607,23 @@ function DrillDownTable({
   );
 }
 
-function StatusSummaryTable({ row }: { row: BranchReportRow }) {
-  const items: Array<{ label: string; value: number; accent: string }> = [
-    { label: 'Total Leads', value: row.total_leads, accent: INK.primary },
-    { label: 'New', value: row.new_count, accent: SERIES[0] },
-    { label: 'New Today', value: row.new_leads_today, accent: SERIES[0] },
-    { label: 'Unassigned', value: row.unassigned_count, accent: STATUS.warning },
-    { label: 'Follow-up Scheduled', value: row.followup_scheduled, accent: SERIES[6] },
-    { label: 'Follow-up Overdue', value: row.followup_overdue, accent: STATUS.serious },
-    { label: 'Converted', value: row.converted_count, accent: STATUS.good },
-    { label: 'Unqualified', value: row.unqualified_count, accent: STATUS.critical },
-  ];
+// StatusSummaryTable used to sit beside the drill-down for single-branch
+// actors. It was the same numbers as the Status Breakdown chart, which now
+// renders directly below the table for every actor, so it was dropped rather
+// than shown twice.
+
+// Mirrors the filter styling in leads-history/LeadsHistoryShell.tsx, where both
+// are module-local. Restated rather than exported from there: this file already
+// keeps its own copy of PENDING_ACTION_BANDS for the same reason, and a shared
+// UI kit for two call sites isn't worth the coupling yet.
+const inputCls =
+  'rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20';
+
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
-      <div className="border-b border-[#F1F5F9] px-4 py-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Status Breakdown</h3>
-      </div>
-      <div className="divide-y divide-[#F1F5F9]">
-        {items.map((it) => (
-          <div key={it.label} className="flex items-center justify-between px-4 py-2">
-            <span className="flex items-center gap-2 text-sm text-[#0F172A]">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: it.accent }} />
-              {it.label}
-            </span>
-            <span className="text-sm font-semibold tabular-nums text-[#0F172A]">{it.value}</span>
-          </div>
-        ))}
-      </div>
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">{label}</span>
+      {children}
     </div>
   );
 }

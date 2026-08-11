@@ -7,6 +7,32 @@ import type { BranchReportRow, TenantReport, UserReportRow } from '../../../lib/
 import { toSourceBranchRow, toSourceUserRow } from '../../../lib/reports/source-report.types.js';
 import type { SourceBranchRow, SourceUserRow } from '../../../lib/reports/source-report.types.js';
 
+/**
+ * An inclusive lead-CREATION-date window, both ends `YYYY-MM-DD`, interpreted in
+ * each branch's own timezone (see rangeFilter). Used by the public report page's
+ * start/end filter; every other caller leaves it undefined and keeps the
+ * all-time behaviour.
+ */
+export interface DateRange {
+  start: string;
+  end: string;
+}
+
+/**
+ * The created_at bound shared by sourceBranchQuery and sourceUserQuery, or an
+ * empty fragment when no range is active.
+ *
+ * `AT TIME ZONE o.timezone` is load-bearing, not cosmetic: ::date on a
+ * timestamptz truncates in UTC, which for an Asia/Kolkata branch (UTC+5:30)
+ * files everything created before 05:30 local under the previous day — the same
+ * reasoning spelled out above lms.vw_lead_report_branch in db_scripts/05_views.sql.
+ */
+function rangeFilter(range?: DateRange) {
+  if (!range) return sql``;
+  return sql`AND (ml.created_at AT TIME ZONE o.timezone)::date
+               BETWEEN ${range.start}::date AND ${range.end}::date`;
+}
+
 async function resolveTenantId(orgId: string): Promise<string> {
   return withServiceTx(async (tx) => {
     const [row] = await tx
@@ -65,13 +91,27 @@ export async function getTenantCampaignSummary(orgId: string, userId: string) {
   });
 }
 
-export async function getPipelineByStage(orgId: string, userId: string) {
+/**
+ * `range` narrows to leads created in the window. It belongs in the LEFT JOIN's
+ * ON clause, NOT in a WHERE: a WHERE would discard the NULL-extended rows the
+ * outer join produces and silently drop every stage with no leads in the
+ * window, defeating the zero-fill this query exists to provide.
+ *
+ * The timezone comes from a scalar subquery because there is no organizations
+ * alias to hang `AT TIME ZONE` off here — same branch-local semantics as
+ * rangeFilter, reached a different way.
+ */
+export async function getPipelineByStage(orgId: string, userId: string, range?: DateRange) {
   return withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => {
     return (await tx.execute(sql`
       SELECT ls.name AS stage, ls.label AS stage_label, COUNT(ml.id)::INT AS count
       FROM lms.lead_stage ls
       LEFT JOIN lms.marketing_leads ml
         ON ml.stage_id = ls.id AND ml.org_id = ${orgId}::uuid AND NOT ml.is_deleted
+        ${range
+          ? sql`AND (ml.created_at AT TIME ZONE (SELECT timezone FROM entity.organizations WHERE id = ${orgId}::uuid))::date
+                  BETWEEN ${range.start}::date AND ${range.end}::date`
+          : sql``}
       GROUP BY ls.id, ls.name, ls.label
       ORDER BY ls.sort_order
     `)) as Array<Record<string, unknown>>;
@@ -442,7 +482,7 @@ export async function getSourceSnapshotForDate(
  * so a stale source_id doesn't drop the lead's counters row from the whole
  * report the way an INNER JOIN against only *active* sources previously did.
  */
-function sourceBranchQuery(tenantId: string, orgId?: string) {
+function sourceBranchQuery(tenantId: string, orgId?: string, range?: DateRange) {
   return sql`
     WITH counters AS (
       SELECT
@@ -452,6 +492,8 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
         COUNT(*) FILTER (WHERE ls.name = 'new')                          AS new_count,
         COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
                              = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
+        COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
+                             = date_trunc('month', NOW()          AT TIME ZONE o.timezone)) AS new_leads_this_month,
         COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)              AS unassigned_count,
         COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
                            AND ml.scheduled_at >= NOW())                 AS followup_scheduled,
@@ -464,6 +506,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
       WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
         ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
+        ${rangeFilter(range)}
       GROUP BY ml.org_id, ml.source_id
     )
     SELECT
@@ -474,6 +517,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       c.total_leads::INT        AS total_leads,
       c.new_count::INT          AS new_count,
       c.new_leads_today::INT    AS new_leads_today,
+      c.new_leads_this_month::INT AS new_leads_this_month,
       c.unassigned_count::INT   AS unassigned_count,
       c.followup_scheduled::INT AS followup_scheduled,
       c.followup_overdue::INT   AS followup_overdue,
@@ -496,6 +540,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
       SUM(c.total_leads)::INT        AS total_leads,
       SUM(c.new_count)::INT          AS new_count,
       SUM(c.new_leads_today)::INT    AS new_leads_today,
+      SUM(c.new_leads_this_month)::INT AS new_leads_this_month,
       SUM(c.unassigned_count)::INT   AS unassigned_count,
       SUM(c.followup_scheduled)::INT AS followup_scheduled,
       SUM(c.followup_overdue)::INT   AS followup_overdue,
@@ -521,7 +566,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string) {
  * (NULL for the Unassigned bucket) so the render can disambiguate two
  * distinct users who share a full_name.
  */
-function sourceUserQuery(tenantId: string, orgId?: string) {
+function sourceUserQuery(tenantId: string, orgId?: string, range?: DateRange) {
   return sql`
     SELECT
       o.tenant_id, ml.org_id, o.name AS org_name,
@@ -552,18 +597,27 @@ function sourceUserQuery(tenantId: string, orgId?: string) {
     LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
     WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
       ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
+      ${rangeFilter(range)}
     GROUP BY o.tenant_id, ml.org_id, o.name, o.timezone, ml.assigned_user_id, u.full_name,
              ur.label, ml.source_id, src.label
     ORDER BY org_name, is_unassigned DESC, assignee, source_label
   `;
 }
 
+/**
+ * `range` narrows every row to leads CREATED inside that window; the status
+ * counters (converted, followup_overdue, …) are still evaluated as of now over
+ * that cohort, which is the only reading the schema supports — there is no
+ * per-status history table. Left undefined by the snapshot cron and by
+ * getSourceReport, which must keep their all-time behaviour.
+ */
 export async function getTenantSourceReport(
   tenantId: string,
+  range?: DateRange,
 ): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] }> {
   return withServiceTx(async (tx) => {
-    const branches = (await tx.execute(sourceBranchQuery(tenantId))) as Array<Record<string, unknown>>;
-    const users = (await tx.execute(sourceUserQuery(tenantId))) as Array<Record<string, unknown>>;
+    const branches = (await tx.execute(sourceBranchQuery(tenantId, undefined, range))) as Array<Record<string, unknown>>;
+    const users = (await tx.execute(sourceUserQuery(tenantId, undefined, range))) as Array<Record<string, unknown>>;
     return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
   });
 }
@@ -579,19 +633,20 @@ export async function getSourceReport(
   orgId: string,
   userId: string,
   isTenantWide: boolean,
+  range?: DateRange,
 ): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] }> {
   if (isTenantWide) {
     const tenantId = await resolveTenantId(orgId);
     return withRoleTx({ role: 'tenant_admin', org_id: orgId, tenant_id: tenantId, user_id: userId }, async (tx) => {
-      const branches = (await tx.execute(sourceBranchQuery(tenantId))) as Array<Record<string, unknown>>;
-      const users = (await tx.execute(sourceUserQuery(tenantId))) as Array<Record<string, unknown>>;
+      const branches = (await tx.execute(sourceBranchQuery(tenantId, undefined, range))) as Array<Record<string, unknown>>;
+      const users = (await tx.execute(sourceUserQuery(tenantId, undefined, range))) as Array<Record<string, unknown>>;
       return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
     });
   }
   const tenantId = await resolveTenantId(orgId);
   return withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => {
-    const branches = (await tx.execute(sourceBranchQuery(tenantId, orgId))) as Array<Record<string, unknown>>;
-    const users = (await tx.execute(sourceUserQuery(tenantId, orgId))) as Array<Record<string, unknown>>;
+    const branches = (await tx.execute(sourceBranchQuery(tenantId, orgId, range))) as Array<Record<string, unknown>>;
+    const users = (await tx.execute(sourceUserQuery(tenantId, orgId, range))) as Array<Record<string, unknown>>;
     return { branches: branches.map(toSourceBranchRow), users: users.map(toSourceUserRow) };
   });
 }
@@ -634,6 +689,52 @@ function rollupSourceBranches(rows: SourceBranchRow[]): SourceBranchRow[] {
 }
 
 /**
+ * Plain per-branch rows (+ the "ALL BRANCHES" rollup) summed out of the
+ * source-segmented rows, instead of read from lms.vw_lead_report_branch.
+ *
+ * Exists because that view has no date bound and cannot take one without a
+ * schema change, while sourceBranchQuery can — so the public report's
+ * start/end filter derives its branch level from the filtered source rows.
+ * Summing across source_id recovers the plain total exactly; getSnapshotForDate
+ * already relies on that same identity when it reconstructs a historical day.
+ *
+ * Two deliberate differences from the view: org_timezone is null (a source row
+ * doesn't carry it, and the view's own rollup row is null there too), and there
+ * is NO zero-fill — a branch with no leads in the window produces no row at all
+ * rather than a row of zeroes. For a date-ranged report that is the wanted
+ * behaviour, but it is a visible difference from the unfiltered page.
+ */
+export function rollupBranchesFromSources(rows: SourceBranchRow[]): BranchReportRow[] {
+  const byOrg = new Map<string, SourceBranchRow[]>();
+  for (const r of rows) {
+    if (r.is_total || !r.org_id) continue;
+    const list = byOrg.get(r.org_id);
+    if (list) list.push(r);
+    else byOrg.set(r.org_id, [r]);
+  }
+
+  const raw = [...byOrg.entries()].map(([orgId, group]) => {
+    const first = group[0]!;
+    const row: Record<string, unknown> = {
+      tenant_id: first.tenant_id,
+      org_id: orgId,
+      org_name: first.org_name,
+      org_timezone: null,
+      report_date: group.reduce((max, r) => (r.report_date > max ? r.report_date : max), first.report_date),
+      is_total: false,
+    };
+    for (const key of BRANCH_METRIC_KEYS) {
+      row[key] = group.reduce((sum, r) => sum + Number(r[key] ?? 0), 0);
+    }
+    return row;
+  });
+
+  raw.sort((a, b) => String(a['org_name']).localeCompare(String(b['org_name'])));
+  if (!raw.length) return [];
+  return [...raw, sumBranchRows(raw)].map(toBranchRow);
+}
+
+/**
  * Combined source report across exactly the given org_ids (a Wingman's
  * assigned-branch cluster). Runs the existing org_admin-scoped query once per
  * org and merges in TS, adding a per-source "ALL BRANCHES" rollup row —
@@ -643,12 +744,13 @@ function rollupSourceBranches(rows: SourceBranchRow[]): SourceBranchRow[] {
 export async function getMultiOrgSourceReport(
   orgIds: string[],
   userId: string,
+  range?: DateRange,
 ): Promise<{ branches: SourceBranchRow[]; users: SourceUserRow[] }> {
   const tenantId = await resolveTenantId(orgIds[0]!);
   const perOrg = await Promise.all(orgIds.map((orgId) =>
     withRoleTx({ role: 'org_admin', org_id: orgId, tenant_id: '', user_id: userId }, async (tx) => ({
-      branches: (await tx.execute(sourceBranchQuery(tenantId, orgId))) as Array<Record<string, unknown>>,
-      users: (await tx.execute(sourceUserQuery(tenantId, orgId))) as Array<Record<string, unknown>>,
+      branches: (await tx.execute(sourceBranchQuery(tenantId, orgId, range))) as Array<Record<string, unknown>>,
+      users: (await tx.execute(sourceUserQuery(tenantId, orgId, range))) as Array<Record<string, unknown>>,
     })),
   ));
   const branchRows = perOrg.flatMap((p) => p.branches).map(toSourceBranchRow);

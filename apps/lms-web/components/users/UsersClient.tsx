@@ -66,6 +66,7 @@ export default function UsersClient({ users, actor, orgs }: Props) {
           actorRank={actor.rank}
           users={users}
           actor={actor}
+          orgs={orgs}
         />
       )}
 
@@ -78,6 +79,7 @@ export default function UsersClient({ users, actor, orgs }: Props) {
           actorRank={actor.rank}
           users={users}
           orgs={orgs}
+          actor={actor}
         />
       )}
     </div>

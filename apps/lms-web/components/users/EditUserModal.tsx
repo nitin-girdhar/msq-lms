@@ -2,13 +2,20 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { SessionUser, UserRole } from '@platform/types';
+import type { SessionUser } from '@platform/types';
 import { RANKS } from '@platform/authz';
-import { users as usersApi } from '@platform/ui-kit';
-import { Modal } from '@platform/ui-kit';
-import RoleSelector from './RoleSelector';
+import {
+  users as usersApi,
+  Modal,
+  UserPicker,
+  DepartmentRoleSelect,
+  OrgAssignmentsField,
+  ManagerSelect,
+  useRoleCatalog,
+  useUserAssignments,
+  type OrgAssignment,
+} from '@platform/ui-kit';
 import ResetPasswordModal from './ResetPasswordModal';
-import { UserPicker } from '@platform/ui-kit';
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
 
@@ -29,20 +36,22 @@ interface Props {
   actorRank: number;
   users: SessionUser[];
   orgs: OrgOption[];
+  actor: SessionUser;
 }
 
-export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, users, orgs }: Props) {
+export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, users, orgs, actor }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
   const [middleName, setMiddleName] = useState(user.middle_name ?? '');
   const [lastName, setLastName] = useState(user.last_name ?? '');
   const [mobile, setMobile] = useState(user.mobile ?? '');
   const [mobileError, setMobileError] = useState<string | null>(null);
-  const [role, setRole] = useState<UserRole>(user.role);
-  const [managerId, setManagerId] = useState(user.manager_id ?? '');
-  const [orgId, setOrgId] = useState(user.org_id);
   const [reassignTo, setReassignTo] = useState('');
   const [forcePasswordChange, setForcePasswordChange] = useState(user.force_password_change);
+  // Branches this user currently holds. The roster row carries only their home
+  // branch, so the full set has to be asked for before an edit can send it back.
+  const [existing, setExisting] = useState<OrgAssignment[] | null>(null);
+  const [mappingsError, setMappingsError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
@@ -55,21 +64,68 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
     setLastName(user.last_name ?? '');
     setMobile(user.mobile ?? '');
     setMobileError(null);
-    setRole(user.role);
-    setManagerId(user.manager_id ?? '');
-    setOrgId(user.org_id);
     setReassignTo('');
     setForcePasswordChange(user.force_password_change);
     setDeactivateOpen(false);
     setDeactivateReassignTo('');
   }, [user]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setExisting(null);
+    setMappingsError(null);
+
+    usersApi.orgMappings(user.id)
+      .then((res) => {
+        if (cancelled) return;
+        setExisting(
+          res.data
+            .filter((m) => m.is_active)
+            .map((m) => ({
+              org_id: m.org_id,
+              role_id: m.role_id,
+              lead_assignment_weight: Number(m.lead_assignment_weight ?? 0),
+            })),
+        );
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Falling back to the home branch alone would silently drop their other
+        // branches on the next save, so the form reports instead of guessing.
+        setMappingsError(err instanceof Error ? err.message : 'Could not load this user’s branches.');
+        setExisting([]);
+      });
+
+    return () => { cancelled = true; };
+  }, [open, user.id]);
+
   const isSelf = user.id === currentUserId;
   const canSetPassword = actorRank >= 4 && !isSelf;
   // Cross-branch moves only make sense for actors who can already see users
   // across branches — same threshold as users.service.ts's checkMoveUserBranchAccess.
   const canMoveBranch = actorRank >= RANKS.TENANT_ADMIN && !isSelf;
-  const isChangingBranch = canMoveBranch && orgId !== user.org_id;
+
+  const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
+
+  const a = useUserAssignments({
+    ...(existing ? { assignments: existing } : {}),
+    homeOrgId: user.org_id,
+    managerId: user.manager_id ?? '',
+    fallbackOrgId: user.org_id || actor.org_id,
+    roles,
+    rolesLoaded: !rolesLoading,
+  });
+
+  const branchOptions = useMemo(
+    () => (canMoveBranch ? orgs : orgs.filter((o) => o.id === user.org_id)),
+    [canMoveBranch, orgs, user.org_id],
+  );
+
+  // Leads stay behind only when the user actually leaves the branch — moving
+  // home between branches they keep strands nothing.
+  const isChangingBranch =
+    a.homeOrgId !== user.org_id && !a.assignments.some((x) => x.org_id === user.org_id);
 
   // Active users still in this user's CURRENT branch — eligible to take over
   // their open leads, whether that's because the user is being moved to a
@@ -77,13 +133,6 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
   const currentBranchExecutives = useMemo(
     () => users.filter((u) => u.org_id === user.org_id && u.id !== user.id && u.is_active),
     [users, user.org_id, user.id],
-  );
-
-  // Manager must belong to whichever branch is currently selected in the form —
-  // if the admin hasn't touched Branch yet that's just the user's own branch.
-  const branchManagerCandidates = useMemo(
-    () => users.filter((u) => u.is_active && u.id !== user.id && u.org_id === orgId),
-    [users, user.id, orgId],
   );
 
   const handleClose = () => {
@@ -114,20 +163,27 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
       setMobileError('Enter a valid 10-digit Indian mobile number.');
       return;
     }
+    if (!a.isComplete) {
+      setError(a.assignments.length === 0 ? 'Select at least one branch.' : 'Every branch needs a role.');
+      return;
+    }
     setMobileError(null);
     const patch: Record<string, unknown> = {};
     if (firstName !== (user.first_name ?? '')) patch.first_name = firstName;
     if (middleName !== (user.middle_name ?? '')) patch.middle_name = middleName || null;
     if (lastName !== (user.last_name ?? '')) patch.last_name = lastName || null;
     if (mobile !== (user.mobile ?? '')) patch.mobile = mobile || null;
-    if (role !== user.role) patch.role_name = role;
-    const newManagerId = managerId || null;
-    if (newManagerId !== (user.manager_id ?? null)) patch.manager_id = newManagerId;
     if (forcePasswordChange !== user.force_password_change) patch.force_password_change = forcePasswordChange;
-    if (isChangingBranch) {
-      patch.org_id = orgId;
-      if (reassignTo) patch.reassign_leads_to = reassignTo;
+
+    // The complete branch set, not a diff — the server reconciles against what
+    // it holds, so a removed branch is expressed by its absence. Sent only once
+    // the current set has loaded; before that it would read as "remove all".
+    if (existing !== null) {
+      Object.assign(patch, a.payload());
+      patch.manager_id = a.managerId || null;
+      if (isChangingBranch && reassignTo) patch.reassign_leads_to = reassignTo;
     }
+
     if (Object.keys(patch).length === 0) {
       handleClose();
       return;
@@ -193,7 +249,7 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
 
   return (
     <>
-      <Modal open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="max-w-xl" footer={footer}>
+      <Modal open={open} onClose={handleClose} title={`Edit ${user.name || user.email}`} locked={locked} maxWidth="max-w-2xl" footer={footer}>
         <form id={FORM_ID} onSubmit={handleSave} className="flex flex-col gap-4" noValidate>
           {error && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -250,63 +306,74 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
             </div>
           </div>
 
-          <RoleSelector id="eu-role" value={role} onChange={setRole} actorRank={actorRank} disabled={locked || isSelf} />
+          {(rolesError || mappingsError) && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {rolesError ?? mappingsError}
+            </div>
+          )}
+
+          <hr className="border-0 border-t border-[#F1F5F9]" />
+
+          <DepartmentRoleSelect
+            departmentId={a.departmentId}
+            onDepartmentChange={a.setDepartmentId}
+            roleId={a.roleId}
+            onRoleChange={a.setRoleId}
+            roles={roles}
+            departments={departments}
+            loading={rolesLoading}
+            disabled={locked || isSelf}
+            roleLabel="Default role"
+          />
           {isSelf && (
             <p className="-mt-2 text-[11px] text-[#64748B]">You can&apos;t change your own role.</p>
           )}
 
-          {canMoveBranch && (
-            <div className="flex flex-col gap-1.5 rounded-xl border border-[#E2E8F0] p-3">
-              <label htmlFor="eu-org" className="text-xs font-semibold text-[#0F172A]">Branch</label>
-              <select
-                id="eu-org"
-                value={orgId}
-                onChange={(e) => { setOrgId(e.target.value); setReassignTo(''); setManagerId(''); }}
-                disabled={locked}
-                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-2.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
-              >
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
+          {existing === null && !mappingsError ? (
+            <p className="text-[11px] text-[#64748B]">Loading branches…</p>
+          ) : (
+            <OrgAssignmentsField
+              branches={branchOptions}
+              assignments={a.assignments}
+              onChange={a.setAssignments}
+              homeOrgId={a.homeOrgId}
+              onHomeChange={a.setHomeOrgId}
+              roles={roles}
+              departmentId={a.departmentId}
+              defaultRoleId={a.roleId}
+              canPickBranches={canMoveBranch}
+              disabled={locked}
+              excludeUserId={user.id}
+            />
+          )}
 
-              {isChangingBranch && (
-                <div className="mt-2 flex flex-col gap-1.5">
-                  <p className="text-[11px] text-[#64748B]">
-                    Moving branches leaves this user&apos;s currently assigned leads in{' '}
-                    <span className="font-semibold">{user.org_name || 'their old branch'}</span>.
-                    Optionally hand them off to someone still there.
-                  </p>
-                  <label className="text-xs font-semibold text-[#0F172A]">Reassign their current leads to</label>
-                  <UserPicker
-                    value={reassignTo}
-                    onChange={setReassignTo}
-                    users={currentBranchExecutives}
-                    disabled={locked}
-                    allowEmpty
-                    emptyLabel="— Don't reassign —"
-                    placeholder="— Don't reassign —"
-                  />
-                </div>
-              )}
+          {isChangingBranch && (
+            <div className="flex flex-col gap-1.5 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] p-3">
+              <p className="text-[12.5px] leading-snug text-[#1E40AF]">
+                This user is leaving{' '}
+                <span className="font-semibold">{user.org_name || 'their current branch'}</span>, so their
+                open leads there need a new owner.
+              </p>
+              <label className="text-xs font-semibold text-[#0F172A]">Reassign their current leads to</label>
+              <UserPicker
+                value={reassignTo}
+                onChange={setReassignTo}
+                users={currentBranchExecutives}
+                disabled={locked}
+                allowEmpty
+                emptyLabel="— Don't reassign —"
+                placeholder="— Don't reassign —"
+              />
             </div>
           )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-[#0F172A]">Manager</label>
-            <UserPicker
-              value={managerId}
-              onChange={setManagerId}
-              users={branchManagerCandidates}
-              disabled={locked}
-              allowEmpty
-              emptyLabel="— None —"
-              placeholder="— None —"
-            />
-            {canMoveBranch && (
-              <p className="text-[11px] text-[#64748B]">Scoped to the branch selected above.</p>
-            )}
-          </div>
+          <ManagerSelect
+            value={a.managerId}
+            onChange={a.setManagerId}
+            homeOrgId={a.homeOrgId}
+            excludeUserId={user.id}
+            disabled={locked}
+          />
 
           <label className="flex cursor-pointer items-center gap-2 text-xs text-[#0F172A]">
             <input
