@@ -62,8 +62,6 @@ const EXPORT_COLUMNS: ExportColumn<AssignmentView>[] = [
   { header: 'Created', value: (a) => formatDate(a.lead_created_at) },
 ];
 
-const ACTIVE_STAGE_NAMES = new Set(['new', 'contacting', 'qualified']);
-
 // A lead is genuinely unassigned only when assigned_to is null. A missing name
 // with a non-null assigned_to means the assignee is not readable by this caller
 // (soft-deleted, or outside their org) — a different thing entirely.
@@ -122,14 +120,8 @@ export default function LeadsHistoryShell({ actor }: Props) {
     fetchData, goToPage, changePageSize,
   } = useLeadsHistory();
 
-  // By default send active stage IDs (non-terminated)
-  const activeStageIds = useMemo(
-    () => stageOptions.filter((s) => ACTIVE_STAGE_NAMES.has(s.name)).map((s) => s.id),
-    [stageOptions],
-  );
-
   const buildFilters = useCallback((pg = 1, ps = 25): LeadsHistoryFilters => {
-    const stageIds = selectedStages.length ? selectedStages : activeStageIds;
+    const stageIds = selectedStages;
     return {
       page: pg,
       page_size: ps,
@@ -144,14 +136,15 @@ export default function LeadsHistoryShell({ actor }: Props) {
       sort_by: sort?.by,
       sort_dir: sort?.dir,
     };
-  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, activeStageIds, sort]);
+  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, sort]);
 
-  // Initial fetch — needs stageOptions to know active stage IDs
+  // Initial fetch
   const initialFetched = useRef(false);
   useEffect(() => {
     if (initialFetched.current) return;
-    // First fetch without stage filter (backend defaults to active_only=true)
-    fetchData({ page: 1, page_size: 25, date_from: defaultDateFrom(), date_to: today(), active_only: true });
+    // No stage filter by default — leads of every status show up; the Stage
+    // filter narrows this down explicitly when the user wants to.
+    fetchData({ page: 1, page_size: 25, date_from: defaultDateFrom(), date_to: today(), active_only: false });
     initialFetched.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -203,7 +196,9 @@ export default function LeadsHistoryShell({ actor }: Props) {
           members.unshift({ id: actor.id, label: `${actor.name} (me)` });
           setAssignableUsers(members);
         } else {
-          const json = await usersApi.list(selectedOrgId ? { org_id: selectedOrgId } : undefined);
+          const json = await usersApi.assignable(
+            selectedOrgId ? { product: 'lms', orgId: selectedOrgId } : { product: 'lms' },
+          );
           if (cancelled) return;
           const list = (json.data as Array<Record<string, unknown>> ?? []).map((u) => ({
             id: u['id'] as string,
@@ -259,7 +254,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
     // fully returns to the same state as when this page was first loaded.
     gridRef.current?.api.setFilterModel(null);
     gridRef.current?.api.applyColumnState({ defaultState: { sort: null } });
-    fetchData({ page: 1, page_size: 25, date_from: defaultDateFrom(), date_to: today(), active_only: true });
+    fetchData({ page: 1, page_size: 25, date_from: defaultDateFrom(), date_to: today(), active_only: false });
   };
 
   const handleExport = (format: ExportFormat) => {
@@ -386,15 +381,15 @@ export default function LeadsHistoryShell({ actor }: Props) {
       <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-end gap-3">
           <FilterField label="From">
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
+            <input type="date" lang="en-GB" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
           </FilterField>
           <FilterField label="To">
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
+            <input type="date" lang="en-GB" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
           </FilterField>
 
           <FilterField label="Stage">
             <MultiCheckDropdown
-              placeholder="All active"
+              placeholder="All"
               options={stageOptions.map((s) => ({ value: s.id, label: s.label }))}
               selected={selectedStages}
               onChange={(v) => { setSelectedStages(v); setSelectedOutcomes([]); }}
@@ -423,16 +418,12 @@ export default function LeadsHistoryShell({ actor }: Props) {
 
           {showOrgFilter && orgs.length > 1 && (
             <FilterField label="Org">
-              <select
-                value={selectedOrgs[0] ?? ''}
-                onChange={(e) => setSelectedOrgs(e.target.value ? [e.target.value] : [])}
-                className={inputCls}
-              >
-                <option value="">All orgs</option>
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
+              <MultiCheckDropdown
+                placeholder="All orgs"
+                options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+                selected={selectedOrgs}
+                onChange={setSelectedOrgs}
+              />
             </FilterField>
           )}
 

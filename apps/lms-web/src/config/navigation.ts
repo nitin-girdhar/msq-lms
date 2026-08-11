@@ -15,13 +15,13 @@ export type { NavItem };
 export const DASHBOARD_NAV: readonly NavItem[] = [
   { id: 'leads',         label: 'Leads',         href: '/dashboard/leads',         capability: CAPABILITY.LMS_LEADS },
   { id: 'follow-ups',    label: 'Follow-ups',    href: '/dashboard/follow-ups',    capability: CAPABILITY.LMS_FOLLOWUPS },
-  { id: 'leads-history', label: 'Leads History', href: '/dashboard/leads-history', capability: CAPABILITY.LMS_HISTORY },
   { id: 'assignments',   label: 'Assignments',   href: '/dashboard/assignments',   capability: CAPABILITY.LMS_ASSIGNMENTS },
   // lms.leads.assign.bulk is an OPERATION with nothing beneath it (like
   // admin.roles.manage), so it needs `exact` — holdsUsableNode() would demand
   // a granted descendant and hide this for everyone, admins included.
   { id: 'bulk-assign',   label: 'Bulk Assign',   href: '/dashboard/bulk-assign',   capability: CAPABILITY.LMS_LEADS_ASSIGN_BULK, exact: true },
   { id: 'analytics',     label: 'Analytics',     href: '/dashboard/analytics',     capability: CAPABILITY.LMS_ANALYTICS },
+  { id: 'leads-history', label: 'Leads History', href: '/dashboard/leads-history', capability: CAPABILITY.LMS_HISTORY },
   { id: 'users',         label: 'Users',         href: '/dashboard/users',         capability: CAPABILITY.LMS_USERS },
 ] as const;
 

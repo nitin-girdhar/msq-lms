@@ -255,6 +255,26 @@ function groupEvents(events: TimelineEvent[]): EventGroup[] {
   return groups;
 }
 
+interface FollowUpThread {
+  key: string;
+  representative: TimelineEvent;
+  notes: string[];
+}
+
+function collapseFollowUps(followUps: TimelineEvent[]): FollowUpThread[] {
+  const byState = new Map<string, TimelineEvent[]>();
+  for (const fu of followUps) {
+    const key = `${fu.scheduledAt ?? ""}|${fu.completedAt ?? ""}|${fu.followupStatus ?? ""}`;
+    (byState.get(key) ?? byState.set(key, []).get(key)!).push(fu);
+  }
+  return [...byState.entries()].map(([key, rows]) => {
+    const sorted = [...rows].sort((a, b) => (a.followupId ?? "").localeCompare(b.followupId ?? ""));
+    const representative = sorted[sorted.length - 1];
+    const notes = sorted.map((r) => r.note).filter((n): n is string => Boolean(n));
+    return { key, representative, notes };
+  });
+}
+
 function groupDotClass(g: EventGroup): string {
   const evs = g.events;
   if (evs.some((e) => e.eventType === "status_change")) return "bg-indigo-500";
@@ -295,7 +315,7 @@ function GroupedEventCard({
   const { events, anchor } = group;
   const statusEv = events.find((e) => e.eventType === "status_change");
   const assignEv = events.find((e) => e.eventType === "assignment_change");
-  const followUps = events.filter((e) => e.eventType === "follow_up");
+  const followUpThreads = collapseFollowUps(events.filter((e) => e.eventType === "follow_up"));
   const otherInteractions = events.filter(
     (e) =>
       e.eventType === "interaction" && e.interactionType !== "internal_note",
@@ -369,51 +389,54 @@ function GroupedEventCard({
         </div>
       )}
 
-      {followUps.map((fu) => (
-        <div
-          key={fu.followupId ?? fu.eventId}
-          className="flex flex-wrap items-center justify-between gap-1.5"
-        >
-          <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-[#0F172A]">
-            <svg
-              className="h-3.5 w-3.5 shrink-0 text-amber-500"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-              />
-            </svg>
-            <span>Follow-up</span>
-            <FollowUpPill status={fu.followupStatus} statusLabel={fu.followupStatusLabel} />
-            {fu.scheduledAt && (
-              <span className="text-xs font-normal text-[#64748B]">
-                {fu.followupStatus === "completed" ? "completed" : "scheduled"}{" "}
-                {formatDate(fu.scheduledAt)}
-              </span>
-            )}
-            {fu.assignedToName && (
-              <span className="text-xs font-normal text-[#64748B]">
-                · {fu.assignedToName}
-              </span>
-            )}
-          </div>
-          {!readOnly && fu.followupId &&
-            ["pending", "missed"].includes(fu.followupStatus ?? "") && (
-              <button
-                type="button"
-                onClick={() => onUpdateFollowUp(fu)}
-                className="shrink-0 rounded-md border border-[#E2E8F0] bg-white px-2.5 py-1 text-xs font-semibold text-[#475569] hover:border-[#0891b2] hover:text-[#0891b2] transition-colors"
+      {followUpThreads.map((thread) => {
+        const fu = thread.representative;
+        return (
+          <div
+            key={thread.key}
+            className="flex flex-wrap items-center justify-between gap-1.5"
+          >
+            <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-[#0F172A]">
+              <svg
+                className="h-3.5 w-3.5 shrink-0 text-amber-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                Update
-              </button>
-            )}
-        </div>
-      ))}
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              <span>Follow-up</span>
+              <FollowUpPill status={fu.followupStatus} statusLabel={fu.followupStatusLabel} />
+              {fu.scheduledAt && (
+                <span className="text-xs font-normal text-[#64748B]">
+                  {fu.followupStatus === "completed" ? "completed" : "scheduled"}{" "}
+                  {formatDate(fu.scheduledAt)}
+                </span>
+              )}
+              {fu.assignedToName && (
+                <span className="text-xs font-normal text-[#64748B]">
+                  · {fu.assignedToName}
+                </span>
+              )}
+            </div>
+            {!readOnly && fu.followupId &&
+              ["pending", "missed"].includes(fu.followupStatus ?? "") && (
+                <button
+                  type="button"
+                  onClick={() => onUpdateFollowUp(fu)}
+                  className="shrink-0 rounded-md border border-[#E2E8F0] bg-white px-2.5 py-1 text-xs font-semibold text-[#475569] hover:border-[#0891b2] hover:text-[#0891b2] transition-colors"
+                >
+                  Update
+                </button>
+              )}
+          </div>
+        );
+      })}
 
       {otherInteractions.map((ix) => (
         <div
@@ -439,16 +462,18 @@ function GroupedEventCard({
         </p>
       )}
 
-      {followUps
-        .filter((fu) => fu.note)
-        .map((fu) => (
-          <p
-            key={`funote-${fu.followupId ?? fu.eventId}`}
-            className="rounded-lg border-l-2 border-[#CBD5E1] bg-white/70 px-3 py-2 text-sm text-[#475569] italic"
-          >
-            {fu.note}
-          </p>
-        ))}
+      {followUpThreads
+        .filter((thread) => thread.notes.length > 0)
+        .map((thread) =>
+          thread.notes.map((note, i) => (
+            <p
+              key={`funote-${thread.key}-${i}`}
+              className="rounded-lg border-l-2 border-[#CBD5E1] bg-white/70 px-3 py-2 text-sm text-[#475569] italic"
+            >
+              {note}
+            </p>
+          )),
+        )}
 
       {noteInteractions
         .filter((ni) => ni.note)

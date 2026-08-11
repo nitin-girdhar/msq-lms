@@ -253,7 +253,9 @@ export async function listLeadsHistory(
   // Explicitly ticking "Unassigned" narrows to unassigned-only when no user is
   // also ticked, and unions with the ticked users when one is.
   const modeFor = (dflt: UnassignedMode): UnassignedMode =>
-    sel.unassignedRequested ? (sel.userIds.length ? 'include' : 'only') : dflt;
+    sel.unassignedRequested
+      ? (sel.userIds.length ? 'include' : 'only')
+      : (sel.userIds.length ? 'exclude' : dflt);
 
   const filters: LeadsHistoryFilters = {
     dateFrom: params.dateFrom,

@@ -269,10 +269,10 @@ export default function AnalyticsClient(_props: Props) {
       <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-end gap-3">
           <FilterField label="From">
-            <input type="date" max={end} value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
+            <input type="date" lang="en-GB" max={end} value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
           </FilterField>
           <FilterField label="To">
-            <input type="date" min={start} max={today()} value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
+            <input type="date" lang="en-GB" min={start} max={today()} value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
           </FilterField>
           <button
             type="button"

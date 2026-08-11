@@ -224,7 +224,13 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
   const offset = (filters.page - 1) * filters.pageSize;
 
   return withRoleTx(ctx, async (tx) => {
-    const conditions: ReturnType<typeof sql>[] = [sql`NOT ml.is_deleted`];
+    const conditions: ReturnType<typeof sql>[] = [
+      sql`NOT ml.is_deleted`,
+      // A superseded row is a stale duplicate of a re-submitted lead (see
+      // intake.repository.ts::createWebhookLead), not a distinct report-worthy
+      // record — exclude it regardless of the activeOnly/stage filter.
+      sql`ml.superseded_by IS NULL`,
+    ];
 
     // Assignment predicate. The service is responsible for deciding whether the
     // caller may see unassigned leads at all (see listLeadsHistory); by the time
@@ -268,8 +274,8 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
     if (filters.activeOnly) {
       // IS DISTINCT FROM TRUE, not `= FALSE`: lead_stage is LEFT JOINed because
       // ml.stage_id is nullable, and `NULL = FALSE` is NULL, which would drop
-      // every stageless lead right back out again. This is the default path —
-      // both the initial page load and Reset send active_only=true.
+      // every stageless lead right back out again. Opt-in only — the report's
+      // default shows leads of every status; the Stage filter narrows this.
       conditions.push(sql`ls.is_terminated IS DISTINCT FROM TRUE`);
     }
 

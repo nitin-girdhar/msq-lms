@@ -35,7 +35,7 @@ export const leadsHistoryQuerySchema = z.object({
   source_ids:  csvOfUuids.optional(),
   org_ids:     csvOfUuids.optional(),
   assigned_to: csvOfUuidsOrUnassigned.optional(),
-  active_only: z.coerce.boolean().optional().default(true),
+  active_only: z.coerce.boolean().optional().default(false),
   // Whitelisted so ORDER BY is never built from a client-supplied string.
   sort_by:     z.enum(['created_at', 'assignee', 'stage', 'branch']).optional(),
   sort_dir:    z.enum(['asc', 'desc']).optional(),
