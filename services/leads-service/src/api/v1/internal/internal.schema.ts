@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const reassignOrgLeadsSchema = z.object({
   org_id: z.string().uuid(),
   from_user_id: z.string().uuid(),
-  to_user_id: z.string().uuid(),
+  to_user_id: z.string().uuid().nullable(),
   actor_id: z.string().uuid(),
 });
 export type ReassignOrgLeadsInput = z.infer<typeof reassignOrgLeadsSchema>;

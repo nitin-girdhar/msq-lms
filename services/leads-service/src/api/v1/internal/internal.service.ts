@@ -3,7 +3,7 @@ import * as repo from './internal.repository.js';
 import type { ReassignOrgLeadsParams } from './internal.repository.js';
 
 export async function reassignOrgLeads(params: ReassignOrgLeadsParams): Promise<{ reassigned_count: number }> {
-  if (params.toUserId === params.fromUserId) {
+  if (params.toUserId !== null && params.toUserId === params.fromUserId) {
     throw new BadRequestError('Cannot reassign leads to the user being changed');
   }
   const reassignedCount = await repo.reassignOrgLeads(params);

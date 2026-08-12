@@ -5,22 +5,26 @@ import { BadRequestError } from '../../../lib/errors.js';
 export interface ReassignOrgLeadsParams {
   orgId: string;
   fromUserId: string;
-  toUserId: string;
+  toUserId: string | null;
   actorId: string;
 }
 
 // Hands a departing user's still-open leads, within a single org, to another
-// active user in that same org. Moved here from identity-service (N-5) — leads
-// are LMS-owned data, so LMS-service is the only one allowed to write them.
+// active user in that same org, or unassigns them (sets to null) if no target provided.
+// Moved here from identity-service (N-5) — leads are LMS-owned data, so LMS-service
+// is the only one allowed to write them.
 export async function reassignOrgLeads(params: ReassignOrgLeadsParams): Promise<number> {
   return withServiceTx(async (tx) => {
-    const [candidate] = (await tx.execute(sql`
-      SELECT u.id
-      FROM iam.users u
-      JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.org_id = ${params.orgId}::uuid AND uom.is_active
-      WHERE u.id = ${params.toUserId}::uuid AND NOT u.is_deleted AND u.is_active
-    `)) as Array<{ id: string }>;
-    if (!candidate) throw new BadRequestError('Lead reassignment target must be an active user in that branch');
+    // Validate target user exists and is active if toUserId is provided
+    if (params.toUserId !== null) {
+      const [candidate] = (await tx.execute(sql`
+        SELECT u.id
+        FROM iam.users u
+        JOIN iam.user_org_mapping uom ON uom.user_id = u.id AND uom.org_id = ${params.orgId}::uuid AND uom.is_active
+        WHERE u.id = ${params.toUserId}::uuid AND NOT u.is_deleted AND u.is_active
+      `)) as Array<{ id: string }>;
+      if (!candidate) throw new BadRequestError('Lead reassignment target must be an active user in that branch');
+    }
 
     // trg_lead_assignment_log reads the acting user from this GUC to fill
     // lead_assignment_log.assigned_by_id — a service tx doesn't set it by
@@ -30,7 +34,7 @@ export async function reassignOrgLeads(params: ReassignOrgLeadsParams): Promise<
 
     const rows = (await tx.execute(sql`
       UPDATE lms.marketing_leads
-      SET assigned_user_id = ${params.toUserId}::uuid, updated_at = NOW()
+      SET assigned_user_id = ${params.toUserId === null ? null : sql`${params.toUserId}::uuid`}, updated_at = NOW()
       WHERE assigned_user_id = ${params.fromUserId}::uuid AND org_id = ${params.orgId}::uuid
         AND NOT is_deleted AND is_active
       RETURNING id
