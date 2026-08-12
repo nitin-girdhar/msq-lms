@@ -35,7 +35,10 @@ export const leadsHistoryQuerySchema = z.object({
   source_ids:  csvOfUuids.optional(),
   org_ids:     csvOfUuids.optional(),
   assigned_to: csvOfUuidsOrUnassigned.optional(),
-  active_only: z.coerce.boolean().optional().default(false),
+  // Not z.coerce.boolean(): Boolean("false") is true in JS, so coercion would
+  // treat the literal string "false" (what a false value serializes to) as
+  // true, silently re-enabling the active-only filter.
+  active_only: z.enum(['true', 'false']).optional().default('false').transform((v) => v === 'true'),
   // Whitelisted so ORDER BY is never built from a client-supplied string.
   sort_by:     z.enum(['created_at', 'assignee', 'stage', 'branch']).optional(),
   sort_dir:    z.enum(['asc', 'desc']).optional(),

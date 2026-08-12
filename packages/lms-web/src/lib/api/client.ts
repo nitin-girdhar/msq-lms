@@ -139,7 +139,10 @@ export const assignments = {
     const qs = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params)
-          .filter(([, v]) => v !== undefined && v !== '')
+          // v !== false: the server default is already false, and a literal
+          // "false" query string would coerce incorrectly server-side — omit
+          // the key rather than send a serialized falsy boolean.
+          .filter(([, v]) => v !== undefined && v !== '' && v !== false)
           .map(([k, v]) => [k, String(v)]),
       ),
     ).toString();
