@@ -7,7 +7,7 @@ import { RANKS } from '@platform/authz';
 import {
   Modal,
   users as usersApi,
-  DepartmentRoleSelect,
+  DepartmentSelect,
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
@@ -207,11 +207,9 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs 
 
           <hr className="border-0 border-t border-[#F1F5F9]" />
 
-          <DepartmentRoleSelect
+          <DepartmentSelect
             departmentId={a.departmentId}
             onDepartmentChange={a.setDepartmentId}
-            roleId={a.roleId}
-            onRoleChange={a.setRoleId}
             roles={roles}
             departments={departments}
             loading={rolesLoading}
@@ -226,7 +224,6 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs 
             onHomeChange={a.setHomeOrgId}
             roles={roles}
             departmentId={a.departmentId}
-            defaultRoleId={a.roleId}
             canPickBranches={canPickBranches}
             disabled={pending}
           />

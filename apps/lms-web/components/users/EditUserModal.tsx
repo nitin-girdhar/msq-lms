@@ -8,7 +8,7 @@ import {
   users as usersApi,
   Modal,
   UserPicker,
-  DepartmentRoleSelect,
+  DepartmentSelect,
   OrgAssignmentsField,
   ManagerSelect,
   useRoleCatalog,
@@ -314,16 +314,13 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
 
           <hr className="border-0 border-t border-[#F1F5F9]" />
 
-          <DepartmentRoleSelect
+          <DepartmentSelect
             departmentId={a.departmentId}
             onDepartmentChange={a.setDepartmentId}
-            roleId={a.roleId}
-            onRoleChange={a.setRoleId}
             roles={roles}
             departments={departments}
             loading={rolesLoading}
             disabled={locked || isSelf}
-            roleLabel="Default role"
           />
           {isSelf && (
             <p className="-mt-2 text-[11px] text-[#64748B]">You can&apos;t change your own role.</p>
@@ -340,7 +337,6 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
               onHomeChange={a.setHomeOrgId}
               roles={roles}
               departmentId={a.departmentId}
-              defaultRoleId={a.roleId}
               canPickBranches={canMoveBranch}
               disabled={locked}
               excludeUserId={user.id}
