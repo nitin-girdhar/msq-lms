@@ -1,5 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { can, CAPABILITY } from '@platform/rbac';
+import { can, resolveScope, CAPABILITY } from '@platform/rbac';
 import type { CreateLeadInput, UpdateLeadInput, CreateInteractionInput, TransferLeadInput } from '@lms/validation';
 import { LMS_RANKS, getRulesForTenant, checkTransferLeadAccess, checkCreateLeadAccess, checkEditLeadAccess } from '@lms/authz';
 import { ForbiddenError, BadRequestError } from '../../../lib/errors.js';
@@ -12,13 +12,16 @@ export class LeadsController {
     const q = request.query as ListLeadsQuery;
     const rules = getRulesForTenant(tenant_id);
 
+    // Cross-branch reach is a capability, not a hardcoded platform_role check —
+    // only 'tenant'/'all' on the lms.leads.view scope ladder may see the branch
+    // the caller asked for; everyone else is held to their own org regardless
+    // of which org_ids they requested.
     let org_ids: string[] | undefined;
     if (q.org_ids) {
-      if (role === 'super_admin' || role === 'tenant_admin') {
-        org_ids = q.org_ids.split(',').filter(Boolean);
-      } else {
-        org_ids = [org_id];
-      }
+      const scope = resolveScope(request.auth, CAPABILITY.LMS_LEADS_VIEW);
+      org_ids = scope === 'tenant' || scope === 'all'
+        ? q.org_ids.split(',').filter(Boolean)
+        : [org_id];
     }
 
     const result = await service.listLeads(
