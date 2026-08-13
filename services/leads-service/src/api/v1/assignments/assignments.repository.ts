@@ -29,7 +29,7 @@ const ASSIGNMENT_SELECT = sql`
   JOIN lms.lead_stage ls ON ls.id = ml.stage_id
   JOIN iam.users u ON u.id = ml.assigned_user_id
   LEFT JOIN iam.user_roles ur ON ur.id = u.role_id
-  WHERE NOT ml.is_deleted AND ml.assigned_user_id IS NOT NULL
+  WHERE NOT ml.is_deleted AND ml.superseded_by IS NULL AND ml.assigned_user_id IS NOT NULL
 `;
 
 export async function listAllAssignments(ctx: RoleTxContext, orgIds: string[] | null, page: number, pageSize: number) {
@@ -77,7 +77,7 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
       JOIN lms.lead_stage ls ON ls.id = ml.stage_id
       JOIN iam.users u ON u.id = ml.assigned_user_id
       LEFT JOIN iam.user_roles ur ON ur.id = u.role_id
-      WHERE NOT ml.is_deleted AND ml.assigned_user_id IS NOT NULL AND ml.id = ${id}::uuid
+      WHERE NOT ml.is_deleted AND ml.superseded_by IS NULL AND ml.assigned_user_id IS NOT NULL AND ml.id = ${id}::uuid
     `)) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
   });
@@ -137,7 +137,7 @@ export async function getLeadsForBulkAssignment(ctx: RoleTxContext, leadIds: str
     return (await tx.execute(sql`
       SELECT id, org_id, assigned_user_id
       FROM lms.marketing_leads
-      WHERE id = ANY(${sqlUuidArr(leadIds)}) AND NOT is_deleted
+      WHERE id = ANY(${sqlUuidArr(leadIds)}) AND NOT is_deleted AND superseded_by IS NULL
     `)) as Array<{ id: string; org_id: string; assigned_user_id: string | null }>;
   });
 }

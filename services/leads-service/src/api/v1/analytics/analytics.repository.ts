@@ -107,7 +107,7 @@ export async function getPipelineByStage(orgId: string, userId: string, range?: 
       SELECT ls.name AS stage, ls.label AS stage_label, COUNT(ml.id)::INT AS count
       FROM lms.lead_stage ls
       LEFT JOIN lms.marketing_leads ml
-        ON ml.stage_id = ls.id AND ml.org_id = ${orgId}::uuid AND NOT ml.is_deleted
+        ON ml.stage_id = ls.id AND ml.org_id = ${orgId}::uuid AND NOT ml.is_deleted AND ml.superseded_by IS NULL
         ${range
           ? sql`AND (ml.created_at AT TIME ZONE (SELECT timezone FROM entity.organizations WHERE id = ${orgId}::uuid))::date
                   BETWEEN ${range.start}::date AND ${range.end}::date`

@@ -46,6 +46,7 @@ export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
 
     const where = and(
       sql`NOT is_deleted`,
+      sql`superseded_by IS NULL`,
       useMultiOrg ? sql`org_id = ANY(${filters.org_ids}::uuid[])` : undefined,
       (!useMultiOrg && filters.actor_rank !== undefined && filters.actor_rank < filters.minRankToViewUnassigned)
         ? sql`assigned_user_id = ${ctx.user_id}::uuid`
@@ -210,6 +211,7 @@ export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFi
   return withRoleTx(ctx, async (tx) => {
     const where = and(
       sql`NOT ml.is_deleted`,
+      sql`ml.superseded_by IS NULL`,
       sql`ml.org_id = ${ctx.org_id}::uuid`,
       sql`lstg.followup_required`,
       sql`ml.scheduled_at IS NOT NULL`,
