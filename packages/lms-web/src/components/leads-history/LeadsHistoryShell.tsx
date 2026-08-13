@@ -17,7 +17,7 @@ import { can, CAPABILITY } from '@platform/rbac';
 import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../types/leads';
 import { useLeadsHistory } from '../../hooks/useLeadsHistory';
 import type { LeadsHistoryFilters } from '../../hooks/useLeadsHistory';
-import { Pagination, DownloadButton, users as usersApi, orgs as orgsApi } from '@platform/ui-kit';
+import { Pagination, DownloadButton, MultiSelect, users as usersApi, orgs as orgsApi } from '@platform/ui-kit';
 import { lead_sources as leadSourcesApi } from '../../lib/api/client';
 import AssigneeBadge from '../assignments/AssigneeBadge';
 import { StatusBadge } from '../leads/StatusBadge';
@@ -387,57 +387,52 @@ export default function LeadsHistoryShell({ actor }: Props) {
             <input type="date" lang="en-GB" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
           </FilterField>
 
-          <FilterField label="Stage">
-            <MultiCheckDropdown
-              placeholder="All"
-              options={stageOptions.map((s) => ({ value: s.id, label: s.label }))}
-              selected={selectedStages}
-              onChange={(v) => { setSelectedStages(v); setSelectedOutcomes([]); }}
-            />
-          </FilterField>
+          <MultiSelect
+            label="Stage"
+            placeholder="All"
+            options={stageOptions.map((s) => ({ id: s.id, label: s.label }))}
+            selected={stageOptions.filter((s) => selectedStages.includes(s.id)).map((s) => ({ id: s.id, label: s.label }))}
+            onChange={(next) => { setSelectedStages(next.map((o) => String(o.id))); setSelectedOutcomes([]); }}
+          />
 
-          <FilterField label="Outcome">
-            <MultiCheckDropdown
+          <div title={selectedStages.length === 0 ? 'Pick a stage first' : undefined}>
+            <MultiSelect
+              label="Outcome"
               placeholder="All"
-              options={filteredOutcomes.map((o) => ({ value: o.id, label: o.label }))}
-              selected={selectedOutcomes}
-              onChange={setSelectedOutcomes}
+              options={filteredOutcomes.map((o) => ({ id: o.id, label: o.label }))}
+              selected={filteredOutcomes.filter((o) => selectedOutcomes.includes(o.id)).map((o) => ({ id: o.id, label: o.label }))}
+              onChange={(next) => setSelectedOutcomes(next.map((o) => String(o.id)))}
               disabled={selectedStages.length === 0}
-              disabledHint="Pick a stage first"
             />
-          </FilterField>
+          </div>
 
-          <FilterField label="Source">
-            <MultiCheckDropdown
-              placeholder="All sources"
-              options={sources.map((s) => ({ value: s.id, label: s.label }))}
-              selected={selectedSources}
-              onChange={setSelectedSources}
-            />
-          </FilterField>
+          <MultiSelect
+            label="Source"
+            placeholder="All sources"
+            options={sources.map((s) => ({ id: s.id, label: s.label }))}
+            selected={sources.filter((s) => selectedSources.includes(s.id)).map((s) => ({ id: s.id, label: s.label }))}
+            onChange={(next) => setSelectedSources(next.map((o) => String(o.id)))}
+          />
 
           {showOrgFilter && orgs.length > 1 && (
-            <FilterField label="Org">
-              <MultiCheckDropdown
-                placeholder="All orgs"
-                options={orgs.map((o) => ({ value: o.id, label: o.name }))}
-                selected={selectedOrgs}
-                onChange={setSelectedOrgs}
-              />
-            </FilterField>
+            <MultiSelect
+              label="Org"
+              placeholder="All orgs"
+              options={orgs.map((o) => ({ id: o.id, label: o.name }))}
+              selected={orgs.filter((o) => selectedOrgs.includes(o.id)).map((o) => ({ id: o.id, label: o.name }))}
+              onChange={(next) => setSelectedOrgs(next.map((o) => String(o.id)))}
+            />
           )}
 
           {showAssignedTo && (
-            <FilterField label="Assigned To">
-              <MultiCheckDropdown
-                placeholder="All"
-                options={assigneeOptions}
-                selected={selectedAssignees}
-                onChange={setSelectedAssignees}
-                disabled={loadingUsers}
-                disabledHint="Loading users…"
-              />
-            </FilterField>
+            <MultiSelect
+              label="Assigned To"
+              placeholder="All"
+              options={assigneeOptions.map((a) => ({ id: a.value, label: a.label }))}
+              selected={assigneeOptions.filter((a) => selectedAssignees.includes(a.value)).map((a) => ({ id: a.value, label: a.label }))}
+              onChange={(next) => setSelectedAssignees(next.map((o) => String(o.id)))}
+              loading={loadingUsers}
+            />
           )}
 
           <div className="flex items-center gap-2">
@@ -553,83 +548,3 @@ function StageBadge({ stage, terminated }: { stage: string | null; terminated: b
   return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${color}`}>{stage}</span>;
 }
 
-// ── Multi-check dropdown ──────────────────────────────────────────────────
-
-interface DropdownOption { value: string; label: string }
-
-function MultiCheckDropdown({
-  placeholder, options, selected, onChange, disabled, disabledHint,
-}: {
-  placeholder: string;
-  options: DropdownOption[];
-  selected: string[];
-  onChange: (val: string[]) => void;
-  disabled?: boolean;
-  disabledHint?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const toggle = (val: string) => {
-    onChange(selected.includes(val) ? selected.filter((v) => v !== val) : [...selected, val]);
-  };
-
-  const label = selected.length === 0
-    ? placeholder
-    : selected.length === 1
-      ? (options.find((o) => o.value === selected[0])?.label ?? '1 selected')
-      : `${selected.length} selected`;
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        title={disabled ? disabledHint : undefined}
-        onClick={() => !disabled && setOpen((v) => !v)}
-        className={`${inputCls} flex min-w-[140px] items-center justify-between gap-2 whitespace-nowrap ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
-      >
-        <span className="truncate">{label}</span>
-        <svg className="h-3 w-3 shrink-0 text-[#94A3B8]" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-        </svg>
-      </button>
-      {open && !disabled && (
-        <div className="absolute left-0 top-full z-50 mt-1 max-h-52 min-w-[180px] overflow-y-auto rounded-lg border border-[#E2E8F0] bg-white py-1 shadow-lg">
-          {options.length === 0 && (
-            <p className="px-3 py-2 text-xs text-[#94A3B8]">No options</p>
-          )}
-          {options.map((o) => (
-            <label key={o.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs text-[#0F172A] hover:bg-[#F8FAFC]">
-              <input
-                type="checkbox"
-                checked={selected.includes(o.value)}
-                onChange={() => toggle(o.value)}
-                className="rounded border-[#CBD5E1]"
-              />
-              {o.label}
-            </label>
-          ))}
-          {selected.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onChange([])}
-              className="mt-1 w-full border-t border-[#F1F5F9] px-3 py-1.5 text-left text-[10px] font-semibold text-[#0b6cbf] hover:bg-[#F8FAFC]"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
