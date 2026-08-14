@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { RoleTxContext } from '@platform/db';
+import type { CapabilityHolder } from '@platform/rbac';
 import type { CreateAssignmentInput, UpdateAssignmentInput, BulkAssignInput } from '@lms/validation';
 import {
   LMS_RANKS,
@@ -31,16 +32,14 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
   return assignment;
 }
 
-export async function createAssignment(ctx: RoleTxContext, actorRank: number, data: CreateAssignmentInput) {
-  if (actorRank < LMS_RANKS.SSE) throw new ForbiddenError('Insufficient permissions to create assignments');
-
+export async function createAssignment(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, data: CreateAssignmentInput) {
   const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
   if (!targetUser || !targetUser['is_active']) {
     throw new BadRequestError('Target user not found or inactive');
   }
 
   const targetRank = Number(targetUser['rank'] ?? 0);
-  if (!canAssignToUser(actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
+  if (!canAssignToUser(actor, actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
     const reason = targetRank >= LMS_RANKS.ADMIN
       ? 'Admin iam.users cannot be lead assignees'
       : ctx.user_id === String(targetUser['id'])
@@ -86,16 +85,14 @@ export async function createAssignment(ctx: RoleTxContext, actorRank: number, da
   }
 }
 
-export async function reassignLead(ctx: RoleTxContext, actorRank: number, leadId: string, data: UpdateAssignmentInput) {
-  if (actorRank < LMS_RANKS.SSE) throw new ForbiddenError('Insufficient permissions to reassign');
-
+export async function reassignLead(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, leadId: string, data: UpdateAssignmentInput) {
   const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
   if (!targetUser || !targetUser['is_active']) {
     throw new BadRequestError('Target user not found or inactive');
   }
 
   const targetRank = Number(targetUser['rank'] ?? 0);
-  if (!canAssignToUser(actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
+  if (!canAssignToUser(actor, actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
     throw new ForbiddenError('Insufficient permissions to assign to this user');
   }
 
@@ -139,22 +136,14 @@ export async function unassignLead(ctx: RoleTxContext, actorRank: number, leadId
   });
 }
 
-export async function bulkAssignLeads(ctx: RoleTxContext, actorRank: number, data: BulkAssignInput) {
-  if (actorRank < LMS_RANKS.SSE) throw new ForbiddenError('Insufficient permissions to bulk-assign leads');
-
+export async function bulkAssignLeads(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, data: BulkAssignInput) {
   const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
   if (!targetUser || !targetUser['is_active']) {
     throw new BadRequestError('Target user not found or inactive');
   }
 
   const targetRank = Number(targetUser['rank'] ?? 0);
-  // Stricter than canAssignToUser: bulk assignment always targets individual
-  // contributors, capped at SSE, regardless of how senior the actor is —
-  // not "anyone below the actor" like single-lead assignment allows.
-  if (targetRank > LMS_RANKS.SSE) {
-    throw new ForbiddenError('Bulk assignment can only target Senior Sales Executives and below');
-  }
-  if (!canAssignToUser(actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
+  if (!canAssignToUser(actor, actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
     throw new ForbiddenError('You cannot assign leads to this user');
   }
 

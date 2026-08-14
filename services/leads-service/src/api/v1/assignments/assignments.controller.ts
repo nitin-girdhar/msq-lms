@@ -53,24 +53,24 @@ export class AssignmentsController {
   };
 
   create = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, tenant_id, rank, capabilities } = request.auth;
     const data = request.body as CreateAssignmentInput;
-    const result = await service.createAssignment({ org_id, user_id, role, tenant_id }, rank, data);
+    const result = await service.createAssignment({ org_id, user_id, role, tenant_id }, { capabilities }, rank, data);
     return reply.status(201).send({ success: true, data: result });
   };
 
   reassign = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, tenant_id, rank, capabilities } = request.auth;
     const { id } = request.params as { id: string };
     const data = request.body as UpdateAssignmentInput;
-    await service.reassignLead({ org_id, user_id, role, tenant_id }, rank, id, data);
+    await service.reassignLead({ org_id, user_id, role, tenant_id }, { capabilities }, rank, id, data);
     return reply.status(204).send();
   };
 
   bulkAssign = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, tenant_id, rank, capabilities } = request.auth;
     const data = request.body as BulkAssignInput;
-    const result = await service.bulkAssignLeads({ org_id, user_id, role, tenant_id }, rank, data);
+    const result = await service.bulkAssignLeads({ org_id, user_id, role, tenant_id }, { capabilities }, rank, data);
     return reply.send({ success: true, data: result });
   };
 
