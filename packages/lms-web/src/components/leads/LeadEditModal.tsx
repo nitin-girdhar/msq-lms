@@ -10,7 +10,6 @@ import { Modal, UserPicker } from '@platform/ui-kit';
 import { LeadFormDataPanel } from './LeadFormDataPanel';
 import TransferOutModal from './TransferOutModal';
 import WhatsAppSendModal from './WhatsAppSendModal';
-import { CAN_ASSIGN_ROLES } from './constants';
 
 interface Props {
   lead: LeadView;
@@ -65,7 +64,7 @@ export function LeadEditModal({
     return inv;
   }, [stageIdToName]);
 
-  const canAssign       = CAN_ASSIGN_ROLES.includes(actor.role);
+  const canAssign       = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
   const statusChanged   = selectedStatus !== origStatus;
   const assigneeChanged = selectedAssigneeId !== origAssigneeId;
   const outcomeChanged  = outcomeId !== (lead.outcome_id ?? '');

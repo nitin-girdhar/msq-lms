@@ -5,7 +5,7 @@ import type { SessionUser } from '@platform/types';
 import type { StageOption, StageOutcome, UpdatePayload } from '../types/leads';
 import { lookups, leads as leadsApi } from '../lib/api/client';
 import { users as usersApi } from '@platform/ui-kit';
-import { CAN_ASSIGN_ROLES } from '../components/leads/constants';
+import { can, CAPABILITY } from '@platform/rbac';
 
 interface UseLeadEditDataReturn {
   statusOptions: string[];
@@ -30,7 +30,7 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
   const [loading, setLoading] = useState(true);
 
   const stageNameToIdRef = useRef<Record<string, string>>({});
-  const canAssign = CAN_ASSIGN_ROLES.includes(actor.role);
+  const canAssign = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
 
   useEffect(() => {
     let cancelled = false;

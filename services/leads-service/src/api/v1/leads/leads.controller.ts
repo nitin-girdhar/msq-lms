@@ -76,6 +76,15 @@ export class LeadsController {
     }
     const { id } = request.params as { id: string };
     const data = request.body as UpdateLeadInput;
+    // Clearing the assignee is an assignment write, so it takes an assignment
+    // capability — not just lms.leads.edit. iam.can_assign_to guards the
+    // non-null case inside updateLead, but it is only consulted when there IS a
+    // target, which left "set back to Unassigned" the one assignment change
+    // anyone able to edit the lead could make. Releasing a lead is not a
+    // weaker act than handing it to a named colleague.
+    if (data.assigned_user_id === null && !can(request.auth, CAPABILITY.LMS_LEADS_ASSIGN)) {
+      throw new ForbiddenError('You do not have permission to change lead assignment');
+    }
     await service.updateLead({ org_id, user_id, role, tenant_id, readOnly: !can(request.auth, CAPABILITY.PLATFORM_WRITE) }, id, data);
     return reply.status(204).send();
   };

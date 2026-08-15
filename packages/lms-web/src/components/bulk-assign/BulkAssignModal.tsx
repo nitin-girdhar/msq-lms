@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import type { SessionUser } from '@platform/types';
-import { LMS_RANKS } from '@lms/authz';
 import { Modal, users as usersApi } from '@platform/ui-kit';
 import { assignments as assignmentsApi } from '../../lib/api/client';
 import AssignmentSelector from '../assignments/AssignmentSelector';
@@ -31,7 +30,11 @@ export default function BulkAssignModal({ open, onClose, orgId, leadIds, onAssig
     let cancelled = false;
     setCandidatesLoading(true);
     usersApi
-      .assignable({ product: 'lms', orgId, maxRank: LMS_RANKS.SSE })
+      // No maxRank: the server derives the ceiling from this actor's own
+      // lms.leads.assign.* grants, matching what the bulk write will accept.
+      // The old hardcoded LMS_RANKS.SSE cap predated that and applied the same
+      // rank-40 ceiling to every actor regardless of their grants.
+      .assignable({ product: 'lms', orgId })
       .then((res) => {
         if (!cancelled) setCandidates((res.data ?? []) as SessionUser[]);
       })

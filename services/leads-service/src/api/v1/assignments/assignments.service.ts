@@ -121,8 +121,7 @@ export async function reassignLead(ctx: RoleTxContext, actor: CapabilityHolder, 
   });
 }
 
-export async function unassignLead(ctx: RoleTxContext, actorRank: number, leadId: string) {
-  if (actorRank < LMS_RANKS.ADMIN) throw new ForbiddenError('Only admins can remove assignments');
+export async function unassignLead(ctx: RoleTxContext, leadId: string) {
   const result = await repo.unassignLead(ctx, leadId);
   if (!result) throw new NotFoundError('Assignment not found');
   await logActivity({ action_type: 'assignment_removed', performed_by: ctx.user_id, lead_id: leadId, org_id: ctx.org_id });

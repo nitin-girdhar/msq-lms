@@ -101,7 +101,13 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
   }, [open, user.id]);
 
   const isSelf = user.id === currentUserId;
-  const canSetPassword = actorRank >= 4 && !isSelf;
+  // Mirrors the server's real rule — @platform/platform-authz's canManageUser,
+  // reached via assertCanManageTarget on /users/:id/reset-password: the actor
+  // must outrank (or match) the target. The previous `actorRank >= 4` was a
+  // threshold from a retired rank scale — on today's ladder (SE 20, SSE 40,
+  // MANAGER 60, ORG_ADMIN 980) it was true for very nearly everyone, so the
+  // button showed for targets the reset endpoint would refuse.
+  const canSetPassword = actorRank >= user.rank && !isSelf;
   // Cross-branch moves only make sense for actors who can already see users
   // across branches — same threshold as users.service.ts's checkMoveUserBranchAccess.
   const canMoveBranch = actorRank >= RANKS.TENANT_ADMIN && !isSelf;

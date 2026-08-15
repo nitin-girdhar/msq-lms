@@ -196,8 +196,16 @@ export default function LeadsHistoryShell({ actor }: Props) {
           members.unshift({ id: actor.id, label: `${actor.name} (me)` });
           setAssignableUsers(members);
         } else {
+          // purpose 'filter': this feeds the "Assigned To" FILTER, so it must
+          // keep listing everyone whose leads this actor can see. Without it
+          // the server would derive the list from the actor's
+          // lms.leads.assign.* grants and hand back an assignee picker —
+          // empty for a role that can read a wide history scope but holds no
+          // assign capability.
           const json = await usersApi.assignable(
-            selectedOrgId ? { product: 'lms', orgId: selectedOrgId } : { product: 'lms' },
+            selectedOrgId
+              ? { product: 'lms', orgId: selectedOrgId, purpose: 'filter' }
+              : { product: 'lms', purpose: 'filter' },
           );
           if (cancelled) return;
           const list = (json.data as Array<Record<string, unknown>> ?? []).map((u) => ({

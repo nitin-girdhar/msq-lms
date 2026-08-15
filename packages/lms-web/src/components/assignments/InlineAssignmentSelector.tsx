@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SessionUser } from '@platform/types';
+import { can, CAPABILITY } from '@platform/rbac';
 import type { AssignmentView } from '../../types/leads';
 import { ROLE_LABELS } from '@platform/auth-constants';
 import { leads as leadsApi } from '../../lib/api/client';
@@ -19,15 +20,6 @@ interface Props {
 
 type PopoverRect = { top: number; left: number; minWidth: number };
 
-const CAN_ASSIGN_ROLES: ReadonlyArray<SessionUser['role']> = [
-  'super_admin',
-  'tenant_admin',
-  'org_admin',
-  'org_sr_manager',
-  'org_manager',
-  'senior_sales_executive',
-];
-
 export default function InlineAssignmentSelector({
   leadId,
   existing,
@@ -43,7 +35,7 @@ export default function InlineAssignmentSelector({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const canAssign = CAN_ASSIGN_ROLES.includes(actor.role);
+  const canAssign = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
 
   useDismissible(open, [triggerRef, popoverRef], () => setOpen(false));
 

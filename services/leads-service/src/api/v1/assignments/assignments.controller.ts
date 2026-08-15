@@ -75,9 +75,9 @@ export class AssignmentsController {
   };
 
   unassign = async (request: FastifyRequest, reply: FastifyReply) => {
-    const { org_id, user_id, role, tenant_id, rank } = request.auth;
+    const { org_id, user_id, role, tenant_id } = request.auth;
     const { id } = request.params as { id: string };
-    await service.unassignLead({ org_id, user_id, role, tenant_id }, rank, id);
+    await service.unassignLead({ org_id, user_id, role, tenant_id }, id);
     return reply.status(204).send();
   };
 }
