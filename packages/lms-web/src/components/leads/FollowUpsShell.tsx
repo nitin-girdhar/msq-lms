@@ -177,6 +177,7 @@ export default function FollowUpsShell({ actor, embedded }: Props) {
           stageIdToName={editData.stageIdToName}
           candidates={editData.candidates}
           actor={actor}
+          loadError={editData.loadError}
           onUpdate={async (payload) => { await editData.updateLead(payload); fetchData(); }}
           onAssignmentChanged={fetchData}
           onClose={() => setEditingLead(null)}

@@ -21,6 +21,9 @@ interface Props {
   stageIdToName: Record<string, string>;
   candidates: SessionUser[];
   actor: SessionUser;
+  /** Stage/outcome catalog failed to load — saving is blocked, since the
+   *  follow-up rule is derived from that catalog. */
+  loadError?: string | null;
   onUpdate: (payload: UpdatePayload) => Promise<void>;
   onAssignmentChanged: () => void;
   onClose: () => void;
@@ -28,7 +31,7 @@ interface Props {
 
 export function LeadEditModal({
   lead, statusOptions, statusLabelMap, followUpSet, rejectionSet,
-  stageOutcomes, stageIdToName, candidates, actor, onUpdate, onAssignmentChanged, onClose,
+  stageOutcomes, stageIdToName, candidates, actor, loadError, onUpdate, onAssignmentChanged, onClose,
 }: Props) {
   const origStatus     = lead.stage ?? '';
   const origAssigneeId = lead.assigned_user_id ?? null;
@@ -93,7 +96,7 @@ export function LeadEditModal({
     const errs: Record<string, string> = {};
     if (hasOutcomes && !outcomeId) errs.outcome = 'Select an outcome';
     if (fuVisible && !(editedFuDate ?? fuLocalDate)) errs.followUp = 'Follow-up date is required';
-    if (anyFieldChanged && !transitionNote.trim()) errs.transitionNote = 'Notes are required';
+    if (noteRequired && !transitionNote.trim()) errs.transitionNote = 'Notes are required';
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -115,11 +118,22 @@ export function LeadEditModal({
       // the assignee PATCH below).
       let leadWritten = false;
 
+      // Who the follow-up belongs to, and when it is due. Attached to whichever
+      // lead write happens first so the stage move and the follow-up commit
+      // together — the server rejects a move into a follow-up stage that arrives
+      // without one, and a second request could always fail on its own.
+      const fuTargetDate = editedFuDate ?? fuLocalDate;
+      const fuAssignee   = selectedAssigneeId ?? origAssigneeId ?? actor.id;
+      const fuPayload    = fuFieldChanged
+        ? { scheduledAt: new Date(fuTargetDate).toISOString(), assignedUserId: fuAssignee }
+        : null;
+
       if (statusChanged) {
         await onUpdate({
           leadId: lead.lead_id,
           field: 'stage',
           value: selectedStatus,
+          ...(fuPayload ? { followUp: fuPayload } : {}),
           ...(outcomeId !== '' ? { outcomeId } : {}),
           ...(transitionNote.trim() ? { transitionNote: transitionNote.trim() } : {}),
           // The DB rejects a save when the selected outcome requires a comment
@@ -140,6 +154,10 @@ export function LeadEditModal({
         // records the transition note exactly like a stage change does.
         await leadsApi.update(lead.lead_id, {
           outcome_id: outcomeId,
+          ...(fuPayload ? {
+            follow_up_scheduled_at: fuPayload.scheduledAt,
+            follow_up_assigned_user_id: fuPayload.assignedUserId,
+          } : {}),
           ...(transitionNote.trim() ? { transition_note: transitionNote.trim() } : {}),
           ...(outcomeCommentRequired && transitionNote.trim() ? { outcome_comment: transitionNote.trim() } : {}),
           ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
@@ -154,18 +172,27 @@ export function LeadEditModal({
       if (shouldPatchAssignee && lead.lead_id) {
         await leadsApi.update(lead.lead_id, {
           assigned_user_id: assigneeToSet,
+          // Only when no earlier write already carried it — the follow-up must be
+          // created exactly once.
+          ...(fuPayload && !leadWritten ? {
+            follow_up_scheduled_at: fuPayload.scheduledAt,
+            follow_up_assigned_user_id: fuPayload.assignedUserId,
+          } : {}),
           ...(transitionNote.trim() ? { transition_note: transitionNote.trim() } : {}),
           // Only guard this write when it is the first one: an earlier stage or
           // outcome PATCH already bumped updated_at, so re-sending the version
           // we opened with would 409 against our own change.
           ...(expectedUpdatedAt && !leadWritten ? { expected_updated_at: expectedUpdatedAt } : {}),
         });
+        leadWritten = true;
       }
-      if (fuVisible && fuFieldChanged) {
-        const targetDate = editedFuDate ?? fuLocalDate;
+
+      // Only reachable when the due date is the sole change — every other path
+      // above folded the follow-up into its own lead write.
+      if (fuPayload && !leadWritten && lead.lead_id) {
         await leadsApi.addFollowUp(lead.lead_id, {
-          scheduled_at: new Date(targetDate).toISOString(),
-          assigned_user_id: selectedAssigneeId ?? origAssigneeId ?? actor.id,
+          scheduled_at: fuPayload.scheduledAt,
+          assigned_user_id: fuPayload.assignedUserId,
           ...(transitionNote.trim() ? { notes: transitionNote.trim() } : {}),
         });
       }
@@ -205,6 +232,17 @@ export function LeadEditModal({
   // the due date itself didn't move. marketing_leads.scheduled_at is always the latest value.
   const fuFieldChanged = fuVisible && (statusChanged || fuDateChanged || assigneeChanged) && Boolean(editedFuDate ?? fuLocalDate);
   const anyFieldChanged = statusChanged || assigneeChanged || outcomeChanged || fuFieldChanged;
+  // A note explains WHY a lead moved, so it is compulsory for the changes that
+  // land in the audit log — stage, outcome, and moving the follow-up date. A bare
+  // re-assignment is deliberately excluded: handing a lead to someone else needs
+  // no justification, and the note used to be demanded there and then silently
+  // dropped, since lms.log_lead_stage_change() writes no row when neither the
+  // stage nor the outcome moved.
+  //
+  // Keyed on fuDateChanged, not fuFieldChanged: the latter is also true when only
+  // the assignee moved (the follow-up row is re-stamped with the new owner), which
+  // would put us right back to demanding a note for an assignment-only edit.
+  const noteRequired = statusChanged || outcomeChanged || fuDateChanged;
 
   const updateSectionStyle = !anyFieldChanged ? ''
     : selectedStatus === 'converted' ? 'border border-[#86EFAC] bg-[#F0FDF4]'
@@ -272,7 +310,8 @@ export function LeadEditModal({
         </button>
       ) : (
         <button type="button" onClick={handleSave}
-          disabled={saving || !anyFieldChanged}
+          disabled={saving || !anyFieldChanged || Boolean(loadError)}
+          title={loadError ? 'Lead statuses could not be loaded — reload the page before editing' : undefined}
           className="rounded-lg bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#0a5fa8] disabled:cursor-not-allowed disabled:opacity-60">
           {saving ? (
             <span className="inline-flex items-center gap-1.5">
@@ -303,6 +342,12 @@ export function LeadEditModal({
         bodyClassName="sheet-scroll min-h-0 flex-1 overflow-y-auto"
       >
         <div className="flex flex-col divide-y divide-[#F1F5F9]">
+          {loadError && (
+            <div className="mx-6 my-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Lead statuses could not be loaded, so this lead cannot be edited safely — reload the page and try again.
+            </div>
+          )}
+
           {/* Read-only lead details */}
           <div className="px-6 py-4">
             <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[#94A3B8]">Lead Details</p>
@@ -395,16 +440,17 @@ export function LeadEditModal({
               )}
             </div>
 
-            {/* Notes — mandatory when any field changes (not needed for transfer_out path) */}
+            {/* Notes — mandatory for stage/outcome/follow-up changes, optional for an
+                assignment-only edit (not needed for the transfer_out path at all) */}
             {anyFieldChanged && selectedStatus !== 'transferred_out' && (
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
-                  Notes <span className="text-red-500">*</span>
+                  Notes {noteRequired && <span className="text-red-500">*</span>}
                 </label>
                 <textarea
                   value={transitionNote}
                   onChange={(e) => { setTransitionNote(e.target.value); setErrors(p => ({ ...p, transitionNote: '' })); }}
-                  placeholder="Add a note about this change…"
+                  placeholder={noteRequired ? 'Add a note about this change…' : 'Add a note about this change (optional)…'}
                   rows={2}
                   className={`w-full resize-none rounded-lg border px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none focus:ring-2 ${errors.transitionNote ? 'border-red-400 focus:ring-red-200' : 'border-[#E2E8F0] focus:border-[#0b6cbf] focus:ring-[#0b6cbf]/20'}`}
                 />

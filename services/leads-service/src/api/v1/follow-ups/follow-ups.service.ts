@@ -35,6 +35,7 @@ export async function updateFollowUp(ctx: RoleTxContext, followUpId: string, lea
     ...(completed_at !== undefined ? { completed_at } : {}),
     ...(scheduled_at !== undefined ? { scheduled_at } : {}),
     ...(body.notes !== undefined ? { notes: body.notes } : {}),
+    ...(body.nextScheduledAt !== undefined ? { next_scheduled_at: body.nextScheduledAt } : {}),
   });
 
   if (!result) throw new NotFoundError('Follow-up not found');

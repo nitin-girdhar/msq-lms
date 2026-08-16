@@ -17,6 +17,10 @@ interface UseLeadEditDataReturn {
   candidates: SessionUser[];
   updateLead: (payload: UpdatePayload) => Promise<void>;
   loading: boolean;
+  /** Set when the stage/outcome catalog could not be loaded — the edit modal's
+   *  follow-up rule depends on it, so saving must be blocked rather than run
+   *  against an empty catalog. */
+  loadError: string | null;
 }
 
 export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
@@ -28,6 +32,7 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
   const [stageIdToName, setStageIdToName] = useState<Record<string, string>>({});
   const [candidates, setCandidates] = useState<SessionUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const stageNameToIdRef = useRef<Record<string, string>>({});
   const canAssign = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
@@ -70,8 +75,13 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
         setRejectionStatuses(rejected);
         setStageOutcomes(rawOutcomes);
         setStageIdToName(idToName);
-      } catch {
-        // Stages/outcomes fetch failed — edit modal will have empty options
+      } catch (err) {
+        // Never swallow this. followUpSet is derived from the stage catalog, so a
+        // failed fetch leaves it empty — the Follow-up Due field then does not
+        // render and its "required" check cannot fire, and a status change into
+        // `contacting` saves with no follow-up at all. The modal disables saving
+        // rather than silently dropping the rule.
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load lead statuses');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -125,15 +135,16 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
     }
     if (payload.expectedUpdatedAt) patchData.expected_updated_at = payload.expectedUpdatedAt;
 
-    await leadsApi.update(payload.leadId, patchData);
-
+    // The follow-up rides along on the PATCH rather than following it as a second
+    // request: leads-service opens it in the same transaction as the stage move,
+    // so a lead can never land in a followup_required stage without a due time.
     if (payload.field === 'stage' && payload.followUp) {
       const fu = payload.followUp;
-      const fuData: Record<string, unknown> = { scheduled_at: fu.scheduledAt };
-      if (fu.assignedUserId) fuData.assigned_user_id = fu.assignedUserId;
-      if (fu.notes) fuData.notes = fu.notes;
-      await leadsApi.addFollowUp(payload.leadId, fuData);
+      patchData.follow_up_scheduled_at = fu.scheduledAt;
+      if (fu.assignedUserId) patchData.follow_up_assigned_user_id = fu.assignedUserId;
     }
+
+    await leadsApi.update(payload.leadId, patchData);
   }, []);
 
   return {
@@ -146,5 +157,6 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
     candidates,
     updateLead,
     loading,
+    loadError,
   };
 }

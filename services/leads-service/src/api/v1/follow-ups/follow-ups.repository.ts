@@ -5,6 +5,69 @@ import { leadFollowUpsTable, followUpStatusesTable, marketingLeadsTable } from '
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../../lib/errors.js';
 import { resolveLeadWriteScope, effectiveInOrgActor } from '../../../lib/lead-write-scope.js';
 
+type Tx = Parameters<Parameters<typeof withRoleTx>[1]>[0];
+
+/**
+ * Opens a pending follow-up on a lead: moves the marketing_leads.scheduled_at
+ * pointer and appends the lead_follow_ups history row, both inside the caller's
+ * transaction.
+ *
+ * Shared rather than inlined because PATCH /leads/:id now schedules a follow-up
+ * as part of a stage move (so the two commit together — a stage change into a
+ * followup_required stage must never be able to land without its due time), and
+ * completing a follow-up opens the next one. All three paths have to agree on
+ * what "scheduled" means, so they call this.
+ */
+export async function insertFollowUpTx(
+  tx: Tx,
+  args: {
+    orgId: string;
+    leadId: string;
+    assignedUserId: string;
+    scheduledAt: Date;
+    notes?: string | null;
+    createdBy: string;
+  },
+) {
+  const [pendingStatus] = await tx
+    .select({ id: followUpStatusesTable.id })
+    .from(followUpStatusesTable)
+    .where(eq(followUpStatusesTable.name, 'pending'))
+    .limit(1);
+  if (!pendingStatus) throw new BadRequestError('Follow-up status "pending" not found');
+
+  const [lead] = await tx
+    .select({ stageId: marketingLeadsTable.stageId, outcomeId: marketingLeadsTable.outcomeId })
+    .from(marketingLeadsTable)
+    .where(eq(marketingLeadsTable.id, args.leadId))
+    .limit(1);
+
+  // Primary table first: marketing_leads.scheduled_at is the source of truth for
+  // "when is this lead's next follow-up due" (drives overdue/upcoming everywhere).
+  await tx
+    .update(marketingLeadsTable)
+    .set({ scheduledAt: args.scheduledAt })
+    .where(and(eq(marketingLeadsTable.id, args.leadId), eq(marketingLeadsTable.orgId, args.orgId)));
+
+  // lead_follow_ups is append-only: every follow-up action is a new row, never an UPDATE.
+  const [inserted] = await tx
+    .insert(leadFollowUpsTable)
+    .values({
+      orgId: args.orgId,
+      leadId: args.leadId,
+      assignedUserId: args.assignedUserId,
+      statusId: pendingStatus.id,
+      stageId: lead?.stageId ?? null,
+      outcomeId: lead?.outcomeId ?? null,
+      scheduledAt: args.scheduledAt,
+      notes: args.notes ?? null,
+      createdBy: args.createdBy,
+    })
+    .returning({ id: leadFollowUpsTable.id });
+
+  return inserted!;
+}
+
 export async function createFollowUp(
   ctx: RoleTxContext,
   leadId: string,
@@ -32,52 +95,27 @@ export async function createFollowUp(
     // cross-org super_admin schedule a follow-up for the rep who owns the lead.
     const assignedUserId = data.assigned_user_id ?? await effectiveInOrgActor(tx, ctx.user_id, scope);
 
-    const [pendingStatus] = await tx
-      .select({ id: followUpStatusesTable.id })
-      .from(followUpStatusesTable)
-      .where(eq(followUpStatusesTable.name, 'pending'))
-      .limit(1);
-    if (!pendingStatus) throw new BadRequestError('Follow-up status "pending" not found');
-
-    const [lead] = await tx
-      .select({ stageId: marketingLeadsTable.stageId, outcomeId: marketingLeadsTable.outcomeId })
-      .from(marketingLeadsTable)
-      .where(eq(marketingLeadsTable.id, leadId))
-      .limit(1);
-
-    const scheduledAt = new Date(data.scheduled_at);
-
-    // Primary table first: marketing_leads.scheduled_at is the source of truth for
-    // "when is this lead's next follow-up due" (drives overdue/upcoming everywhere).
-    await tx
-      .update(marketingLeadsTable)
-      .set({ scheduledAt })
-      .where(and(eq(marketingLeadsTable.id, leadId), eq(marketingLeadsTable.orgId, leadOrgId)));
-
-    // lead_follow_ups is append-only: every follow-up action is a new row, never an UPDATE.
-    const [inserted] = await tx
-      .insert(leadFollowUpsTable)
-      .values({
-        orgId: leadOrgId,
-        leadId,
-        assignedUserId,
-        statusId: pendingStatus.id,
-        stageId: lead?.stageId ?? null,
-        outcomeId: lead?.outcomeId ?? null,
-        scheduledAt,
-        notes: data.notes ?? null,
-        createdBy: ctx.user_id,
-      })
-      .returning({ id: leadFollowUpsTable.id });
-
-    return inserted!;
+    return insertFollowUpTx(tx, {
+      orgId: leadOrgId,
+      leadId,
+      assignedUserId,
+      scheduledAt: new Date(data.scheduled_at),
+      notes: data.notes ?? null,
+      createdBy: ctx.user_id,
+    });
   });
 }
 
 export async function updateFollowUp(
   ctx: RoleTxContext,
   followUpId: string,
-  data: { status_name?: string; completed_at?: string; scheduled_at?: string; notes?: string },
+  data: {
+    status_name?: string;
+    completed_at?: string;
+    scheduled_at?: string;
+    notes?: string;
+    next_scheduled_at?: string;
+  },
 ) {
   return withRoleTx(ctx, async (tx) => {
     // Resolve the follow-up under the caller's RLS visibility WITHOUT pinning
@@ -151,8 +189,39 @@ export async function updateFollowUp(
       })
       .returning({ id: leadFollowUpsTable.id });
 
+    // Completing the last open follow-up leaves scheduled_at NULL. If the lead is
+    // still parked in a stage whose lead_stage.followup_required is set, that drops
+    // it out of the notifications-service poller (which requires scheduled_at IS NOT
+    // NULL) and out of every overdue count — the lead goes dark with nobody chasing
+    // it. So the next due time has to be captured in the same request.
+    if (isCompleted) {
+      if (data.next_scheduled_at !== undefined) {
+        await insertFollowUpTx(tx, {
+          orgId: followUpOrgId,
+          leadId: prev.leadId,
+          assignedUserId: prev.assignedUserId,
+          scheduledAt: new Date(data.next_scheduled_at),
+          notes: data.notes ?? null,
+          createdBy: ctx.user_id,
+        });
+      } else if (await stageRequiresFollowUp(tx, lead?.stageId ?? prev.stageId)) {
+        throw new BadRequestError(
+          'This lead is still in a stage that requires follow-up — schedule the next one before completing this.',
+        );
+      }
+    }
+
     return inserted ?? null;
   });
+}
+
+/** Whether a stage carries lead_stage.followup_required. NULL stage → false. */
+async function stageRequiresFollowUp(tx: Tx, stageId: string | null): Promise<boolean> {
+  if (!stageId) return false;
+  const rows = (await tx.execute(sql`
+    SELECT followup_required FROM lms.lead_stage WHERE id = ${stageId}::uuid
+  `)) as unknown as Array<{ followup_required: boolean | null }>;
+  return Boolean(rows[0]?.followup_required);
 }
 
 export async function deleteFollowUp(ctx: RoleTxContext, followUpId: string) {
@@ -161,10 +230,31 @@ export async function deleteFollowUp(ctx: RoleTxContext, followUpId: string) {
     // `org_id = ctx.org_id` filter would silently skip a cross-org platform/tenant
     // admin's target (their home org ≠ the follow-up's org). app_user actors are
     // still confined to their active org by the org_isolation policy. See Issue #3.
-    await tx.execute(sql`
+    const deleted = (await tx.execute(sql`
       UPDATE lms.lead_follow_ups
       SET is_deleted = TRUE, deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
       WHERE id = ${followUpId} AND NOT is_deleted
+      RETURNING lead_id::text AS lead_id, org_id::text AS org_id
+    `)) as unknown as Array<{ lead_id: string; org_id: string }>;
+
+    const row = deleted[0];
+    if (!row) return;
+
+    // marketing_leads.scheduled_at may have been pointing at the row we just
+    // deleted, which would leave the lead flagged as due against a follow-up that
+    // no longer exists. Re-derive the pointer from whatever pending follow-up
+    // actually survives (NULL when none does).
+    await tx.execute(sql`
+      UPDATE lms.marketing_leads ml
+      SET scheduled_at = (
+        SELECT lf.scheduled_at
+        FROM lms.lead_follow_ups lf
+        JOIN lms.follow_up_statuses fs ON fs.id = lf.status_id
+        WHERE lf.lead_id = ml.id AND NOT lf.is_deleted AND fs.name = 'pending'
+        ORDER BY lf.scheduled_at DESC
+        LIMIT 1
+      )
+      WHERE ml.id = ${row.lead_id}::uuid AND ml.org_id = ${row.org_id}::uuid
     `);
   });
 }

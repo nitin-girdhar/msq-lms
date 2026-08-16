@@ -60,6 +60,13 @@ export const updateLeadSchema = z.object({
   tags: z.array(z.string().max(50)).max(20).optional(),
   metadata: z.record(z.unknown()).optional(),
   note: z.string().max(5000).optional(),
+  // Schedules the lead's next follow-up as part of THIS update, in the same
+  // transaction as the stage move. Moving a lead into a stage with
+  // lead_stage.followup_required and leaving marketing_leads.scheduled_at NULL
+  // makes it invisible to the reminder poller, so the two writes must not be
+  // separable — see assertFollowUpIsScheduled in leads.repository.ts.
+  follow_up_scheduled_at: z.string().datetime({ offset: true }).optional(),
+  follow_up_assigned_user_id: z.string().uuid('Invalid follow_up_assigned_user_id').optional(),
   // Optimistic concurrency token: the updated_at the client last read. When
   // present the UPDATE is guarded on it and a mismatch is a 409, so two people
   // editing the same lead no longer silently overwrite each other. Optional so

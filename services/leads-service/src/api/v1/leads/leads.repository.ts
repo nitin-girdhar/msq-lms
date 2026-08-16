@@ -14,6 +14,7 @@ import {
 import { RANKS } from '@platform/authz';
 import { BadRequestError, ConflictError, NotFoundError } from '../../../lib/errors.js';
 import { resolveLeadWriteScope, effectiveInOrgActor } from '../../../lib/lead-write-scope.js';
+import { insertFollowUpTx } from '../follow-ups/follow-ups.repository.js';
 import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 
 function coerceTags(val: unknown): string[] {
@@ -391,7 +392,51 @@ interface CurrentLeadRow {
   outcome_id: string | null;
   outcome_comment: string | null;
   source_name: string | null;
+  scheduled_at: Date | string | null;
   updated_at: Date | string;
+}
+
+/** Does this stage carry lead_stage.followup_required? NULL stage → false. */
+async function stageRequiresFollowUp(
+  tx: Parameters<Parameters<typeof withRoleTx>[1]>[0],
+  stageId: string | null,
+): Promise<boolean> {
+  if (!stageId) return false;
+  const rows = (await tx.execute(sql`
+    SELECT followup_required FROM lms.lead_stage WHERE id = ${stageId}::uuid
+  `)) as unknown as Array<{ followup_required: boolean | null }>;
+  return Boolean(rows[0]?.followup_required);
+}
+
+// A lead parked in a followup_required stage with marketing_leads.scheduled_at
+// NULL is invisible: the notifications-service poller requires scheduled_at IS
+// NOT NULL, as does every overdue count and the follow-up queue. Nobody is
+// reminded and nothing shows it is being neglected.
+//
+// The rule used to live only in the Edit Lead dialog (a client-side check), so
+// any other caller — a script, an integration, or the dialog itself when its
+// stage-catalog fetch failed — could move a lead into `contacting` and leave it
+// dark. Enforcing it here makes the stage and its due time inseparable.
+async function assertFollowUpIsScheduled(
+  tx: Parameters<Parameters<typeof withRoleTx>[1]>[0],
+  current: CurrentLeadRow,
+  data: UpdateLeadInput,
+): Promise<void> {
+  // Scoped to a request that actually MOVES the stage. Leads that are already in
+  // this state (written before the rule existed) must stay editable — refusing
+  // every PATCH against them would mean a rep could not even re-assign one, and
+  // the check would punish the people cleaning up rather than the write that
+  // created the problem. Such a lead is repaired by the Edit Lead dialog, which
+  // requires the due date for any edit while the stage needs a follow-up.
+  if (data.stage_id === undefined || data.stage_id === current.stage_id) return;
+  if (!(await stageRequiresFollowUp(tx, data.stage_id))) return;
+
+  const willHaveFollowUp = data.follow_up_scheduled_at !== undefined || current.scheduled_at != null;
+  if (!willHaveFollowUp) {
+    throw new BadRequestError(
+      'This status requires a follow-up. Provide follow_up_scheduled_at with the update.',
+    );
+  }
 }
 
 // `outcome_comment` is not an independent field: lms.check_lead_stage_outcome()
@@ -483,6 +528,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
     // try to lock lms.lead_sources too.
     const currentRows = (await tx.execute(sql`
       SELECT stage_id::text AS stage_id, outcome_id::text AS outcome_id, outcome_comment, updated_at,
+             scheduled_at,
              (SELECT name FROM lms.lead_sources WHERE id = ml.source_id) AS source_name
       FROM lms.marketing_leads ml
       WHERE id = ${leadId}::uuid AND org_id = ${ctx.org_id}::uuid AND NOT is_deleted
@@ -508,6 +554,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
         }
       }
       await assertOutcomeCommentIsKeepable(tx, current, data);
+      await assertFollowUpIsScheduled(tx, current, data);
     }
 
     const updateData: Record<string, unknown> = {};
@@ -531,7 +578,33 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
     if (data.tags !== undefined)           updateData['tags']          = coerceTags(data.tags);
     if (data.metadata !== undefined)       updateData['metadata']      = data.metadata;
 
-    if (Object.keys(updateData).length === 0) return null;
+    // Moving a lead OUT of a follow-up stage (converted/unqualified/…) used to
+    // leave the old due time on the row. Nothing surfaced it — every consumer
+    // also joins lead_stage.followup_required — but the pointer then described a
+    // follow-up nobody would ever do. Clear it, unless this same request is
+    // scheduling one (checked below, and its insert would win anyway).
+    if (
+      data.stage_id !== undefined
+      && current
+      && data.stage_id !== current.stage_id
+      && data.follow_up_scheduled_at === undefined
+      && !(await stageRequiresFollowUp(tx, data.stage_id))
+    ) {
+      updateData['scheduledAt'] = null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      // A body carrying ONLY a follow-up would otherwise fall through this early
+      // return and surface as "Lead not found" — a 404 for a lead that plainly
+      // exists. This route schedules a follow-up alongside a lead change; on its
+      // own it belongs to the dedicated endpoint.
+      if (data.follow_up_scheduled_at !== undefined) {
+        throw new BadRequestError(
+          'follow_up_scheduled_at must accompany a lead change. Use POST /leads/:id/follow-ups to schedule one on its own.',
+        );
+      }
+      return null;
+    }
 
     // The row is already locked and version-checked above, so a plain guarded
     // UPDATE is enough here.
@@ -546,6 +619,24 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
       .returning({ id: marketingLeadsTable.id, assignedUserId: marketingLeadsTable.assignedUserId });
 
     if (!updated) return null;
+
+    // Same transaction as the stage move on purpose. The Edit Lead dialog used to
+    // PATCH the stage and then POST the follow-up as a second request, so a
+    // failure on the second left the lead in `contacting` with no due time and no
+    // way for the user to tell.
+    if (data.follow_up_scheduled_at !== undefined) {
+      const assignedUserId = data.follow_up_assigned_user_id
+        ?? updated.assignedUserId
+        ?? await effectiveInOrgActor(tx, ctx.user_id, { orgId: ctx.org_id, assignedUserId: null });
+      await insertFollowUpTx(tx, {
+        orgId: ctx.org_id,
+        leadId,
+        assignedUserId,
+        scheduledAt: new Date(data.follow_up_scheduled_at),
+        notes: data.transition_note ?? null,
+        createdBy: ctx.user_id,
+      });
+    }
 
     // Carried out for the Meta CAPI gate in the service layer: it needs to know
     // whether the stage actually moved, and whether this lead came from Meta.

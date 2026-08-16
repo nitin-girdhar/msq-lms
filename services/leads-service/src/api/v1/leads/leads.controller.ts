@@ -85,6 +85,12 @@ export class LeadsController {
     if (data.assigned_user_id === null && !can(request.auth, CAPABILITY.LMS_LEADS_ASSIGN)) {
       throw new ForbiddenError('You do not have permission to change lead assignment');
     }
+    // Scheduling a follow-up through this route creates a real lms.lead_follow_ups
+    // row, so it takes the same capability POST /leads/:id/follow-ups demands.
+    // Otherwise lms.leads.edit alone would be a way around lms.followups.create.
+    if (data.follow_up_scheduled_at !== undefined && !can(request.auth, CAPABILITY.LMS_FOLLOWUPS_CREATE)) {
+      throw new ForbiddenError('You do not have permission to create follow-ups');
+    }
     await service.updateLead({ org_id, user_id, role, tenant_id, readOnly: !can(request.auth, CAPABILITY.PLATFORM_WRITE) }, id, data);
     return reply.status(204).send();
   };

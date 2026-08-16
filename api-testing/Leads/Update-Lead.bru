@@ -20,6 +20,8 @@ body:json {
     "outcome_id": "{{outcomeId}}",
     "outcome_comment": "Updated via Bruno",
     "transition_note": "Moved to next stage",
+    "follow_up_scheduled_at": "2026-12-01T10:00:00.000Z",
+    "follow_up_assigned_user_id": "{{userId}}",
     "first_name": "Updated Name",
     "middle_name": "",
     "last_name": "Sharma",
@@ -38,4 +40,13 @@ body:json {
     "metadata": {},
     "note": "General update note"
   }
+}
+
+docs {
+  Moving a lead into a stage with `followup_required` (contacting / on_hold /
+  qualified) requires `follow_up_scheduled_at` on the same request — the server
+  rejects the move otherwise, so a lead can never end up in a follow-up stage
+  with no due time. The follow-up is opened in the same transaction as the stage
+  change. Drop both `follow_up_*` fields when `stageId` points at a stage that
+  does not require follow-up.
 }

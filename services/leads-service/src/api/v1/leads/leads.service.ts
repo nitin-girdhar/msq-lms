@@ -131,6 +131,23 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
       }
     }
 
+    // A follow-up scheduled as part of the stage move is a real lead_follow_ups
+    // row, so it gets the same audit entry and event as one created through
+    // POST /leads/:id/follow-ups — the write path differs, the fact does not.
+    if (data.follow_up_scheduled_at !== undefined) {
+      await logActivity({
+        action_type: 'follow_up_created',
+        performed_by: ctx.user_id,
+        lead_id: leadId,
+        org_id: ctx.org_id,
+      });
+      publishEvent('followup:created', {
+        lead_id: leadId, org_id: ctx.org_id, tenant_id: ctx.tenant_id,
+        assigned_user_id: data.follow_up_assigned_user_id ?? result.assignedUserId ?? ctx.user_id,
+        actor_id: ctx.user_id,
+      });
+    }
+
     publishEvent('lead:updated', {
       lead_id: leadId, org_id: ctx.org_id, tenant_id: ctx.tenant_id,
       assigned_user_id: result.assignedUserId ?? null,

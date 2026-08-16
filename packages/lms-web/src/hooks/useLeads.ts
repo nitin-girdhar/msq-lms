@@ -159,15 +159,17 @@ export function useLeads(orgIds?: string[], platforms?: string[]): UseLeadsRetur
       }
       if (payload.expectedUpdatedAt) patchData.expected_updated_at = payload.expectedUpdatedAt;
 
+      // The follow-up rides along on the PATCH rather than following it as a second
+      // request: leads-service opens it in the same transaction as the stage move,
+      // so a lead can never land in a followup_required stage without a due time.
+      if (payload.field === 'stage' && payload.followUp) {
+        const fu = payload.followUp;
+        patchData.follow_up_scheduled_at = fu.scheduledAt;
+        if (fu.assignedUserId) patchData.follow_up_assigned_user_id = fu.assignedUserId;
+      }
+
       try {
         await leadsApi.update(payload.leadId, patchData);
-        if (payload.field === 'stage' && payload.followUp) {
-          const fu = payload.followUp;
-          const fuData: Record<string, unknown> = { scheduled_at: fu.scheduledAt };
-          if (fu.assignedUserId) fuData.assigned_user_id = fu.assignedUserId;
-          if (fu.notes)          fuData.notes             = fu.notes;
-          await leadsApi.addFollowUp(payload.leadId, fuData);
-        }
       } catch (err) {
         await fetchData(true);
         throw err;

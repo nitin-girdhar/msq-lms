@@ -507,22 +507,32 @@ function defaultRescheduleAt(): string {
 
 interface FollowUpActionModalProps {
   followUp: TimelineEvent;
+  /** The lead's current stage carries lead_stage.followup_required. */
+  stageRequiresFollowUp: boolean;
   onClose: () => void;
   onUpdated: () => void;
 }
 
 function FollowUpActionModal({
   followUp,
+  stageRequiresFollowUp,
   onClose,
   onUpdated,
 }: FollowUpActionModalProps) {
   const [action, setAction] = useState<FollowUpAction>("complete");
   const [notes, setNotes] = useState("");
   const [scheduledAt, setScheduledAt] = useState(defaultRescheduleAt);
+  const [nextScheduledAt, setNextScheduledAt] = useState(defaultRescheduleAt);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const nowIso = new Date().toISOString().slice(0, 16);
+
+  // Completing clears the lead's scheduled_at. While the lead is still parked in
+  // a stage that requires follow-up, that would take it out of the reminder
+  // poller and every overdue count — it would simply go quiet. So the next due
+  // time is captured here and opened in the same request.
+  const needsNextFollowUp = action === "complete" && stageRequiresFollowUp;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -535,6 +545,10 @@ function FollowUpActionModal({
       setError("Please enter a note.");
       return;
     }
+    if (needsNextFollowUp && !nextScheduledAt) {
+      setError("This lead still needs follow-up — set the next date and time.");
+      return;
+    }
     if (!followUp.followupId) {
       setError("Follow-up ID missing — cannot update this entry.");
       return;
@@ -545,6 +559,8 @@ function FollowUpActionModal({
       const body: Record<string, unknown> = { action };
       if (action === "reschedule")
         body.scheduledAt = new Date(scheduledAt).toISOString();
+      if (needsNextFollowUp)
+        body.nextScheduledAt = new Date(nextScheduledAt).toISOString();
       if (notes.trim()) body.notes = notes.trim();
 
       await leadsApi.updateFollowUp(followUp.leadId, followUp.followupId!, body);
@@ -653,6 +669,25 @@ function FollowUpActionModal({
                 min={nowIso}
                 className="w-full rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0891b2]"
               />
+            </div>
+          )}
+
+          {needsNextFollowUp && (
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-[#475569]">
+                Next follow-up <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="datetime-local"
+                value={nextScheduledAt}
+                onChange={(e) => setNextScheduledAt(e.target.value)}
+                required
+                min={nowIso}
+                className="w-full rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0891b2]"
+              />
+              <p className="mt-1 text-xs text-[#94A3B8]">
+                This lead is still in a status that needs follow-up, so the next one is scheduled now.
+              </p>
             </div>
           )}
 
@@ -933,6 +968,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
       {activeFollowUp && (
         <FollowUpActionModal
           followUp={activeFollowUp}
+          stageRequiresFollowUp={Boolean(lead?.followup_required)}
           onClose={() => setActiveFollowUp(null)}
           onUpdated={() => {
             setActiveFollowUp(null);
