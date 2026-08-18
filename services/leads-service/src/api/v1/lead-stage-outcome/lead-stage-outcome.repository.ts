@@ -25,7 +25,7 @@ export async function list(ctx: RoleTxContext) {
       .from(leadStageOutcomeTable)
       .leftJoin(leadStageTable, eq(leadStageOutcomeTable.stageId, leadStageTable.id))
       .where(eq(leadStageOutcomeTable.tenantId, ctx.tenant_id))
-      .orderBy(asc(leadStageOutcomeTable.label)),
+      .orderBy(asc(leadStageOutcomeTable.sortOrder), asc(leadStageOutcomeTable.label)),
   );
 }
 

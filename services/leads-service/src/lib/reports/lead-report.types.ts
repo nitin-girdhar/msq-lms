@@ -1,26 +1,60 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Shapes for the daily lead report.
 //
-// The seven metric columns are identical across the branch and user rows on
-// purpose — one renderer draws both tables. The SQL casts every count to ::INT,
-// but these rows come back through `tx.execute` as untyped records, so the
-// renderer still coerces with Number() before formatting.
+// The metric columns are identical across the branch and user rows on purpose —
+// one renderer draws both tables. The SQL casts every count to ::INT, but these
+// rows come back through `tx.execute` as untyped records, so the renderer still
+// coerces with Number() before formatting.
 //
-// Metric definitions live with the views in db_scripts/02_schema.sql
-// (lms.vw_lead_report_branch / lms.vw_lead_report_user).
+// Metric definitions live with the views in db_scripts/05_views.sql
+// (lms.vw_lead_report_branch / lms.vw_lead_report_user); read that header before
+// adding or changing one.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The seven reported metrics, plus the total they are drawn from. */
+/**
+ * The 29 reported metrics: 6 core, one per lms.lead_stage, one per non-'other'
+ * lms.lead_stage_outcome. Order matters and is mirrored exactly by METRIC_KEYS
+ * below and by the SQL — see that constant's comment.
+ */
 export interface LeadReportMetrics {
+  // core
   total_leads: number;
-  new_count: number;
-  new_leads_today: number;
-  new_leads_this_month: number;
   unassigned_count: number;
   followup_scheduled: number;
   followup_overdue: number;
+  new_leads_today: number;
+  new_leads_this_month: number;
+  // per lms.lead_stage.name, in sort_order
+  new_count: number;
+  contacting_count: number;
+  on_hold_count: number;
+  qualified_count: number;
   converted_count: number;
   unqualified_count: number;
+  transferred_out_count: number;
+  // per lms.lead_stage_outcome.name, grouped by parent stage
+  //   contacting
+  oc_not_connected_count: number;
+  oc_switch_off_count: number;
+  oc_not_answered_count: number;
+  oc_call_back_later_count: number;
+  //   on_hold
+  oc_on_hold_count: number;
+  //   qualified
+  oc_visit_scheduled_count: number;
+  oc_visited_count: number;
+  //   converted
+  oc_membership_sold_count: number;
+  //   unqualified
+  oc_no_response_after_multiple_attempts_count: number;
+  oc_wrong_number_count: number;
+  oc_job_applicant_count: number;
+  oc_budget_issue_count: number;
+  oc_not_interested_count: number;
+  oc_location_issue_count: number;
+  oc_duplicate_lead_count: number;
+  //   transferred_out
+  oc_transferred_to_other_branch_count: number;
 }
 
 export interface BranchReportRow extends LeadReportMetrics {
@@ -55,17 +89,68 @@ export interface TenantReport {
   users: UserReportRow[];
 }
 
-const METRIC_KEYS = [
+/**
+ * The metric column order, and the single source of truth for it in this
+ * service. analytics.repository.ts GENERATES its SUM lists, INSERT column
+ * lists and ON CONFLICT DO UPDATE clauses from this array, so a metric added
+ * here reaches all seven of those query sites at once.
+ *
+ * This must stay in lock-step, in the same order, with:
+ *   lms.vw_lead_report_branch   (db_scripts/05_views.sql)
+ *   lms.vw_lead_report_user     (db_scripts/05_views.sql)
+ *   lms.lead_report_snapshot    (db_scripts/02_tables_core.sql)
+ */
+export const METRIC_KEYS = [
+  // core
   'total_leads',
-  'new_count',
-  'new_leads_today',
-  'new_leads_this_month',
   'unassigned_count',
   'followup_scheduled',
   'followup_overdue',
+  'new_leads_today',
+  'new_leads_this_month',
+  // per lms.lead_stage.name, in sort_order
+  'new_count',
+  'contacting_count',
+  'on_hold_count',
+  'qualified_count',
   'converted_count',
   'unqualified_count',
+  'transferred_out_count',
+  // per lms.lead_stage_outcome.name, grouped by parent stage
+  //   contacting
+  'oc_not_connected_count',
+  'oc_switch_off_count',
+  'oc_not_answered_count',
+  'oc_call_back_later_count',
+  //   on_hold
+  'oc_on_hold_count',
+  //   qualified
+  'oc_visit_scheduled_count',
+  'oc_visited_count',
+  //   converted
+  'oc_membership_sold_count',
+  //   unqualified
+  'oc_no_response_after_multiple_attempts_count',
+  'oc_wrong_number_count',
+  'oc_job_applicant_count',
+  'oc_budget_issue_count',
+  'oc_not_interested_count',
+  'oc_location_issue_count',
+  'oc_duplicate_lead_count',
+  //   transferred_out
+  'oc_transferred_to_other_branch_count',
 ] as const satisfies ReadonlyArray<keyof LeadReportMetrics>;
+
+/**
+ * A LeadReportMetrics with every metric at 0 — the base for any rollup summed
+ * in TypeScript rather than by the database. Derived from METRIC_KEYS so a new
+ * metric can never be left out of a rollup and silently report 0.
+ */
+export function zeroMetrics(): LeadReportMetrics {
+  const out = {} as LeadReportMetrics;
+  for (const key of METRIC_KEYS) out[key] = 0;
+  return out;
+}
 
 /** Exported for source-report.types.ts's normalizers — same raw-row shape, one extra grouping dimension. */
 export function toMetrics(row: Record<string, unknown>): LeadReportMetrics {

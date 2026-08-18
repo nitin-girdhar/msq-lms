@@ -2,8 +2,10 @@ import { sql } from 'drizzle-orm';
 import { withRoleTx, withServiceTx } from '@platform/db';
 import { organizationsTable } from '@platform/db/schema';
 import { eq } from 'drizzle-orm';
-import { toBranchRow, toUserRow } from '../../../lib/reports/lead-report.types.js';
-import type { BranchReportRow, TenantReport, UserReportRow } from '../../../lib/reports/lead-report.types.js';
+import { METRIC_KEYS, toBranchRow, toUserRow, zeroMetrics } from '../../../lib/reports/lead-report.types.js';
+import type {
+  BranchReportRow, LeadReportMetrics, TenantReport, UserReportRow,
+} from '../../../lib/reports/lead-report.types.js';
 import { toSourceBranchRow, toSourceUserRow } from '../../../lib/reports/source-report.types.js';
 import type { SourceBranchRow, SourceUserRow } from '../../../lib/reports/source-report.types.js';
 
@@ -119,6 +121,99 @@ export async function getPipelineByStage(orgId: string, userId: string, range?: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Generated metric fragments.
+//
+// Seven query sites below enumerate all 29 metric columns. Hand-listing them
+// seven times is how one site silently drifts from the others — a missed column
+// in an INSERT is a constraint violation, but a missed one in a SUM list is a
+// zero that looks like real data. So every repeated list is derived from the
+// single METRIC_KEYS array in lead-report.types.ts, which is itself kept in
+// lock-step with the two views and lms.lead_report_snapshot.
+//
+// sql.raw is safe here and only here: METRIC_KEYS is a compile-time `as const`
+// tuple of identifiers, never user input.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** `total_leads, unassigned_count, …` — INSERT column lists. */
+const METRIC_COLS = sql.join(METRIC_KEYS.map((k) => sql.raw(k)), sql`, `);
+
+/** `SUM(total_leads)::INT AS total_leads, …` — every rollup/snapshot read. */
+const METRIC_SUMS = sql.join(
+  METRIC_KEYS.map((k) => sql`SUM(${sql.raw(k)})::INT AS ${sql.raw(k)}`),
+  sql`, `,
+);
+
+/** `0, 0, …` — the zero-fill snapshot row for a (branch, source) with no users. */
+const METRIC_ZEROS = sql.join(METRIC_KEYS.map(() => sql`0`), sql`, `);
+
+/** `total_leads = EXCLUDED.total_leads, …` — ON CONFLICT DO UPDATE. */
+const METRIC_UPSERT = sql.join(
+  METRIC_KEYS.map((k) => sql`${sql.raw(k)} = EXCLUDED.${sql.raw(k)}`),
+  sql`, `,
+);
+
+/** `c.total_leads, …` — projecting a counters CTE through an outer SELECT. */
+function metricCols(prefix: string) {
+  return sql.join(METRIC_KEYS.map((k) => sql`${sql.raw(prefix)}.${sql.raw(k)}`), sql`, `);
+}
+
+/** The metric values off one row, positionally matching METRIC_COLS. */
+function metricValues(row: LeadReportMetrics) {
+  return sql.join(METRIC_KEYS.map((k) => sql`${row[k]}`), sql`, `);
+}
+
+/**
+ * The live COUNT(*) FILTER list, shared by sourceBranchQuery and
+ * sourceUserQuery — both alias ml / o / ls / lo the same way. This is the one
+ * list that cannot be generated from METRIC_KEYS, because each metric has its
+ * own predicate; it is the same set of expressions as the two views in
+ * db_scripts/05_views.sql and has to be changed with them.
+ */
+const METRIC_COUNTERS = sql`
+      -- core
+      COUNT(*)::INT                                                                AS total_leads,
+      COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)::INT                     AS unassigned_count,
+      COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                             AND ml.scheduled_at >= NOW())::INT                    AS followup_scheduled,
+      COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
+                             AND ml.scheduled_at <  NOW())::INT                    AS followup_overdue,
+      COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
+                               = (NOW()          AT TIME ZONE o.timezone)::date)::INT AS new_leads_today,
+      COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
+                               = date_trunc('month', NOW()          AT TIME ZONE o.timezone))::INT AS new_leads_this_month,
+      -- per stage (lms.lead_stage.name, in sort_order)
+      COUNT(*) FILTER (WHERE ls.name = 'new')::INT                                 AS new_count,
+      COUNT(*) FILTER (WHERE ls.name = 'contacting')::INT                          AS contacting_count,
+      COUNT(*) FILTER (WHERE ls.name = 'on_hold')::INT                             AS on_hold_count,
+      COUNT(*) FILTER (WHERE ls.name = 'qualified')::INT                           AS qualified_count,
+      COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                           AS converted_count,
+      COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT                         AS unqualified_count,
+      COUNT(*) FILTER (WHERE ls.name = 'transferred_out')::INT                     AS transferred_out_count,
+      -- per stage outcome (lms.lead_stage_outcome.name, by parent stage)
+      --   contacting
+      COUNT(*) FILTER (WHERE lo.name = 'not_connected')::INT                       AS oc_not_connected_count,
+      COUNT(*) FILTER (WHERE lo.name = 'switch_off')::INT                          AS oc_switch_off_count,
+      COUNT(*) FILTER (WHERE lo.name = 'not_answered')::INT                        AS oc_not_answered_count,
+      COUNT(*) FILTER (WHERE lo.name = 'call_back_later')::INT                     AS oc_call_back_later_count,
+      --   on_hold
+      COUNT(*) FILTER (WHERE lo.name = 'on_hold')::INT                             AS oc_on_hold_count,
+      --   qualified
+      COUNT(*) FILTER (WHERE lo.name = 'visit_scheduled')::INT                     AS oc_visit_scheduled_count,
+      COUNT(*) FILTER (WHERE lo.name = 'visited')::INT                             AS oc_visited_count,
+      --   converted
+      COUNT(*) FILTER (WHERE lo.name = 'membership_sold')::INT                     AS oc_membership_sold_count,
+      --   unqualified
+      COUNT(*) FILTER (WHERE lo.name = 'no_response_after_multiple_attempts')::INT AS oc_no_response_after_multiple_attempts_count,
+      COUNT(*) FILTER (WHERE lo.name = 'wrong_number')::INT                        AS oc_wrong_number_count,
+      COUNT(*) FILTER (WHERE lo.name = 'job_applicant')::INT                       AS oc_job_applicant_count,
+      COUNT(*) FILTER (WHERE lo.name = 'budget_issue')::INT                        AS oc_budget_issue_count,
+      COUNT(*) FILTER (WHERE lo.name = 'not_interested')::INT                      AS oc_not_interested_count,
+      COUNT(*) FILTER (WHERE lo.name = 'location_issue')::INT                      AS oc_location_issue_count,
+      COUNT(*) FILTER (WHERE lo.name = 'duplicate_lead')::INT                      AS oc_duplicate_lead_count,
+      --   transferred_out
+      COUNT(*) FILTER (WHERE lo.name = 'transferred_to_other_branch')::INT         AS oc_transferred_to_other_branch_count`;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Daily lead report (lms.vw_lead_report_branch / lms.vw_lead_report_user).
 //
 // Metric semantics live in the views' header comments in db_scripts/02_schema.sql
@@ -154,15 +249,7 @@ function tenantBranchReportQuery(tenantId: string) {
       -- branches span timezones.
       MAX(report_date)                 AS report_date,
       (GROUPING(org_id) = 1)           AS is_total,
-      SUM(total_leads)::INT        AS total_leads,
-      SUM(new_count)::INT          AS new_count,
-      SUM(new_leads_today)::INT    AS new_leads_today,
-      SUM(new_leads_this_month)::INT AS new_leads_this_month,
-      SUM(unassigned_count)::INT   AS unassigned_count,
-      SUM(followup_scheduled)::INT AS followup_scheduled,
-      SUM(followup_overdue)::INT   AS followup_overdue,
-      SUM(converted_count)::INT    AS converted_count,
-      SUM(unqualified_count)::INT  AS unqualified_count,
+      ${METRIC_SUMS},
       CLOCK_TIMESTAMP()            AS snapshot_at
     FROM lms.vw_lead_report_branch
     WHERE tenant_id = ${tenantId}::uuid
@@ -187,11 +274,6 @@ export async function getBranchReport(orgId: string, userId: string) {
   });
 }
 
-const BRANCH_METRIC_KEYS = [
-  'total_leads', 'new_count', 'new_leads_today', 'new_leads_this_month',
-  'unassigned_count', 'followup_scheduled', 'followup_overdue', 'converted_count', 'unqualified_count',
-] as const;
-
 /** Sums the LeadReportMetrics-shaped numeric fields across raw branch rows into one rollup row. */
 function sumBranchRows(rows: Array<Record<string, unknown>>): Record<string, unknown> {
   const rollup: Record<string, unknown> = {
@@ -205,7 +287,7 @@ function sumBranchRows(rows: Array<Record<string, unknown>>): Record<string, unk
     }, null),
     is_total: true,
   };
-  for (const key of BRANCH_METRIC_KEYS) {
+  for (const key of METRIC_KEYS) {
     rollup[key] = rows.reduce((sum, r) => sum + Number(r[key] ?? 0), 0);
   }
   return rollup;
@@ -306,21 +388,16 @@ export async function upsertReportSnapshot(
         INSERT INTO lms.lead_report_snapshot
           (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned,
            source_id, source_label, report_date,
-           total_leads, new_count, new_leads_today, unassigned_count, followup_scheduled,
-           followup_overdue, converted_count, unqualified_count)
+           ${METRIC_COLS})
         VALUES (
           ${report.tenant_id}::uuid, ${u.org_id}::uuid, ${u.org_name}, ${u.assigned_user_id}::uuid,
           ${u.assignee}, ${u.is_unassigned}, ${u.source_id}::uuid, ${u.source_label}, ${u.report_date}::date,
-          ${u.total_leads}, ${u.new_count}, ${u.new_leads_today}, ${u.unassigned_count},
-          ${u.followup_scheduled}, ${u.followup_overdue}, ${u.converted_count}, ${u.unqualified_count}
+          ${metricValues(u)}
         )
         ON CONFLICT (tenant_id, org_id, assigned_user_id, source_id, report_date) DO UPDATE SET
           org_name = EXCLUDED.org_name, assignee = EXCLUDED.assignee, is_unassigned = EXCLUDED.is_unassigned,
           source_label = EXCLUDED.source_label,
-          total_leads = EXCLUDED.total_leads, new_count = EXCLUDED.new_count,
-          new_leads_today = EXCLUDED.new_leads_today, unassigned_count = EXCLUDED.unassigned_count,
-          followup_scheduled = EXCLUDED.followup_scheduled, followup_overdue = EXCLUDED.followup_overdue,
-          converted_count = EXCLUDED.converted_count, unqualified_count = EXCLUDED.unqualified_count,
+          ${METRIC_UPSERT},
           captured_at = CLOCK_TIMESTAMP()
       `);
     }
@@ -332,12 +409,11 @@ export async function upsertReportSnapshot(
         INSERT INTO lms.lead_report_snapshot
           (tenant_id, org_id, org_name, assigned_user_id, assignee, is_unassigned,
            source_id, source_label, report_date,
-           total_leads, new_count, new_leads_today, unassigned_count, followup_scheduled,
-           followup_overdue, converted_count, unqualified_count)
+           ${METRIC_COLS})
         VALUES (
           ${report.tenant_id}::uuid, ${b.org_id}::uuid, ${b.org_name}, NULL, 'Unassigned', TRUE,
           ${b.source_id}::uuid, ${b.source_label}, ${b.report_date}::date,
-          0, 0, 0, 0, 0, 0, 0, 0
+          ${METRIC_ZEROS}
         )
         ON CONFLICT (tenant_id, org_id, assigned_user_id, source_id, report_date) DO UPDATE SET
           org_name = EXCLUDED.org_name, source_label = EXCLUDED.source_label, captured_at = CLOCK_TIMESTAMP()
@@ -369,14 +445,7 @@ export async function getSnapshotForDate(
       SELECT
         tenant_id, org_id, MAX(org_name) AS org_name, assigned_user_id, MAX(assignee) AS assignee,
         (assigned_user_id IS NULL) AS is_unassigned, ${date}::date AS report_date,
-        SUM(total_leads)::INT        AS total_leads,
-        SUM(new_count)::INT          AS new_count,
-        SUM(new_leads_today)::INT    AS new_leads_today,
-        SUM(unassigned_count)::INT   AS unassigned_count,
-        SUM(followup_scheduled)::INT AS followup_scheduled,
-        SUM(followup_overdue)::INT   AS followup_overdue,
-        SUM(converted_count)::INT    AS converted_count,
-        SUM(unqualified_count)::INT  AS unqualified_count
+        ${METRIC_SUMS}
       FROM lms.lead_report_snapshot
       WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
       GROUP BY tenant_id, org_id, assigned_user_id
@@ -391,14 +460,7 @@ export async function getSnapshotForDate(
         CASE WHEN GROUPING(org_id) = 1 THEN 'ALL BRANCHES' ELSE MAX(org_name) END AS org_name,
         (GROUPING(org_id) = 1) AS is_total,
         ${date}::date AS report_date,
-        SUM(total_leads)::INT        AS total_leads,
-        SUM(new_count)::INT          AS new_count,
-        SUM(new_leads_today)::INT    AS new_leads_today,
-        SUM(unassigned_count)::INT   AS unassigned_count,
-        SUM(followup_scheduled)::INT AS followup_scheduled,
-        SUM(followup_overdue)::INT   AS followup_overdue,
-        SUM(converted_count)::INT    AS converted_count,
-        SUM(unqualified_count)::INT  AS unqualified_count
+        ${METRIC_SUMS}
       FROM lms.lead_report_snapshot
       WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
       GROUP BY GROUPING SETS ((org_id), ())
@@ -439,14 +501,7 @@ export async function getSourceSnapshotForDate(
         MAX(source_label) AS source_label,
         (GROUPING(org_id) = 1) AS is_total,
         ${date}::date AS report_date,
-        SUM(total_leads)::INT        AS total_leads,
-        SUM(new_count)::INT          AS new_count,
-        SUM(new_leads_today)::INT    AS new_leads_today,
-        SUM(unassigned_count)::INT   AS unassigned_count,
-        SUM(followup_scheduled)::INT AS followup_scheduled,
-        SUM(followup_overdue)::INT   AS followup_overdue,
-        SUM(converted_count)::INT    AS converted_count,
-        SUM(unqualified_count)::INT  AS unqualified_count
+        ${METRIC_SUMS}
       FROM lms.lead_report_snapshot
       WHERE tenant_id = ${tenantId}::uuid AND report_date = ${date}::date
       GROUP BY GROUPING SETS ((org_id, source_id), (source_id))
@@ -488,22 +543,11 @@ function sourceBranchQuery(tenantId: string, orgId?: string, range?: DateRange) 
       SELECT
         ml.org_id,
         ml.source_id,
-        COUNT(*)                                                         AS total_leads,
-        COUNT(*) FILTER (WHERE ls.name = 'new')                          AS new_count,
-        COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
-                             = (NOW()          AT TIME ZONE o.timezone)::date) AS new_leads_today,
-        COUNT(*) FILTER (WHERE date_trunc('month', ml.created_at AT TIME ZONE o.timezone)
-                             = date_trunc('month', NOW()          AT TIME ZONE o.timezone)) AS new_leads_this_month,
-        COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)              AS unassigned_count,
-        COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                           AND ml.scheduled_at >= NOW())                 AS followup_scheduled,
-        COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                           AND ml.scheduled_at <  NOW())                 AS followup_overdue,
-        COUNT(*) FILTER (WHERE ls.name = 'converted')                    AS converted_count,
-        COUNT(*) FILTER (WHERE ls.name = 'unqualified')                  AS unqualified_count
+        ${METRIC_COUNTERS}
       FROM lms.marketing_leads ml
       JOIN entity.organizations o ON o.id = ml.org_id
-      LEFT JOIN lms.lead_stage ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
+      LEFT JOIN lms.lead_stage         ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
+      LEFT JOIN lms.lead_stage_outcome lo ON lo.id = ml.outcome_id
       WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid
         ${orgId ? sql`AND ml.org_id = ${orgId}::uuid` : sql``}
         ${rangeFilter(range)}
@@ -514,15 +558,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string, range?: DateRange) 
       c.source_id AS source_id, COALESCE(src.label, 'Unknown') AS source_label,
       (NOW() AT TIME ZONE o.timezone)::date AS report_date,
       FALSE AS is_total,
-      c.total_leads::INT        AS total_leads,
-      c.new_count::INT          AS new_count,
-      c.new_leads_today::INT    AS new_leads_today,
-      c.new_leads_this_month::INT AS new_leads_this_month,
-      c.unassigned_count::INT   AS unassigned_count,
-      c.followup_scheduled::INT AS followup_scheduled,
-      c.followup_overdue::INT   AS followup_overdue,
-      c.converted_count::INT    AS converted_count,
-      c.unqualified_count::INT  AS unqualified_count
+      ${metricCols('c')}
     FROM counters c
     JOIN entity.organizations o ON o.id = c.org_id AND NOT o.is_deleted
     LEFT JOIN lms.lead_sources src ON src.id = c.source_id
@@ -537,15 +573,7 @@ function sourceBranchQuery(tenantId: string, orgId?: string, range?: DateRange) 
       c.source_id AS source_id, COALESCE(src.label, 'Unknown') AS source_label,
       CURRENT_DATE AS report_date,
       TRUE AS is_total,
-      SUM(c.total_leads)::INT        AS total_leads,
-      SUM(c.new_count)::INT          AS new_count,
-      SUM(c.new_leads_today)::INT    AS new_leads_today,
-      SUM(c.new_leads_this_month)::INT AS new_leads_this_month,
-      SUM(c.unassigned_count)::INT   AS unassigned_count,
-      SUM(c.followup_scheduled)::INT AS followup_scheduled,
-      SUM(c.followup_overdue)::INT   AS followup_overdue,
-      SUM(c.converted_count)::INT    AS converted_count,
-      SUM(c.unqualified_count)::INT  AS unqualified_count
+      ${METRIC_SUMS}
     FROM counters c
     LEFT JOIN lms.lead_sources src ON src.id = c.source_id
     GROUP BY c.source_id, src.label
@@ -577,20 +605,11 @@ function sourceUserQuery(tenantId: string, orgId?: string, range?: DateRange) {
       ml.source_id,
       COALESCE(src.label, 'Unknown') AS source_label,
       (NOW() AT TIME ZONE o.timezone)::date AS report_date,
-      COUNT(*)::INT                                                      AS total_leads,
-      COUNT(*) FILTER (WHERE ls.name = 'new')::INT                       AS new_count,
-      COUNT(*) FILTER (WHERE (ml.created_at AT TIME ZONE o.timezone)::date
-                           = (NOW()          AT TIME ZONE o.timezone)::date)::INT AS new_leads_today,
-      COUNT(*) FILTER (WHERE ml.assigned_user_id IS NULL)::INT            AS unassigned_count,
-      COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                         AND ml.scheduled_at >= NOW())::INT               AS followup_scheduled,
-      COUNT(*) FILTER (WHERE ml.scheduled_at IS NOT NULL
-                         AND ml.scheduled_at <  NOW())::INT               AS followup_overdue,
-      COUNT(*) FILTER (WHERE ls.name = 'converted')::INT                  AS converted_count,
-      COUNT(*) FILTER (WHERE ls.name = 'unqualified')::INT                AS unqualified_count
+      ${METRIC_COUNTERS}
     FROM lms.marketing_leads ml
     JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
     LEFT JOIN lms.lead_stage ls   ON ls.id  = ml.stage_id  AND ls.tenant_id = o.tenant_id
+    LEFT JOIN lms.lead_stage_outcome lo ON lo.id = ml.outcome_id
     LEFT JOIN iam.users u         ON u.id   = ml.assigned_user_id AND NOT u.is_deleted
     LEFT JOIN iam.user_roles ur   ON ur.id  = u.role_id
                                  AND (ur.tenant_id = o.tenant_id OR ur.tenant_id IS NULL)
@@ -670,19 +689,10 @@ function rollupSourceBranches(rows: SourceBranchRow[]): SourceBranchRow[] {
       source_label: first.source_label,
       report_date: group.reduce((max, r) => (r.report_date > max ? r.report_date : max), first.report_date),
       is_total: true,
-      total_leads: 0, new_count: 0, new_leads_today: 0, new_leads_this_month: 0,
-      unassigned_count: 0, followup_scheduled: 0, followup_overdue: 0, converted_count: 0, unqualified_count: 0,
+      ...zeroMetrics(),
     };
     for (const r of group) {
-      rollup.total_leads += r.total_leads;
-      rollup.new_count += r.new_count;
-      rollup.new_leads_today += r.new_leads_today;
-      rollup.new_leads_this_month += r.new_leads_this_month;
-      rollup.unassigned_count += r.unassigned_count;
-      rollup.followup_scheduled += r.followup_scheduled;
-      rollup.followup_overdue += r.followup_overdue;
-      rollup.converted_count += r.converted_count;
-      rollup.unqualified_count += r.unqualified_count;
+      for (const key of METRIC_KEYS) rollup[key] += r[key];
     }
     return rollup;
   });
@@ -723,7 +733,7 @@ export function rollupBranchesFromSources(rows: SourceBranchRow[]): BranchReport
       report_date: group.reduce((max, r) => (r.report_date > max ? r.report_date : max), first.report_date),
       is_total: false,
     };
-    for (const key of BRANCH_METRIC_KEYS) {
+    for (const key of METRIC_KEYS) {
       row[key] = group.reduce((sum, r) => sum + Number(r[key] ?? 0), 0);
     }
     return row;

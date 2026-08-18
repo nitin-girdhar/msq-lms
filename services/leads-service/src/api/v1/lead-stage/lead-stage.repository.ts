@@ -8,7 +8,7 @@ type LeadStageUpdate = Partial<LeadStageInsert>;
 type LeadStageCreateFields = Omit<LeadStageInsert, 'tenantId'>;
 
 export async function list(ctx: RoleTxContext) {
-  return withTenantConfigTx({ actorUserId: ctx.user_id, tenantId: ctx.tenant_id }, (tx) => tx.select().from(leadStageTable).where(eq(leadStageTable.tenantId, ctx.tenant_id)).orderBy(asc(leadStageTable.label)));
+  return withTenantConfigTx({ actorUserId: ctx.user_id, tenantId: ctx.tenant_id }, (tx) => tx.select().from(leadStageTable).where(eq(leadStageTable.tenantId, ctx.tenant_id)).orderBy(asc(leadStageTable.sortOrder), asc(leadStageTable.label)));
 }
 
 // Used by lead-stage-outcome to validate a stage_id FK before insert/update.

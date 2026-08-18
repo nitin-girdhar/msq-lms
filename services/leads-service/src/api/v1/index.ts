@@ -9,11 +9,12 @@ import { analyticsRouter } from './analytics/analytics.router.js';
 import { publicReportRouter } from './public-report/public-report.router.js';
 import { internalRouter } from './internal/internal.router.js';
 import { publicReadRouter } from './public-read/public-read.router.js';
-// Tenant-scoped lookup/role admin (N-6): super_admin manages LMS reference data
+// Tenant-scoped lookup admin (N-6): super_admin manages LMS reference data
 // within a selected tenant. Moved here from admin-service so the write executes
-// in the schema-owning service under tenant RLS (never root_service). Half A =
-// lms-roles; Half B = the 7 lms/marketing marketing lookups below.
-import { lmsRolesRouter } from './lms-roles/lms-roles.router.js';
+// in the schema-owning service under tenant RLS (never root_service). The 7
+// lms/marketing lookups below (lms-roles was a sibling here; removed along with
+// lms.roles/lms.member_roles — role/rank resolution runs on the unified iam
+// ladder now, see @platform/db's resolveGlobalRole).
 import { leadStageRouter } from './lead-stage/lead-stage.router.js';
 import { leadStageOutcomeRouter } from './lead-stage-outcome/lead-stage-outcome.router.js';
 import { interactionTypesRouter } from './interaction-types/interaction-types.router.js';
@@ -21,6 +22,7 @@ import { followUpStatusesRouter } from './follow-up-statuses/follow-up-statuses.
 import { leadSourcesRouter } from './lead-sources/lead-sources.router.js';
 import { marketingPlatformsRouter } from './marketing-platforms/marketing-platforms.router.js';
 import { campaignStatusesRouter } from './campaign-statuses/campaign-statuses.router.js';
+import { leadStageCapiEventsRouter } from './lead-stage-capi-events/lead-stage-capi-events.router.js';
 
 export async function v1Router(app: FastifyInstance) {
   await app.register(leadsRouter);
@@ -33,7 +35,6 @@ export async function v1Router(app: FastifyInstance) {
   await app.register(publicReportRouter);
   await app.register(internalRouter);
   await app.register(publicReadRouter);
-  await app.register(lmsRolesRouter);
   await app.register(leadStageRouter);
   await app.register(leadStageOutcomeRouter);
   await app.register(interactionTypesRouter);
@@ -41,4 +42,5 @@ export async function v1Router(app: FastifyInstance) {
   await app.register(leadSourcesRouter);
   await app.register(marketingPlatformsRouter);
   await app.register(campaignStatusesRouter);
+  await app.register(leadStageCapiEventsRouter);
 }

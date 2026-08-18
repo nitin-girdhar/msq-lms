@@ -255,6 +255,54 @@ function groupEvents(events: TimelineEvent[]): EventGroup[] {
   return groups;
 }
 
+// vw_lead_followup_timeline appends an operator's note to the generated assignment
+// sentence as `Reassigned from A to B — <note>`, so the raw text has to be recovered
+// from the tail before it can be compared against a follow-up's own note.
+const ASSIGNMENT_NOTE_SEPARATOR = " — ";
+
+function logNoteVariants(ev: TimelineEvent): string[] {
+  const note = ev.note?.trim();
+  if (!note) return [];
+  const variants = [note];
+  const at = note.lastIndexOf(ASSIGNMENT_NOTE_SEPARATOR);
+  if (ev.eventType === "assignment_change" && at > 0) {
+    const appended = note.slice(at + ASSIGNMENT_NOTE_SEPARATOR.length).trim();
+    if (appended) variants.push(appended);
+  }
+  return variants;
+}
+
+// One typed note is deliberately stored twice: on the status/assignment log (the audit
+// record of why the change happened) and on lms.lead_follow_ups.notes, which drives the
+// NOTES column of the Missed/Overdue follow-up screen. Both are load-bearing, so the
+// duplicate is resolved on read instead of at write time — the log copy wins here and the
+// follow-up event's copy is blanked, leaving Lead History showing it once.
+//
+// Paired by text, not by time: a follow-up event's `event_at` is its scheduled due date,
+// so one booked for next week sits nowhere near the save that created it and no time
+// window would match them. Counted one-for-one so a single log note only ever supersedes
+// a single follow-up note — reusing the same wording on a later follow-up still shows.
+function suppressDuplicateFollowUpNotes(events: TimelineEvent[]): TimelineEvent[] {
+  const fromLogs = new Map<string, number>();
+  for (const ev of events) {
+    if (ev.eventType === "follow_up") continue;
+    for (const text of logNoteVariants(ev)) {
+      fromLogs.set(text, (fromLogs.get(text) ?? 0) + 1);
+    }
+  }
+  if (fromLogs.size === 0) return events;
+
+  return events.map((ev) => {
+    if (ev.eventType !== "follow_up") return ev;
+    const text = ev.note?.trim();
+    if (!text) return ev;
+    const remaining = fromLogs.get(text);
+    if (!remaining) return ev;
+    fromLogs.set(text, remaining - 1);
+    return { ...ev, note: null };
+  });
+}
+
 interface FollowUpThread {
   key: string;
   representative: TimelineEvent;
@@ -774,7 +822,11 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
   const currentStatus = lead?.stage ?? "";
   const statusLabel = statusLabelMap[currentStatus] ?? lead?.stage_label ?? currentStatus;
   const statusCfg = STATUS_CONFIG[currentStatus];
-  const groups = groupEvents(events);
+  // Deduped before grouping: the log copy and the follow-up copy land in separate cards
+  // (the view gives follow-up events the assignee as actor and their due date as event_at,
+  // so groupEvents' sameActor + 30s test never merges them), which puts the duplicate out
+  // of reach of anything done inside a single card.
+  const groups = groupEvents(suppressDuplicateFollowUpNotes(events));
 
   const subtitle = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">

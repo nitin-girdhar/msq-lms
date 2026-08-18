@@ -15,6 +15,12 @@
 //   - FollowUp Scheduled, kept in COLUMNS — the external audience reads a fuller
 //     column set than the in-app table shows.
 //
+// The views behind this page carry 29 metrics (every lead stage and every stage
+// outcome), of which the cards and COLUMNS below show a handful. That is
+// deliberate: the data is captured so that adding a card or a column here is a
+// UI-only change. See the header above lms.vw_lead_report_branch in
+// db_scripts/05_views.sql for why the whole catalog is stored.
+//
 // Every row is present in the HTML; the inline script only *hides* descendants
 // on load. With JS disabled (or in a printer, or a scraper) the page degrades to
 // the fully-expanded tree rather than to three collapsed branch rows.
@@ -22,6 +28,7 @@
 
 import { escapeHtml } from './lead-report.render.js';
 import { computePendingActionPct, pendingActionBand, PENDING_ACTION_LEGEND } from './pending-action.js';
+import { METRIC_KEYS, zeroMetrics } from './lead-report.types.js';
 import type { BranchReportRow, LeadReportMetrics, TenantReport, UserReportRow } from './lead-report.types.js';
 import type { SourceBranchRow, SourceUserRow } from './source-report.types.js';
 
@@ -188,7 +195,7 @@ const STYLE = `
   form.filters button:hover { filter: brightness(1.08); }
 
   /* ── KPI strip ──────────────────────────────────────────────────────────── */
-  .kpi { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; margin: 0 0 16px; }
+  .kpi { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 0 0 16px; }
   .kpi-card {
     background: #fff; border: 1px solid #E2E8F0; border-radius: 12px;
     box-shadow: 0 1px 2px rgba(15,23,42,.06);
@@ -575,19 +582,20 @@ function totalsRow(report: TenantReport): LeadReportMetrics | null {
   if (rollup) return rollup;
   if (!report.branches.length) return null;
 
-  const sum: LeadReportMetrics = {
-    total_leads: 0, new_count: 0, new_leads_today: 0, new_leads_this_month: 0,
-    unassigned_count: 0, followup_scheduled: 0, followup_overdue: 0,
-    converted_count: 0, unqualified_count: 0,
-  };
+  const sum = zeroMetrics();
   for (const b of report.branches) {
-    for (const k of Object.keys(sum) as Array<keyof LeadReportMetrics>) sum[k] += Number(b[k] ?? 0);
+    for (const k of METRIC_KEYS) sum[k] += Number(b[k] ?? 0);
   }
   return sum;
 }
 
-/** Accent dots, same three semantic colors AnalyticsClient's STATUS constants use. */
-const STATUS = { good: '#16a34a', warning: '#f59e0b', critical: '#dc2626' };
+/**
+ * Accent dots. The three semantic colors are AnalyticsClient's STATUS constants;
+ * `info` stands in for its SERIES palette on the two pipeline-position cards
+ * (New, Follow-up Scheduled), which are neither good nor bad news — it is the
+ * same blue this page already uses for focus rings and link hovers.
+ */
+const STATUS = { good: '#16a34a', warning: '#f59e0b', critical: '#dc2626', info: '#2a78d6' };
 
 function kpiCard(label: string, value: number | string, accent?: string): string {
   const dot = accent ? `<span class="kpi-dot" style="background:${accent};"></span>` : '';
@@ -595,17 +603,37 @@ function kpiCard(label: string, value: number | string, accent?: string): string
     + `<span class="kpi-value">${escapeHtml(String(value))}</span></div>`;
 }
 
-/** Mirrors the in-app analytics KPI strip (AnalyticsClient.tsx) card for card, in the same order. */
+/**
+ * Mirrors the in-app analytics KPI strip (AnalyticsClient.tsx) card for card, in
+ * the same order: roughly the pipeline left to right, ending on the ratio.
+ *
+ * "New This Month" and "New Today" used to sit here and were dropped. Under the
+ * page's default month-to-date range the former merely restates Total Leads, and
+ * under any other range both describe a period the reader did not ask for — the
+ * same reasoning that removed them from AnalyticsClient when its date filter
+ * landed.
+ *
+ * Visit Scheduled and Visited are OUTCOMES of the qualified stage, so they are
+ * subsets of the Qualified card rather than siblings of it, and the strip does
+ * not sum to Total Leads. It never did (Unassigned overlaps everything), so they
+ * are shown flat rather than nested.
+ *
+ * Unqualified is deliberately absent: it is in the Detailed Summary grid below,
+ * and the strip is for what needs acting on.
+ */
 function kpiStrip(report: TenantReport): string {
   const t = totalsRow(report);
   if (!t) return '';
   const rate = t.total_leads ? `${((t.converted_count / t.total_leads) * 100).toFixed(1)}%` : '—';
   return `<div class="kpi">`
     + kpiCard('Total Leads', t.total_leads)
-    + kpiCard('New This Month', t.new_leads_this_month, STATUS.good)
-    + kpiCard('New Today', t.new_leads_today, STATUS.good)
+    + kpiCard('New', t.new_count, STATUS.info)
     + kpiCard('Unassigned', t.unassigned_count, STATUS.warning)
+    + kpiCard('Follow-up Scheduled', t.followup_scheduled, STATUS.info)
     + kpiCard('Follow-up Overdue', t.followup_overdue, STATUS.critical)
+    + kpiCard('Qualified', t.qualified_count, STATUS.good)
+    + kpiCard('Visit Scheduled', t.oc_visit_scheduled_count, STATUS.good)
+    + kpiCard('Visited', t.oc_visited_count, STATUS.good)
     + kpiCard('Converted', t.converted_count, STATUS.good)
     + kpiCard('Conversion Rate', rate)
     + `</div>`;

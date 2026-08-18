@@ -295,13 +295,25 @@ export default function AnalyticsClient(_props: Props) {
               Month" / "New Today" were dropped when the date filter landed:
               under the default month-to-date range the former just restates
               Total Leads, and under any other range both describe a period the
-              user did not ask for. */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+              user did not ask for.
+
+              Visit Scheduled and Visited are OUTCOMES of the qualified stage, so
+              they are subsets of the Qualified card next to them, not siblings —
+              the strip does not sum to Total Leads and never did (Unassigned
+              overlaps everything). Kept flat rather than nested under Qualified.
+
+              This is the same card set, in the same order, as the public report
+              page's kpiStrip (leads-service lib/reports/public-report.render.ts).
+              The two are meant to read identically; change them together. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <StatCard label="Total Leads" value={totalRow.total_leads} />
             <StatCard label="New" value={totalRow.new_count} accent={SERIES[0]} />
             <StatCard label="Unassigned" value={totalRow.unassigned_count} accent={STATUS.warning} />
             <StatCard label="Follow-up Scheduled" value={totalRow.followup_scheduled} accent={SERIES[6]} />
             <StatCard label="Follow-up Overdue" value={totalRow.followup_overdue} accent={STATUS.critical} />
+            <StatCard label="Qualified" value={totalRow.qualified_count} accent={STATUS.good} />
+            <StatCard label="Visit Scheduled" value={totalRow.oc_visit_scheduled_count} accent={STATUS.good} />
+            <StatCard label="Visited" value={totalRow.oc_visited_count} accent={STATUS.good} />
             <StatCard label="Converted" value={totalRow.converted_count} accent={STATUS.good} />
             <StatCard
               label="Conversion Rate"
@@ -379,6 +391,9 @@ function StatusBarChart({ row }: { row: BranchReportRow }) {
     { name: 'Unassigned', value: row.unassigned_count, fill: STATUS.warning },
     { name: 'Follow-up Due', value: row.followup_scheduled, fill: SERIES[6] },
     { name: 'Follow-up Overdue', value: row.followup_overdue, fill: STATUS.serious },
+    { name: 'Qualified', value: row.qualified_count, fill: SERIES[2] },
+    { name: 'Visit Scheduled', value: row.oc_visit_scheduled_count, fill: SERIES[3] },
+    { name: 'Visited', value: row.oc_visited_count, fill: SERIES[4] },
     { name: 'Converted', value: row.converted_count, fill: STATUS.good },
     { name: 'Unqualified', value: row.unqualified_count, fill: STATUS.critical },
   ];
