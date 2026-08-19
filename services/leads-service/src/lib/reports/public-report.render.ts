@@ -73,6 +73,7 @@ const COLUMNS = [
   { key: 'unassigned_count', label: 'Unassigned' },
   { key: 'followup_scheduled', label: 'FollowUp Scheduled' },
   { key: 'followup_overdue', label: 'FollowUp Overdue' },
+  { key: 'qualified_count', label: 'Qualified' },
   { key: 'converted_count', label: 'Converted' },
   { key: 'unqualified_count', label: 'Unqualified' },
 ] as const satisfies ReadonlyArray<{ key: keyof LeadReportMetrics; label: string }>;
@@ -624,7 +625,18 @@ function kpiCard(label: string, value: number | string, accent?: string): string
 function kpiStrip(report: TenantReport): string {
   const t = totalsRow(report);
   if (!t) return '';
-  const rate = t.total_leads ? `${((t.converted_count / t.total_leads) * 100).toFixed(1)}%` : '—';
+  // Conversion is measured against leads the team has actually WORKED — everything
+  // except those still sitting in the 'new' stage. Dividing by total_leads (as this
+  // did) counted untouched inbound against the team, so a good week of lead volume
+  // pushed the rate down. Expect roughly a 2x higher number than the old formula.
+  //
+  // Duplicated in AnalyticsClient.tsx's Conversion Rate StatCard — different
+  // workspace packages, no shared module (same reason pendingActionPct is
+  // duplicated there rather than importing pending-action.ts). Change both.
+  //
+  // worked can legitimately be 0: a branch whose leads are all still New.
+  const worked = t.total_leads - t.new_count;
+  const rate = worked > 0 ? `${((t.converted_count / worked) * 100).toFixed(1)}%` : '—';
   return `<div class="kpi">`
     + kpiCard('Total Leads', t.total_leads)
     + kpiCard('New', t.new_count, STATUS.info)
