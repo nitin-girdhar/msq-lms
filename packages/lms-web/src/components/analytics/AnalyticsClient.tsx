@@ -61,6 +61,24 @@ function pendingActionBand(pct: number | null) {
   return PENDING_ACTION_BANDS.find((b) => pct < b.upperBound) ?? PENDING_ACTION_BANDS[PENDING_ACTION_BANDS.length - 1];
 }
 
+/**
+ * Conversion measured against leads the team has actually WORKED — everything
+ * except those still sitting in the 'new' stage. Dividing by total_leads (as this
+ * used to) counted untouched inbound against the team, so a high-volume week
+ * pushed the rate down. Expect roughly a 2x higher number than the old formula.
+ *
+ * Duplicated in the leads-service public report renderer (kpiStrip in
+ * lib/reports/public-report.render.ts) for the same reason PENDING_ACTION_BANDS
+ * is — separate packages, no shared code path. Change both together.
+ *
+ * Returns null when nothing has been worked yet (every lead still New), which is
+ * a real state for a quiet branch, not a divide-by-zero guard.
+ */
+function conversionRate(row: { total_leads: number; new_count: number; converted_count: number }): string {
+  const worked = row.total_leads - row.new_count;
+  return worked > 0 ? `${((row.converted_count / worked) * 100).toFixed(1)}%` : '—';
+}
+
 // Built from local date parts, NOT toISOString() — that serialises in UTC, so
 // for an IST user between midnight and 05:30 local it reports yesterday, and
 // "today" on the dashboard would silently disagree with the leads list.
@@ -315,10 +333,7 @@ export default function AnalyticsClient(_props: Props) {
             <StatCard label="Visit Scheduled" value={totalRow.oc_visit_scheduled_count} accent={STATUS.good} />
             <StatCard label="Visited" value={totalRow.oc_visited_count} accent={STATUS.good} />
             <StatCard label="Converted" value={totalRow.converted_count} accent={STATUS.good} />
-            <StatCard
-              label="Conversion Rate"
-              value={totalRow.total_leads ? `${((totalRow.converted_count / totalRow.total_leads) * 100).toFixed(1)}%` : '—'}
-            />
+            <StatCard label="Conversion Rate" value={conversionRate(totalRow)} />
           </div>
 
           {/* ── Detailed summary ──────────────────────────────────────── */}
@@ -537,6 +552,7 @@ function DrillDownTable({
                 <th className="px-3 py-2 text-right">Unassigned</th>
                 <th className="px-3 py-2 text-right">FollowUp Scheduled</th>
                 <th className="px-3 py-2 text-right">Overdue</th>
+                <th className="px-3 py-2 text-right">Qualified</th>
                 <th className="px-3 py-2 text-right">Converted</th>
                 <th className="px-3 py-2 text-right">Unqualified</th>
                 <th className="px-3 py-2 text-right">Pending Action</th>
@@ -547,7 +563,8 @@ function DrillDownTable({
                 if (r.placeholder) {
                   return (
                     <tr key={r.key} className={DEPTH_BG[r.depth]}>
-                      <td colSpan={9} className={`${DEPTH_PAD[r.depth]} py-2 text-xs italic text-[#94A3B8]`}>
+                      {/* Keep in step with the header: Name + 8 metric columns + Pending Action. */}
+                      <td colSpan={10} className={`${DEPTH_PAD[r.depth]} py-2 text-xs italic text-[#94A3B8]`}>
                         {r.label}
                       </td>
                     </tr>
@@ -590,6 +607,7 @@ function DrillDownTable({
                         followup_scheduled stays a real measurement per assignee. */}
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.followup_scheduled}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.followup_overdue}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.qualified_count}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.converted_count}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-[#64748B]">{m.unqualified_count}</td>
                     <td className="px-3 py-2 text-right"><PendingBadge pct={pendingActionPct(m)} /></td>
@@ -609,6 +627,7 @@ function DrillDownTable({
                   <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.unassigned_count}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.followup_scheduled}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.followup_overdue}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.qualified_count}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.converted_count}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{totalRow.unqualified_count}</td>
                   <td className="px-3 py-2.5 text-right"><PendingBadge pct={pendingActionPct(totalRow)} /></td>
