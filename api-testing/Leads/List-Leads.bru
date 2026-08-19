@@ -21,6 +21,8 @@ params:query {
   ~search: John
   ~assigned_user_id:
   ~platforms: facebook,google
+  ~org_ids: 474b7e97-1471-411b-a135-947e0527975a
+  ~active_only: true
 }
 
 docs {
@@ -32,4 +34,18 @@ docs {
     - superseded_by: UUID | null — points to the newer active lead that replaced this one
 
   To see superseded leads, query the DB directly or use a future admin filter.
+
+  Filters:
+    - org_ids: CSV of branch UUIDs. Honoured only for a caller whose
+      `lms.leads.view` scope resolves to tenant/all (tenant_admin); anyone else
+      is clamped to their own branch whatever they send. Such a caller's read
+      runs under the tenant Postgres role so RLS does not pin it to the session
+      branch.
+    - active_only: 'true' excludes leads in a terminal stage (converted /
+      unqualified) in SQL. Used by the Bulk Assign screen. Only the literal
+      strings 'true'/'false' are accepted.
+
+  Rows are additionally scoped by the caller's `lms.leads.view` scope regardless
+  of org_ids: own -> their own leads, team -> their reporting subtree (plus
+  unassigned when rank allows), org/tenant -> the whole branch.
 }

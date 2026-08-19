@@ -10,6 +10,7 @@ export class InternalController {
       fromUserId: body.from_user_id,
       toUserId: body.to_user_id,
       actorId: body.actor_id,
+      ...(body.reason ? { reason: body.reason } : {}),
     });
     return reply.send({ success: true, data: result });
   };

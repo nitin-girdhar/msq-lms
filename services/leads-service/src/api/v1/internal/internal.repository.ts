@@ -2,11 +2,31 @@ import { sql } from 'drizzle-orm';
 import { withServiceTx, toTextArrayLiteral } from '@platform/db';
 import { BadRequestError } from '../../../lib/errors.js';
 
+export type ReassignReason = 'branch_transfer' | 'user_deactivated';
+
 export interface ReassignOrgLeadsParams {
   orgId: string;
   fromUserId: string;
   toUserId: string | null;
   actorId: string;
+  reason?: ReassignReason;
+}
+
+// Text stamped on every lead_assignment_log row this bulk move produces, so
+// Lead History reads as "why" rather than an unexplained owner change. The
+// trigger fires per row, so one GUC covers the whole UPDATE.
+//
+// Phrased from the lead's point of view: `toUserId === null` means nobody took
+// them over, which is an unassign, not a transfer.
+function noteFor(toUserId: string | null, reason?: ReassignReason): string {
+  const verb = toUserId === null ? 'Leads bulk unassigned' : 'Leads bulk transferred';
+  switch (reason) {
+    // Colon, not a dash: vw_lead_history already renders this as
+    // "Reassigned from X to Y — <note>", so a second em-dash reads as a stutter.
+    case 'branch_transfer':  return `${verb}: previous owner moved to another branch`;
+    case 'user_deactivated': return `${verb}: previous owner was deactivated`;
+    default:                 return verb;
+  }
 }
 
 // Hands a departing user's still-open leads, within a single org, to another
@@ -31,6 +51,13 @@ export async function reassignOrgLeads(params: ReassignOrgLeadsParams): Promise<
     // default (unlike withRoleTx). Same pattern leads.repository.ts's
     // transferLead uses for its own trigger.
     await tx.execute(sql`SELECT set_config('app.current_user_id', ${params.actorId}, true)`);
+
+    // Same trigger, second GUC: lms.log_lead_assignment() reads
+    // app.lead_transition_note into lead_assignment_log.note, which
+    // vw_lead_history surfaces in the Lead History modal.
+    await tx.execute(sql`
+      SELECT set_config('app.lead_transition_note', ${noteFor(params.toUserId, params.reason)}, true)
+    `);
 
     const rows = (await tx.execute(sql`
       UPDATE lms.marketing_leads

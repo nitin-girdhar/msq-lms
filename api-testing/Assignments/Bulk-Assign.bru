@@ -1,0 +1,40 @@
+meta {
+  name: Bulk Assign
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/assignments/bulk
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "lead_ids": ["{{leadId}}"],
+    "assigned_to": "{{userId}}"
+  }
+}
+
+docs {
+  Hands several leads to one user in a single action. Backs the Bulk Assign
+  screen. Requires the `lms.leads.assign.bulk` capability.
+
+  Rules enforced server-side:
+    - every lead in lead_ids must belong to the SAME branch
+    - the assignee must belong to that same branch
+    - canAssignToUser rank check still applies
+
+  A caller whose `lms.leads.view` scope is tenant/all runs under the tenant
+  Postgres role, so they can act on a branch other than their session branch —
+  which is what lets a tenant admin pick a branch in the UI and assign within
+  it. Everyone else stays pinned to their own branch by RLS.
+
+  Response: { success: true, data: { updated: <n>, skipped: [<lead_id>, ...] } }
+  `skipped` holds leads already assigned to that same user.
+}

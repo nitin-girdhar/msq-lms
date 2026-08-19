@@ -5,6 +5,7 @@ import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
 import { useOrgs } from '../../hooks/useOrgs';
+import { MAX_PAGE_SIZE } from '../../hooks/useLeads';
 import AssigneeBadge from '../assignments/AssigneeBadge';
 import BulkAssignModal from './BulkAssignModal';
 
@@ -13,7 +14,7 @@ interface Props {
 }
 
 export default function BulkAssignClient({ actor }: Props) {
-  const { orgs, loading: orgsLoading } = useOrgs();
+  const { orgs, loading: orgsLoading, error: orgsError } = useOrgs();
   const [orgId, setOrgId] = useState('');
   const [leads, setLeads] = useState<LeadView[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
@@ -21,6 +22,9 @@ export default function BulkAssignClient({ actor }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignOpen, setAssignOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped by Retry to re-run the fetch effect without duplicating its body.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Roles that can't browse other branches only ever have their own org in
   // the list — mirrors the walk-in-lead org picker in AssignLeadModal.
@@ -34,14 +38,22 @@ export default function BulkAssignClient({ actor }: Props) {
     if (!orgId) return;
     let cancelled = false;
     setLeadsLoading(true);
+    setLoadError(null);
     setSelected(new Set());
     leadsApi
-      .list({ org_ids: orgId, page_size: 5000 })
+      .list({ org_ids: orgId, active_only: 'true', page_size: MAX_PAGE_SIZE })
       .then((res) => {
         if (!cancelled) setLeads(res.data ?? []);
       })
-      .catch(() => {
-        if (!cancelled) setLeads([]);
+      .catch((err) => {
+        // Never swallow this. A failed request used to render exactly like an
+        // empty branch, which is how a 500 from the leads query sat unnoticed:
+        // the screen calmly reported "No leads in this branch" for a branch
+        // holding hundreds of them.
+        if (!cancelled) {
+          setLeads([]);
+          setLoadError(err instanceof Error ? err.message : 'Could not load leads for this branch.');
+        }
       })
       .finally(() => {
         if (!cancelled) setLeadsLoading(false);
@@ -49,12 +61,13 @@ export default function BulkAssignClient({ actor }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [orgId]);
+  }, [orgId, reloadKey]);
 
-  // Bulk assign only makes sense for leads still in play — converted/
-  // unqualified (any terminal stage) are excluded up front, same rule
-  // listAssignmentsFiltered's activeOnly uses for Leads History.
-  const openLeads = useMemo(() => leads.filter((l) => !l.is_terminated), [leads]);
+  // Bulk assign only makes sense for leads still in play. The terminal-stage
+  // exclusion is applied server-side via active_only (the same predicate Leads
+  // History uses), so the page_size cap now bounds OPEN leads rather than
+  // trimming the branch first and filtering afterwards.
+  const openLeads = leads;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -91,10 +104,7 @@ export default function BulkAssignClient({ actor }: Props) {
 
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
 
-  const refetchLeads = () => {
-    if (!orgId) return;
-    leadsApi.list({ org_ids: orgId, page_size: 5000 }).then((res) => setLeads(res.data ?? []));
-  };
+  const refetchLeads = () => setReloadKey((k) => k + 1);
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
@@ -111,20 +121,36 @@ export default function BulkAssignClient({ actor }: Props) {
         </div>
       )}
 
+      {orgsError && (
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+          Could not load the branch list: {orgsError}
+        </div>
+      )}
+
       <div className="rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
         <div className="flex flex-wrap items-center gap-2 border-b border-[#F1F5F9] p-3 sm:p-4">
-          <select
-            value={orgId}
-            onChange={(e) => setOrgId(e.target.value)}
-            disabled={orgsLoading || orgs.length <= 1}
-            className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
-          >
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
+          {/* One branch in reach is the normal case for a branch-scoped role, and a
+              greyed-out dropdown reads as a broken control rather than as "this
+              is your branch" — so only render a picker when there is a choice. */}
+          {orgs.length > 1 ? (
+            <select
+              value={orgId}
+              onChange={(e) => setOrgId(e.target.value)}
+              disabled={orgsLoading}
+              aria-label="Branch"
+              className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+            >
+              {orgs.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-1.5 text-sm font-semibold text-[#0F172A]">
+              {orgsLoading ? 'Loading branch…' : (orgs[0]?.name ?? 'No branch available')}
+            </span>
+          )}
           <input
             type="search"
             placeholder="Search name, phone, or stage…"
@@ -190,16 +216,29 @@ export default function BulkAssignClient({ actor }: Props) {
                   </td>
                 </tr>
               ))}
-              {!leadsLoading && filtered.length === 0 && (
+              {!leadsLoading && loadError && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-xs">
+                    <p role="alert" className="font-semibold text-red-700">Could not load leads for this branch.</p>
+                    <p className="mt-1 text-[#64748B]">{loadError}</p>
+                    <button
+                      type="button"
+                      onClick={() => setReloadKey((k) => k + 1)}
+                      className="mt-3 rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 font-semibold text-[#0b6cbf] shadow-sm hover:bg-[#F8FAFC]"
+                    >
+                      Retry
+                    </button>
+                  </td>
+                </tr>
+              )}
+              {!leadsLoading && !loadError && filtered.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-xs text-[#64748B]">
                     {search
                       ? 'No leads match.'
-                      : leads.length > 0
-                        ? 'No open leads here — every lead in this branch is converted or unqualified.'
-                        : orgs.length > 1
-                          ? 'No leads in this branch. Try another branch from the dropdown above.'
-                          : 'No leads in this branch.'}
+                      : orgs.length > 1
+                        ? 'No open leads in this branch. Try another branch from the dropdown above.'
+                        : 'No open leads in this branch.'}
                   </td>
                 </tr>
               )}

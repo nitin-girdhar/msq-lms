@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { RoleTxContext } from '@platform/db';
+import { resolveScope, CAPABILITY } from '@platform/rbac';
 import type { CapabilityHolder } from '@platform/rbac';
 import type { CreateAssignmentInput, UpdateAssignmentInput, BulkAssignInput } from '@lms/validation';
 import {
@@ -136,7 +137,22 @@ export async function unassignLead(ctx: RoleTxContext, leadId: string) {
 }
 
 export async function bulkAssignLeads(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, data: BulkAssignInput) {
-  const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
+  // Bulk Assign lets a multi-branch actor pick a branch and hand its leads to
+  // someone in THAT branch, so every statement below — reading the leads,
+  // reading the assignee, and the UPDATE — has to run under the same reach the
+  // actor's capability grants. Without this the reads return nothing and the
+  // UPDATE matches nothing for any cross-branch actor whose platform_role is not
+  // literally tenant_admin: RLS is still pinned to their home branch.
+  //
+  // The org checks below (all leads in one org, assignee in that same org) are
+  // what keep this from becoming "assign anything to anyone" — tenant reach is
+  // not org reach.
+  const viewScope = resolveScope(actor, CAPABILITY.LMS_LEADS_VIEW);
+  const txCtx: RoleTxContext = (viewScope === 'tenant' || viewScope === 'all')
+    ? { ...ctx, tenantWide: true }
+    : ctx;
+
+  const targetUser = await repo.getUserForAssignment(txCtx, data.assigned_to);
   if (!targetUser || !targetUser['is_active']) {
     throw new BadRequestError('Target user not found or inactive');
   }
@@ -147,7 +163,7 @@ export async function bulkAssignLeads(ctx: RoleTxContext, actor: CapabilityHolde
   }
 
   const leadIds = [...new Set(data.lead_ids)];
-  const leads = await repo.getLeadsForBulkAssignment(ctx, leadIds);
+  const leads = await repo.getLeadsForBulkAssignment(txCtx, leadIds);
   if (leads.length !== leadIds.length) {
     throw new NotFoundError('One or more leads were not found');
   }
@@ -162,7 +178,7 @@ export async function bulkAssignLeads(ctx: RoleTxContext, actor: CapabilityHolde
   }
 
   const previousAssigneeByLead = new Map(leads.map((l) => [l.id, l.assigned_user_id]));
-  const updated = await repo.bulkAssignLeads(ctx, { leadIds, assignedTo: data.assigned_to });
+  const updated = await repo.bulkAssignLeads(txCtx, { leadIds, assignedTo: data.assigned_to });
   const batchId = randomUUID();
 
   await Promise.all(updated.map((row) => {

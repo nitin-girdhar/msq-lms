@@ -16,10 +16,14 @@ export class LeadsController {
     // only 'tenant'/'all' on the lms.leads.view scope ladder may see the branch
     // the caller asked for; everyone else is held to their own org regardless
     // of which org_ids they requested.
+    //
+    // The scope is resolved unconditionally (not only when org_ids is present)
+    // because it now also decides WHOSE leads are visible inside those branches
+    // — see visibilityClause in the repository.
+    const view_scope = resolveScope(request.auth, CAPABILITY.LMS_LEADS_VIEW);
     let org_ids: string[] | undefined;
     if (q.org_ids) {
-      const scope = resolveScope(request.auth, CAPABILITY.LMS_LEADS_VIEW);
-      org_ids = scope === 'tenant' || scope === 'all'
+      org_ids = view_scope === 'tenant' || view_scope === 'all'
         ? q.org_ids.split(',').filter(Boolean)
         : [org_id];
     }
@@ -31,6 +35,8 @@ export class LeadsController {
         page_size: q.page_size,
         actor_rank: rank,
         minRankToViewUnassigned: rules.minRankToViewUnassignedLeads,
+        view_scope,
+        ...(q.active_only ? { active_only: true } : {}),
         ...(q.status ? { status: q.status } : {}),
         ...(q.assigned_to ? { assigned_to: q.assigned_to } : {}),
         ...(q.assigned_user_id ? { assigned_user_id: q.assigned_user_id } : {}),

@@ -1,12 +1,7 @@
 import { sql, asc } from 'drizzle-orm';
-import { withRoleTx } from '@platform/db';
+import { withRoleTx, sqlUuidArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { marketingLeadsTable, leadStageTable, leadStageOutcomeTable } from '@platform/db/schema';
-
-function sqlUuidArr(arr: string[]) {
-  if (arr.length === 0) return sql`'{}'::uuid[]`;
-  return sql`ARRAY[${sql.join(arr.map(v => sql`${v}::uuid`), sql`, `)}]`;
-}
 
 const ASSIGNMENT_SELECT = sql`
   SELECT

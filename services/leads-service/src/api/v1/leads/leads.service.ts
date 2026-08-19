@@ -6,9 +6,27 @@ import { publishEvent } from '../../../events/publisher.js';
 import { fireCapiAutoTrigger, META_LEAD_SOURCE_NAMES } from '../../../lib/meta-capi-trigger.js';
 import * as repo from './leads.repository.js';
 import type { ListLeadsFilters, ListFollowUpsFilters } from './leads.repository.js';
+import { getTeamMemberIds } from '../assignments/assignments.repository.js';
 
 export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
-  return repo.listLeads(ctx, filters);
+  // Unassigned visibility stays a rank rule (minRankToViewUnassignedLeads is a
+  // per-tenant knob); WHOSE leads you see is the capability scope. The two are
+  // combined in the repository's visibilityClause.
+  const canSeeUnassigned =
+    filters.actor_rank !== undefined && filters.actor_rank >= filters.minRankToViewUnassigned;
+
+  // A 'team'-scoped actor sees their reporting subtree. Reuse the same helper
+  // Leads History resolves its team scope with, so the two screens can never
+  // disagree about who is on a team.
+  const teamUserIds = filters.view_scope === 'team'
+    ? await getTeamMemberIds(ctx, ctx.user_id, ctx.org_id)
+    : undefined;
+
+  return repo.listLeads(ctx, {
+    ...filters,
+    can_see_unassigned: canSeeUnassigned,
+    ...(teamUserIds ? { team_user_ids: teamUserIds } : {}),
+  });
 }
 
 export async function getLeadById(ctx: RoleTxContext, leadId: string) {

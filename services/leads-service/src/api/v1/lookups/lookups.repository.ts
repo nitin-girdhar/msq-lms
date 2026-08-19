@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withRoleTx } from '@platform/db';
+import { withRoleTx, sqlUuidArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import {
   leadSourcesTable,
@@ -72,7 +72,7 @@ export async function getLocations(
         SELECT id, name, code AS "isoCode", country_id AS "countryId"
         FROM geo.states
         WHERE is_active
-          ${countryIds.length ? sql`AND country_id = ANY(${countryIds}::uuid[])` : sql``}
+          ${countryIds.length ? sql`AND country_id = ANY(${sqlUuidArr(countryIds)})` : sql``}
         ORDER BY name
       `)) as Array<Record<string, unknown>>;
     }
@@ -81,7 +81,7 @@ export async function getLocations(
         SELECT id, name, state_id AS "stateId"
         FROM geo.cities
         WHERE is_active
-          ${stateIds.length ? sql`AND state_id = ANY(${stateIds}::uuid[])` : sql`` }
+          ${stateIds.length ? sql`AND state_id = ANY(${sqlUuidArr(stateIds)})` : sql`` }
         ORDER BY name
         ${stateIds.length ? sql`` : sql`LIMIT 500`}
       `)) as Array<Record<string, unknown>>;

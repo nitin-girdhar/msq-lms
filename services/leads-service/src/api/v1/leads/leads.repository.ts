@@ -1,6 +1,7 @@
 import { sql, and, eq, asc, isNull } from 'drizzle-orm';
-import { withRoleTx, withServiceTx } from '@platform/db';
+import { withRoleTx, withServiceTx, sqlUuidArr, sqlTextArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
+import type { ScopeName } from '@platform/rbac';
 import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
 import {
   leadStageTable,
@@ -36,10 +37,57 @@ export interface ListLeadsFilters {
   org_ids?: string[];
   actor_rank?: number;
   minRankToViewUnassigned: number;
+  /** Broadest `lms.leads.view` scope the actor holds. Drives BOTH which rows are
+   *  visible and which Postgres role the read runs under — see listLeads. */
+  view_scope?: ScopeName | null;
+  /** The actor + their reporting subtree, resolved by the service when
+   *  view_scope is 'team'. */
+  team_user_ids?: string[];
+  /** May the actor see leads with no assignee? (rank >= minRankToViewUnassigned) */
+  can_see_unassigned?: boolean;
+  /** Exclude leads sitting in a terminal stage (converted / unqualified). */
+  active_only?: boolean;
+}
+
+// Which rows of the branch(es) in scope this actor may see.
+//
+// Derived from the actor's `lms.leads.view` scope, NOT from whether the request
+// happened to carry org_ids. The old rule keyed off `!useMultiOrg`, so simply
+// sending an org_ids param skipped the own-leads fence entirely — which is how
+// a 'team'-scoped holder of lms.leads.assign.bulk could pull (and reassign) an
+// entire branch from the Bulk Assign screen. Scope decides; the request does not.
+function visibilityClause(ctx: RoleTxContext, filters: ListLeadsFilters) {
+  const scope = filters.view_scope ?? null;
+
+  // 'org' and above see every row in the branches RLS already allows.
+  if (scope === 'org' || scope === 'tenant' || scope === 'all') return undefined;
+
+  const unassigned = filters.can_see_unassigned ? sql`assigned_user_id IS NULL` : undefined;
+
+  if (scope === 'team') {
+    // getTeamMemberIds always includes the actor, so an empty list means the
+    // subtree could not be resolved — fall through to own-leads-only rather
+    // than to "everything".
+    const team = filters.team_user_ids?.length ? filters.team_user_ids : [ctx.user_id];
+    return unassigned
+      ? sql`(assigned_user_id = ANY(${sqlUuidArr(team)}) OR ${unassigned})`
+      : sql`assigned_user_id = ANY(${sqlUuidArr(team)})`;
+  }
+
+  // 'own', or no scope at all: only what is assigned to the actor. An unassigned
+  // lead is by definition nobody's, so it is excluded here even for an actor who
+  // may view unassigned elsewhere — same rule Leads History's 'none' scope uses.
+  return sql`assigned_user_id = ${ctx.user_id}::uuid`;
 }
 
 export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
-  return withRoleTx(ctx, async (tx) => {
+  // A tenant-scoped reader needs the tenant Postgres role, or RLS pins the read
+  // to their home branch and the branch they actually picked returns nothing.
+  // The capability the controller resolved is the authority here, not
+  // platform_role — see RoleTxContext.tenantWide.
+  const tenantWide = filters.view_scope === 'tenant' || filters.view_scope === 'all';
+
+  return withRoleTx({ ...ctx, ...(tenantWide ? { tenantWide: true, readOnly: true } : {}) }, async (tx) => {
     const { page, page_size } = filters;
     const offset = (page - 1) * page_size;
     const useMultiOrg = Boolean(filters.org_ids?.length);
@@ -48,15 +96,14 @@ export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
     const where = and(
       sql`NOT is_deleted`,
       sql`superseded_by IS NULL`,
-      useMultiOrg ? sql`org_id = ANY(${filters.org_ids}::uuid[])` : undefined,
-      (!useMultiOrg && filters.actor_rank !== undefined && filters.actor_rank < filters.minRankToViewUnassigned)
-        ? sql`assigned_user_id = ${ctx.user_id}::uuid`
-        : undefined,
+      useMultiOrg ? sql`org_id = ANY(${sqlUuidArr(filters.org_ids ?? [])})` : undefined,
+      visibilityClause(ctx, filters),
+      filters.active_only ? sql`is_terminated IS DISTINCT FROM TRUE` : undefined,
       filters.status ? sql`stage = ${filters.status}` : undefined,
       assignedFilter ? sql`assigned_user_id = ${assignedFilter}::uuid` : undefined,
       filters.campaign_id ? sql`campaign_id = ${filters.campaign_id}::uuid` : undefined,
       filters.search ? sql`full_name ILIKE ${`%${filters.search}%`}` : undefined,
-      filters.platforms?.length ? sql`platform = ANY(${filters.platforms}::text[])` : undefined,
+      filters.platforms?.length ? sql`platform = ANY(${sqlTextArr(filters.platforms)})` : undefined,
     );
 
     const rows = (await tx.execute(sql`

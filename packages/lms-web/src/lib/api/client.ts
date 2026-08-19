@@ -16,6 +16,8 @@ export interface LeadsListParams {
   search?: string;
   platforms?: string;
   org_ids?: string;
+  // 'true' excludes leads in a terminal stage (converted / unqualified) in SQL.
+  active_only?: 'true';
   page?: number;
   page_size?: number;
 }
