@@ -5,6 +5,7 @@ import type { SessionUser } from '@platform/types';
 import { Modal, users as usersApi } from '@platform/ui-kit';
 import { assignments as assignmentsApi } from '../../lib/api/client';
 import AssignmentSelector from '../assignments/AssignmentSelector';
+import { toAssignableUsers } from '../../lib/users/assignable';
 
 const FORM_ID = 'bulk-assign-form';
 
@@ -36,7 +37,7 @@ export default function BulkAssignModal({ open, onClose, orgId, leadIds, onAssig
       // rank-40 ceiling to every actor regardless of their grants.
       .assignable({ product: 'lms', orgId })
       .then((res) => {
-        if (!cancelled) setCandidates((res.data ?? []) as SessionUser[]);
+        if (!cancelled) setCandidates(toAssignableUsers(res.data));
       })
       .catch(() => {
         if (!cancelled) setCandidates([]);

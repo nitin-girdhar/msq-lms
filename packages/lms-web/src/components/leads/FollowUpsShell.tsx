@@ -84,7 +84,7 @@ export default function FollowUpsShell({ actor, embedded }: Props) {
   const [historyItem, setHistoryItem] = useState<FollowUpItem | null>(null);
   const [editingLead, setEditingLead] = useState<LeadView | null>(null);
 
-  const editData = useLeadEditData(actor);
+  const editData = useLeadEditData(actor, editingLead?.org_id);
 
   const isSalesRep = actor.role === 'sales_representative';
 

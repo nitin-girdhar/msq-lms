@@ -6,6 +6,7 @@ import type { StageOption, StageOutcome, UpdatePayload } from '../types/leads';
 import { lookups, leads as leadsApi } from '../lib/api/client';
 import { users as usersApi } from '@platform/ui-kit';
 import { can, CAPABILITY } from '@platform/rbac';
+import { toAssignableUsers } from '../lib/users/assignable';
 
 interface UseLeadEditDataReturn {
   statusOptions: string[];
@@ -23,7 +24,10 @@ interface UseLeadEditDataReturn {
   loadError: string | null;
 }
 
-export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
+// `leadOrgId` is the branch of the lead currently being edited. Candidates are
+// fetched for that branch because iam.can_assign_to judges the write against
+// the lead's org, not the caller's current one.
+export function useLeadEditData(actor: SessionUser, leadOrgId?: string): UseLeadEditDataReturn {
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [statusLabelMap, setStatusLabelMap] = useState<Record<string, string>>({});
   const [requiresFollowup, setRequiresFollowup] = useState<string[]>([]);
@@ -95,29 +99,24 @@ export function useLeadEditData(actor: SessionUser): UseLeadEditDataReturn {
     let cancelled = false;
     (async () => {
       try {
-        const json = await usersApi.assignable({ product: 'lms' });
+        // Scoped to the LEAD's branch, because that is the org
+        // iam.can_assign_to is evaluated against: the target must hold an active
+        // mapping there. The server now returns candidates across every branch
+        // the actor covers, so without this a Wingman covering six branches
+        // would be offered ~16 names of whom only the lead's own branch could
+        // actually be assigned — a picker full of choices the write rejects.
+        // Falls back to full coverage when no lead is in context.
+        const json = await usersApi.assignable(
+          leadOrgId ? { product: 'lms', orgId: leadOrgId } : { product: 'lms' },
+        );
         if (cancelled) return;
-        const raw = Array.isArray(json.data) ? json.data as Record<string, unknown>[] : [];
-        setCandidates(raw.map((u) => ({
-          ...u,
-          name: (u.full_name ?? u.name ?? '') as string,
-          role: (u.role_name ?? u.role ?? '') as SessionUser['role'],
-          role_label: (u.role_label ?? '') as string,
-          rank: Number(u.rank ?? 0),
-          org_id: (u.org_id ?? '') as string,
-          org_name: '',
-          tenant_id: '',
-          tenant_name: '',
-          manager_id: null,
-          manager_name: null,
-          last_login_at: null,
-        })) as SessionUser[]);
+        setCandidates(toAssignableUsers(json.data));
       } catch {
         if (!cancelled) setCandidates([]);
       }
     })();
     return () => { cancelled = true; };
-  }, [canAssign]);
+  }, [canAssign, leadOrgId]);
 
   const followUpSet = useMemo(() => new Set(requiresFollowup), [requiresFollowup]);
   const rejectionSet = useMemo(() => new Set(rejectionStatuses), [rejectionStatuses]);

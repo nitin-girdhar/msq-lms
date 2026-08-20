@@ -552,8 +552,22 @@ async function assertOutcomeCommentIsKeepable(
 export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput) {
   return withRoleTx(ctx, async (tx) => {
     if (data.assigned_user_id !== undefined && data.assigned_user_id !== null) {
+      // Scope to the LEAD's org, not ctx.org_id — the branch the caller happens
+      // to be switched into. iam.can_assign_to requires BOTH parties to hold an
+      // active mapping in the org it is given, so passing the caller's current
+      // branch made every cross-branch assignment fail: a Wingman mapped to six
+      // branches, sitting in one of them, could not hand a lead in another of
+      // *their own* branches to the rep who works there, because that rep has
+      // no mapping in the branch the Wingman was viewing from.
+      //
+      // follow-ups.repository already resolves the lead's real org for exactly
+      // this call; the two paths now agree. Coverage is still enforced — the
+      // actor must hold a mapping in the lead's org or can_assign_to returns
+      // FALSE on its first lookup.
+      const scope = await resolveLeadWriteScope(tx, leadId);
+      if (!scope) throw new NotFoundError('Lead not found');
       const rows = (await tx.execute(sql`
-        SELECT iam.can_assign_to(${ctx.org_id}::uuid, ${ctx.user_id}::uuid, ${data.assigned_user_id}::uuid) AS allowed
+        SELECT iam.can_assign_to(${scope.orgId}::uuid, ${ctx.user_id}::uuid, ${data.assigned_user_id}::uuid) AS allowed
       `)) as Array<{ allowed: boolean }>;
       if (!rows[0]?.allowed) {
         throw new Error('Insufficient hierarchy authority to assign this lead');

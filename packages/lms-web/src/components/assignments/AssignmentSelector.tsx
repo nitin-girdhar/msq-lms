@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import { useDismissible } from '@platform/ui-kit';
+import { displayName } from '../../lib/users/assignable';
 
 interface Props {
   id: string;
@@ -29,9 +30,11 @@ export default function AssignmentSelector({
 
   const selected = users.find((u) => u.id === value);
 
-  const selectedLabel = selected
-    ? (selected.name ? `${selected.name} (${selected.email})` : selected.email)
-    : '';
+  // Name first — people pick a colleague by name, not by mailbox. The email
+  // moves to the secondary line rather than disappearing: two people in this
+  // tenant genuinely share a display name across branches, so it is what tells
+  // them apart.
+  const selectedLabel = selected ? displayName(selected) : '';
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -67,8 +70,12 @@ export default function AssignmentSelector({
           >
             {users.map((u) => {
               const isSelected = u.id === value;
-              const name = u.name ? `${u.name} (${u.email})` : u.email;
-              const role = u.role_label || '';
+              const name = displayName(u);
+              // Only show the email as a subtitle when it is not already the
+              // label (i.e. when the user has no name to show).
+              const detail = [u.role_label, name === u.email ? '' : u.email]
+                .filter(Boolean)
+                .join(' · ');
               return (
                 <li
                   key={u.id}
@@ -82,8 +89,8 @@ export default function AssignmentSelector({
                   }`}
                 >
                   <span className="block truncate text-sm font-medium">{name}</span>
-                  {role && (
-                    <span className="block truncate text-[11px] text-[#64748B]">{role}</span>
+                  {detail && (
+                    <span className="block truncate text-[11px] text-[#64748B]">{detail}</span>
                   )}
                 </li>
               );

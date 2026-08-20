@@ -2,6 +2,7 @@ import { sql, asc } from 'drizzle-orm';
 import { withRoleTx, sqlUuidArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import { marketingLeadsTable, leadStageTable, leadStageOutcomeTable } from '@platform/db/schema';
+import { isTenantWideRole } from '@platform/authz';
 
 const ASSIGNMENT_SELECT = sql`
   SELECT
@@ -78,14 +79,49 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
   });
 }
 
+/**
+ * The assignment target, resolved within the branches the CALLER covers.
+ *
+ * iam.users carries org_isolation_policy, which scopes app_user to the branch
+ * the caller is switched into — so a plain read returned null for a target in
+ * another of the caller's own branches, and the assignment failed as "target
+ * not found" long before any authority check ran. The read is therefore
+ * elevated, and bounded instead by an EXISTS over the caller's active mappings:
+ * the target must share a branch with the caller. A user the caller covers no
+ * branch with still resolves to null, exactly as before.
+ *
+ * Rank comes from the shared branch's mapping row rather than u.role_id, since
+ * the same person can hold different roles in different branches and it is the
+ * role in the branch they are being assigned in that governs.
+ *
+ * A tenant-wide role skips the shared-branch requirement: they are not always
+ * mapped to every branch individually (see auth.service's getMyOrgs), so
+ * requiring a shared mapping would REMOVE reach they have today. The tenant
+ * predicate still bounds them. This is only the lookup — iam.can_assign_to,
+ * evaluated against the lead's own org, remains the authority on the write.
+ */
 export async function getUserForAssignment(ctx: RoleTxContext, targetUserId: string) {
-  return withRoleTx(ctx, async (tx) => {
+  const sharesABranchWithCaller = isTenantWideRole(ctx.role)
+    ? sql`TRUE`
+    : sql`EXISTS (
+        SELECT 1 FROM iam.user_org_mapping a_uom
+        WHERE a_uom.user_id = ${ctx.user_id}::uuid
+          AND a_uom.org_id = t_uom.org_id
+          AND a_uom.is_active
+      )`;
+  return withRoleTx({ ...ctx, tenantWide: true, readOnly: true }, async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT u.id, u.org_id, u.full_name, u.email, u.is_active, u.is_deleted,
              ur.rank, ur.name AS role_name
       FROM iam.users u
-      JOIN iam.user_roles ur ON ur.id = u.role_id
+      JOIN iam.user_org_mapping t_uom ON t_uom.user_id = u.id AND t_uom.is_active
+      JOIN iam.user_roles ur          ON ur.id = t_uom.role_id
+      JOIN entity.organizations o     ON o.id = t_uom.org_id
       WHERE u.id = ${targetUserId}::uuid AND NOT u.is_deleted
+        AND o.tenant_id = ${ctx.tenant_id}::uuid
+        AND ${sharesABranchWithCaller}
+      ORDER BY ur.rank DESC
+      LIMIT 1
     `)) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
   });
@@ -345,6 +381,31 @@ export async function getStageAndOutcomeOptions(ctx: RoleTxContext) {
       }).from(leadStageOutcomeTable).orderBy(asc(leadStageOutcomeTable.sortOrder)),
     ]);
     return { stage_options: stageOptions, stage_outcomes: stageOutcomes };
+  });
+}
+
+/**
+ * The branches this actor covers — every active iam.user_org_mapping row, not
+ * just ctx.org_id, which is only the branch they are currently switched into
+ * (BranchSwitcher / POST /auth/switch-org).
+ *
+ * Reads iam.vw_user_org_access, the same view identity-service's getUserOrgs
+ * uses to build the branch picker, so the picker and the rows behind it cannot
+ * disagree. The view is security_invoker and granted to app_user/tenant_admin
+ * (07_grants.sql), so RLS still applies on top.
+ *
+ * Falls back to the current org when a legacy single-branch user has no mapping
+ * row at all — never to "every org", which would be a silent widening.
+ */
+export async function getCoveredOrgIds(ctx: RoleTxContext): Promise<string[]> {
+  return withRoleTx(ctx, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT DISTINCT org_id
+      FROM iam.vw_user_org_access
+      WHERE user_id = ${ctx.user_id}::uuid AND tenant_id = ${ctx.tenant_id}::uuid
+    `)) as Array<{ org_id: string }>;
+    const ids = rows.map((r) => String(r.org_id));
+    return ids.length ? ids : [ctx.org_id];
   });
 }
 

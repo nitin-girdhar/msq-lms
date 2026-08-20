@@ -8,16 +8,14 @@ import type { SessionUser } from '@platform/types';
 import {
   getRulesForTenant,
   canSeeAssignedToFilter,
-  getLeadsHistoryAssignedToScope,
   canViewUnassignedLeads,
   UNASSIGNED_ASSIGNEE,
 } from '@lms/authz';
-import { canSeeOrgFilter } from '@platform/authz';
 import { can, CAPABILITY } from '@platform/rbac';
 import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../types/leads';
 import { useLeadsHistory } from '../../hooks/useLeadsHistory';
 import type { LeadsHistoryFilters } from '../../hooks/useLeadsHistory';
-import { Pagination, DownloadButton, MultiSelect, users as usersApi, orgs as orgsApi } from '@platform/ui-kit';
+import { Pagination, DownloadButton, MultiSelect, users as usersApi, auth as authApi } from '@platform/ui-kit';
 import { lead_sources as leadSourcesApi } from '../../lib/api/client';
 import AssigneeBadge from '../assignments/AssigneeBadge';
 import { StatusBadge } from '../leads/StatusBadge';
@@ -86,8 +84,6 @@ export default function LeadsHistoryShell({ actor }: Props) {
   // Gated on canViewUnassignedLeads rather than showAssignedTo: the two are
   // separately tunable per tenant, and only this one governs unassigned leads.
   const showUnassignedOption = canViewUnassignedLeads(rules, actor.rank);
-  const showOrgFilter = canSeeOrgFilter(actor.role);
-  const scope = getLeadsHistoryAssignedToScope(rules, actor.rank, actor.role);
 
   // The dialog's own capability, not the Leads page's — a role can hold this
   // list without holding lms.leads. Hiding the button when it is absent keeps
@@ -110,6 +106,8 @@ export default function LeadsHistoryShell({ actor }: Props) {
   const [sort, setSort] = useState<{ by: ServerSortKey; dir: 'asc' | 'desc' } | null>(null);
 
   const [assignableUsers, setAssignableUsers] = useState<UserOption[]>([]);
+  // The branches this actor covers, from /auth/my-orgs — the same list the
+  // BranchSwitcher shows. Declared before showOrgFilter below, which reads it.
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
   const [sources, setSources] = useState<SourceOption[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -149,19 +147,39 @@ export default function LeadsHistoryShell({ actor }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The branches this actor covers, straight from /auth/my-orgs — the same
+  // source the BranchSwitcher uses, so the picker here and the branch list in
+  // the navbar can never disagree.
+  //
+  // Replaces orgsApi.all(), which returned every branch in the tenant. That was
+  // safe only because the picker was hidden from all but tenant-wide roles;
+  // now that multi-branch managers get it too, listing the whole tenant would
+  // show a Wingman the names of 20 branches they have no part in. This endpoint
+  // already answers "every org in the tenant" for tenant-wide roles, so they
+  // lose nothing.
+  //
+  // Fetched unconditionally: the count is what decides whether the picker is
+  // shown at all, so there is no showOrgFilter to gate on yet.
   useEffect(() => {
-    // Below tenant scope the org is forced server-side — don't even fetch the
-    // tenant's org list for an actor who has no business seeing other org names.
-    if (!showOrgFilter) return;
     let cancelled = false;
     (async () => {
       try {
-        const json = await orgsApi.all();
-        if (!cancelled) setOrgs(Array.isArray(json.data) ? json.data as OrgOption[] : []);
+        const res = await authApi.myOrgs();
+        if (cancelled) return;
+        const list: OrgOption[] = (res.data?.orgs ?? []).map(
+          (o: { org_id: string; org_name: string }) => ({ id: o.org_id, name: o.org_name }),
+        );
+        setOrgs(list);
       } catch { /* ignore */ }
     })();
     return () => { cancelled = true; };
-  }, [showOrgFilter]);
+  }, []);
+
+  // Driven by how many branches this person actually covers, not by their
+  // platform tier. The old gate was canSeeOrgFilter — which is isTenantWideRole
+  // — so it hid the picker from every multi-branch Wingman and Manager, the
+  // people who most need it.
+  const showOrgFilter = orgs.length > 1;
 
   useEffect(() => {
     let cancelled = false;
@@ -174,14 +192,11 @@ export default function LeadsHistoryShell({ actor }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // "Relevant users" for the picked orgs — still capped by the actor's own scope
-  // (team scope never asks the backend for another org's users at all; org/tenant/all
-  // scope narrow to the selected orgs, or fall back to the actor's own org when no
-  // org is picked).
-  //
   // Every selected org is forwarded, not just the single-org case: the org filter
   // is multi-select, and sending nothing when two branches were picked collapsed
-  // the user list to the actor's home branch while the grid spanned both.
+  // the user list to whichever branch the actor was switched into while the grid
+  // spanned both. Sending none means "all the branches I cover", which the
+  // server resolves — the client never gets to widen its own scope.
   // Joined into a string so the effects below have a stable dependency — a fresh
   // array identity on every render would refire the fetch endlessly.
   const assigneeOrgKey = showOrgFilter && selectedOrgs.length ? selectedOrgs.join(',') : '';
@@ -192,39 +207,33 @@ export default function LeadsHistoryShell({ actor }: Props) {
     setLoadingUsers(true);
     (async () => {
       try {
-        if (scope === 'team') {
-          const res = await usersApi.team();
-          if (cancelled) return;
-          const members = (res.data as Array<Record<string, unknown>>).map((m) => ({
-            id: m['memberId'] as string,
-            label: (m['memberFullName'] as string) ?? (m['memberEmail'] as string) ?? '',
-          }));
-          members.unshift({ id: actor.id, label: `${actor.name} (me)` });
-          setAssignableUsers(members);
-        } else {
-          // purpose 'filter': this feeds the "Assigned To" FILTER, so it must
-          // keep listing everyone whose leads this actor can see. Without it
-          // the server would derive the list from the actor's
-          // lms.leads.assign.* grants and hand back an assignee picker —
-          // empty for a role that can read a wide history scope but holds no
-          // assign capability.
-          const json = await usersApi.assignable(
-            assigneeOrgKey
-              ? { product: 'lms', orgIds: assigneeOrgKey.split(','), purpose: 'filter' }
-              : { product: 'lms', purpose: 'filter' },
-          );
-          if (cancelled) return;
-          const list = (json.data as Array<Record<string, unknown>> ?? []).map((u) => ({
-            id: u['id'] as string,
-            label: (u['full_name'] as string) ?? (u['email'] as string) ?? '',
-          }));
-          setAssignableUsers(list);
-        }
+        // Always the coverage-scoped list now. This used to branch on
+        // scope === 'team' and call usersApi.team(), listing the actor's
+        // reporting subtree — but getLeadsHistoryAssignedToScope no longer
+        // returns 'team', and the subtree was the wrong set anyway: the grid
+        // shows every lead in the branches you cover, so the filter has to
+        // offer every lead worker in them, reports or not.
+        //
+        // purpose 'filter' also stops the server deriving the list from the
+        // actor's lms.leads.assign.* grants, which would hand back an assignee
+        // picker — empty for a role that reads a wide history but holds no
+        // assign capability.
+        const json = await usersApi.assignable(
+          assigneeOrgKey
+            ? { product: 'lms', orgIds: assigneeOrgKey.split(','), purpose: 'filter' }
+            : { product: 'lms', purpose: 'filter' },
+        );
+        if (cancelled) return;
+        const list = (json.data as Array<Record<string, unknown>> ?? []).map((u) => ({
+          id: u['id'] as string,
+          label: (u['full_name'] as string) ?? (u['email'] as string) ?? '',
+        }));
+        setAssignableUsers(list);
       } catch { /* ignore */ }
       finally { if (!cancelled) setLoadingUsers(false); }
     })();
     return () => { cancelled = true; };
-  }, [showAssignedTo, scope, actor, assigneeOrgKey]);
+  }, [showAssignedTo, assigneeOrgKey]);
 
   // Previously-picked assignee may not belong to the newly-selected orgs — clear it
   // rather than silently keep filtering by a user who's no longer in the visible list.

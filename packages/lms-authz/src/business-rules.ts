@@ -53,13 +53,16 @@ export interface TenantBusinessRules {
   // it can read every leads screen but cannot mutate anything.
   minRankToEditLead: number;
 
-  // ── Leads History — "Assigned To" filter scope thresholds ───────────
-  // These LMS-rank thresholds control the WITHIN-ORG tiers (team/org). The
+  // ── Leads History — "Assigned To" filter scope threshold ────────────
+  // The one within-org threshold: at or above it an actor sees every branch
+  // they cover; below it the filter is hidden and the backend forces self. The
   // cross-org tiers (tenant/all) are platform_role-driven, not rank-driven —
-  // see getLeadsHistoryAssignedToScope. Below the team threshold the filter is
-  // hidden and the backend forces self.
+  // see getLeadsHistoryAssignedToScope.
+  //
+  // minRankForLeadsHistoryOrgScope was removed with the team/org merge: it
+  // gated a distinction that no longer exists, and at LMS_RANKS.ADMIN (980) it
+  // was unreachable for every real manager role anyway.
   minRankForLeadsHistoryTeamScope: number;
-  minRankForLeadsHistoryOrgScope: number;
 }
 
 export type LeadsHistoryScope = 'none' | 'team' | 'org' | 'tenant' | 'all';
@@ -76,7 +79,6 @@ export const DEFAULT_RULES: TenantBusinessRules = {
   minRankToCreateLead:          LMS_RANKS.SE,
   minRankToEditLead:            LMS_RANKS.SE,
   minRankForLeadsHistoryTeamScope:   LMS_RANKS.SSE,
-  minRankForLeadsHistoryOrgScope:    LMS_RANKS.ADMIN,
 };
 
 // ── FitClass tenant: same as defaults (baseline)
@@ -160,7 +162,25 @@ export function checkManageUsersAccess(actor: CapabilityHolder): boolean {
 // hierarchy question — the answer has to be an ordered scope, and a boolean
 // capability cannot express one. `role` is platform_role (services) / session
 // role (web); the cross-org tiers (all/tenant) are platform-driven, the
-// within-org tiers (org/team) are rank-driven.
+// within-org tier is rank-driven.
+//
+// 'org' means THE BRANCHES THIS PERSON COVERS — every active
+// iam.user_org_mapping row — not the single branch they happen to be switched
+// into. That is the whole point: a Wingman mapped to six branches manages six,
+// and seeing them one at a time via the BranchSwitcher made the Leads History
+// report useless to exactly the people who run the branches.
+//
+// This function no longer returns 'team'. It used to, for everyone between the
+// team threshold and LMS_RANKS.ADMIN (980) — which is every Wingman (60), Sr
+// Manager (70) and SSE (40), i.e. essentially every manager — and 'team'
+// restricted them to their reporting subtree inside one branch. Coverage now
+// decides instead of iam.reporting_lines, so a manager sees all lead activity
+// in their own branches. Note the widening: that includes people who do not
+// report to them. Below the team threshold the answer is still 'none' — a Sales
+// Representative sees only their own leads no matter how many branches they are
+// mapped to. The 'team' member of LeadsHistoryScope is kept so the type stays
+// compatible with the leads-page view_scope, which is a separate concept and
+// still subtree-based (see leads.repository.ts).
 export function getLeadsHistoryAssignedToScope(
   rules: TenantBusinessRules,
   rank: number,
@@ -168,8 +188,7 @@ export function getLeadsHistoryAssignedToScope(
 ): LeadsHistoryScope {
   if (isSuperAdmin(role)) return 'all';
   if (isTenantWideRole(role)) return 'tenant';
-  if (rank >= rules.minRankForLeadsHistoryOrgScope) return 'org';
-  if (rank >= rules.minRankForLeadsHistoryTeamScope) return 'team';
+  if (rank >= rules.minRankForLeadsHistoryTeamScope) return 'org';
   return 'none';
 }
 

@@ -292,25 +292,30 @@ export async function listLeadsHistory(
       filters.unassignedMode = 'exclude';
       filters.orgIds = [ctx.org_id];
       break;
-    case 'team': {
-      filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
-      if (filters.unassignedMode !== 'only') {
-        filters.userIds = sel.userIds.length
-          ? sel.userIds
-          : await repo.getTeamMemberIds(ctx, ctx.user_id, ctx.org_id);
-      }
-      // Team scope never crosses orgs — force the actor's own org rather than
-      // trusting a client-supplied org_ids param (RLS would collapse it to this
-      // anyway, but don't rely on that as the only gate).
-      filters.orgIds = [ctx.org_id];
-      break;
-    }
-    case 'org':
+    // getLeadsHistoryAssignedToScope no longer returns 'team' — it was merged
+    // into 'org' when 'org' came to mean "the branches I cover". Kept as a
+    // fallthrough so the switch stays exhaustive over LeadsHistoryScope, whose
+    // 'team' member still serves the leads-page view_scope.
+    case 'team':
+    case 'org': {
       filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
       if (filters.unassignedMode !== 'only' && sel.userIds.length) filters.userIds = sel.userIds;
-      // Org scope never crosses orgs either — same reasoning as 'team'.
-      filters.orgIds = [ctx.org_id];
+      // Every branch this actor covers, not the single one they are switched
+      // into. A Wingman mapped to six branches manages six; pinning the report
+      // to ctx.org_id made it useless to exactly the people running the
+      // branches, and left the Assigned-To filter offering names the grid would
+      // then refuse to show.
+      //
+      // A client-supplied org list NARROWS this and can never widen it: ids the
+      // actor does not cover are dropped, so a forged org_id returns fewer rows
+      // rather than another branch's leads. An empty intersection is a real
+      // answer — do not fall back to full coverage.
+      const covered = await repo.getCoveredOrgIds(ctx);
+      filters.orgIds = params.orgIds?.length
+        ? params.orgIds.filter((id) => covered.includes(id))
+        : covered;
       break;
+    }
     case 'tenant':
       filters.unassignedMode = modeFor(canSeeUnassigned ? 'include' : 'exclude');
       if (filters.unassignedMode !== 'only' && sel.userIds.length) filters.userIds = sel.userIds;

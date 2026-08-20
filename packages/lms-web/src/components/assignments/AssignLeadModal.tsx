@@ -8,6 +8,7 @@ import { assignments as assignmentsApi, leads as leadsApi, lead_sources as leadS
 import { useOrgs } from '../../hooks/useOrgs';
 import { Modal, users as usersApi } from "@platform/ui-kit";
 import AssignmentSelector from "./AssignmentSelector";
+import { toAssignableUsers } from "../../lib/users/assignable";
 
 const PHONE_RE = /^(\+91[\s-]?)?[6-9]\d{9}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -104,7 +105,7 @@ export default function AssignLeadModal({
     usersApi
       .assignable({ product: 'lms', orgId })
       .then((res) => {
-        if (!cancelled) setOrgCandidates((res.data ?? []) as SessionUser[]);
+        if (!cancelled) setOrgCandidates(toAssignableUsers(res.data));
       })
       .catch(() => {
         if (!cancelled) setOrgCandidates([]);
