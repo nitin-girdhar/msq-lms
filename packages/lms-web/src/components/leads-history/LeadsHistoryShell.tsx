@@ -174,11 +174,17 @@ export default function LeadsHistoryShell({ actor }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  // "Relevant users" for the picked org — still capped by the actor's own scope
+  // "Relevant users" for the picked orgs — still capped by the actor's own scope
   // (team scope never asks the backend for another org's users at all; org/tenant/all
-  // scope narrow to the selected org, or fall back to the actor's own org when no
-  // org is picked, same as before this feature existed).
-  const selectedOrgId = showOrgFilter && selectedOrgs.length === 1 ? selectedOrgs[0] : undefined;
+  // scope narrow to the selected orgs, or fall back to the actor's own org when no
+  // org is picked).
+  //
+  // Every selected org is forwarded, not just the single-org case: the org filter
+  // is multi-select, and sending nothing when two branches were picked collapsed
+  // the user list to the actor's home branch while the grid spanned both.
+  // Joined into a string so the effects below have a stable dependency — a fresh
+  // array identity on every render would refire the fetch endlessly.
+  const assigneeOrgKey = showOrgFilter && selectedOrgs.length ? selectedOrgs.join(',') : '';
 
   useEffect(() => {
     if (!showAssignedTo) return;
@@ -203,8 +209,8 @@ export default function LeadsHistoryShell({ actor }: Props) {
           // empty for a role that can read a wide history scope but holds no
           // assign capability.
           const json = await usersApi.assignable(
-            selectedOrgId
-              ? { product: 'lms', orgId: selectedOrgId, purpose: 'filter' }
+            assigneeOrgKey
+              ? { product: 'lms', orgIds: assigneeOrgKey.split(','), purpose: 'filter' }
               : { product: 'lms', purpose: 'filter' },
           );
           if (cancelled) return;
@@ -218,14 +224,14 @@ export default function LeadsHistoryShell({ actor }: Props) {
       finally { if (!cancelled) setLoadingUsers(false); }
     })();
     return () => { cancelled = true; };
-  }, [showAssignedTo, scope, actor, selectedOrgId]);
+  }, [showAssignedTo, scope, actor, assigneeOrgKey]);
 
-  // Previously-picked assignee may not belong to the newly-selected org — clear it
+  // Previously-picked assignee may not belong to the newly-selected orgs — clear it
   // rather than silently keep filtering by a user who's no longer in the visible list.
   // "Unassigned" is org-agnostic, so it survives the switch.
   useEffect(() => {
     setSelectedAssignees((prev) => (prev.includes(UNASSIGNED_ASSIGNEE) ? [UNASSIGNED_ASSIGNEE] : []));
-  }, [selectedOrgId]);
+  }, [assigneeOrgKey]);
 
   const assigneeOptions = useMemo(
     () => [

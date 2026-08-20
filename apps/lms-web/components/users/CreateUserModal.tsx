@@ -12,6 +12,7 @@ import {
   ManagerSelect,
   useRoleCatalog,
   useUserAssignments,
+  branchOptionsForActor,
 } from '@platform/ui-kit';
 import TemporaryPasswordPanel from './TemporaryPasswordPanel';
 
@@ -28,6 +29,8 @@ interface Props {
   users: SessionUser[];
   actor: SessionUser;
   orgs: Array<{ id: string; name: string }>;
+  myOrgs: Array<{ id: string; name: string }>;
+  branchesFailed: boolean;
 }
 
 interface CreateSuccess {
@@ -35,16 +38,12 @@ interface CreateSuccess {
   temporaryPassword: string;
 }
 
-export default function CreateUserModal({ open, onClose, actorRank, actor, orgs }: Props) {
+export default function CreateUserModal({ open, onClose, actorRank, actor, orgs, myOrgs, branchesFailed }: Props) {
   const router = useRouter();
 
   // Only fetch while the modal is open — the Users page mounts this up-front so
   // the dialog can animate in.
   const { roles, departments, loading: rolesLoading, error: rolesError } = useRoleCatalog(open);
-
-  // Assigning across branches is the same authority as moving someone between
-  // them, matching the roster's own cross-org gate.
-  const canPickBranches = actorRank >= RANKS.TENANT_ADMIN;
 
   const a = useUserAssignments({
     fallbackOrgId: actor.org_id,
@@ -52,7 +51,15 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs 
     rolesLoaded: !rolesLoading,
   });
 
-  const branchOptions = canPickBranches ? orgs : orgs.filter((o) => o.id === actor.org_id);
+  // A tenant-wide actor assigns into any branch of the tenant; everyone else
+  // into the branches they hold a mapping row for. This used to be
+  // `orgs.filter(o => o.id === actor.org_id)` behind a rank >= TENANT_ADMIN
+  // gate, which hid every branch but the current one from a multi-branch admin.
+  const branchOptions = branchOptionsForActor(orgs, myOrgs, actor, actorRank >= RANKS.TENANT_ADMIN);
+
+  // Open the picker whenever there is a real choice, rather than asking rank a
+  // second time — the option list has already answered the question.
+  const canPickBranches = branchOptions.length > 1;
 
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
@@ -202,6 +209,12 @@ export default function CreateUserModal({ open, onClose, actorRank, actor, orgs 
           {rolesError && (
             <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {rolesError}
+            </div>
+          )}
+
+          {branchesFailed && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Branches could not be loaded — only your own branch is available.
             </div>
           )}
 

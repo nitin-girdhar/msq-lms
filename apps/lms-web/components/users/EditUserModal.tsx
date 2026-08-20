@@ -13,6 +13,7 @@ import {
   ManagerSelect,
   useRoleCatalog,
   useUserAssignments,
+  branchOptionsForActor,
   type OrgAssignment,
 } from '@platform/ui-kit';
 import ResetPasswordModal from './ResetPasswordModal';
@@ -36,10 +37,12 @@ interface Props {
   actorRank: number;
   users: SessionUser[];
   orgs: OrgOption[];
+  myOrgs: OrgOption[];
+  branchesFailed: boolean;
   actor: SessionUser;
 }
 
-export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, users, orgs, actor }: Props) {
+export default function EditUserModal({ open, onClose, user, currentUserId, actorRank, users, orgs, myOrgs, branchesFailed, actor }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState(user.first_name ?? '');
   const [middleName, setMiddleName] = useState(user.middle_name ?? '');
@@ -123,9 +126,19 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
     rolesLoaded: !rolesLoading,
   });
 
+  // The branch that must always resolve to a name here is the EDITED USER's
+  // home branch, not the actor's — this form is about them. Below tenant-wide
+  // authority the assignable set is the actor's own branches, so a multi-branch
+  // admin can add this person to any branch they administer; it was previously
+  // frozen at the single branch the user already had.
   const branchOptions = useMemo(
-    () => (canMoveBranch ? orgs : orgs.filter((o) => o.id === user.org_id)),
-    [canMoveBranch, orgs, user.org_id],
+    () => branchOptionsForActor(
+      orgs,
+      myOrgs,
+      { org_id: user.org_id, org_name: user.org_name },
+      canMoveBranch,
+    ),
+    [canMoveBranch, orgs, myOrgs, user.org_id, user.org_name],
   );
 
   // Leads stay behind only when the user actually leaves the branch — moving
@@ -315,6 +328,12 @@ export default function EditUserModal({ open, onClose, user, currentUserId, acto
           {(rolesError || mappingsError) && (
             <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {rolesError ?? mappingsError}
+            </div>
+          )}
+
+          {branchesFailed && (
+            <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Branches could not be loaded — only this user&apos;s current branch is available.
             </div>
           )}
 

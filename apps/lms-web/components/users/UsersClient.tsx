@@ -16,10 +16,15 @@ interface OrgOption {
 interface Props {
   users: SessionUser[];
   actor: SessionUser;
+  /** Every branch in the tenant — assignable only by a tenant-wide actor. */
   orgs: OrgOption[];
+  /** The actor's own branches (iam.user_org_mapping), for everyone else. */
+  myOrgs: OrgOption[];
+  /** Either branch fetch failed; the modals say so rather than quietly offering one. */
+  branchesFailed: boolean;
 }
 
-export default function UsersClient({ users, actor, orgs }: Props) {
+export default function UsersClient({ users, actor, orgs, myOrgs, branchesFailed }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<SessionUser | null>(null);
 
@@ -67,6 +72,8 @@ export default function UsersClient({ users, actor, orgs }: Props) {
           users={users}
           actor={actor}
           orgs={orgs}
+          myOrgs={myOrgs}
+          branchesFailed={branchesFailed}
         />
       )}
 
@@ -79,6 +86,8 @@ export default function UsersClient({ users, actor, orgs }: Props) {
           actorRank={actor.rank}
           users={users}
           orgs={orgs}
+          myOrgs={myOrgs}
+          branchesFailed={branchesFailed}
           actor={actor}
         />
       )}
