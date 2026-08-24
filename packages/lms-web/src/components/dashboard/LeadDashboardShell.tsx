@@ -14,14 +14,10 @@ import LeadsTable from '../LeadsTable';
 import FollowUpsShell from '../leads/FollowUpsShell';
 import { DownloadButton } from '@platform/ui-kit';
 import { getRulesForTenant, canSeeUnassignedCard } from '@lms/authz';
+import { can, CAPABILITY } from '@platform/rbac';
 import { applyLeadFilter } from '../../lib/leads/filter';
 import { buildLeadExportColumns } from '../../lib/export/lead-columns';
 import { buildFilename, exportRows, type ExportRowsFormat as ExportFormat } from '@platform/ui-kit';
-
-const INLINE_ASSIGN_ROLES: ReadonlyArray<SessionUser['role']> = [
-  'super_admin', 'tenant_admin', 'org_admin', 'org_sr_manager',
-  'org_manager', 'senior_sales_executive',
-];
 
 export type CardFilter =
   | 'all'
@@ -141,7 +137,14 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
   });
 
   const [candidates, setCandidates] = useState<SessionUser[]>([]);
-  const canInlineAssign = INLINE_ASSIGN_ROLES.includes(actor.role);
+  // Capability, not a role-name allowlist. This used to be
+  // INLINE_ASSIGN_ROLES.includes(actor.role) against six literal built-in role
+  // names, which a TENANT-DEFINED role can never match — so a Pre Sales Captain
+  // managing five reps got no candidates fetched and an empty "Assigned To"
+  // dropdown here, while the very same LeadEditModal reached from Follow-ups
+  // was populated (FollowUpsShell takes its candidates from useLeadEditData,
+  // which already asks this capability). One predicate now, in both places.
+  const canInlineAssign = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
 
   useEffect(() => {
     if (!canInlineAssign) { setCandidates([]); return; }

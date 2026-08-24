@@ -46,10 +46,19 @@ export async function createIntakeLead(payload: IntakeLeadPayload): Promise<Inta
     // phone, email and every answer from the Meta form — so this message went
     // straight into an error-level log line as raw PII. The field names are
     // what actually diagnoses the failure; the values are not.
+    //
+    // `details` is the exception: leads-service builds it from field NAMES only
+    // (see translatePgError), so it is safe to carry through and is the one
+    // thing that says *why* the intake was rejected. `fields` stays as the
+    // fallback for upstream bodies that carry no structured details.
     throw new AppError(
       `Intake lead creation failed (${response.status})`,
       HttpStatus.BAD_GATEWAY,
-      { upstreamStatus: response.status, fields: Object.keys(body) },
+      {
+        upstreamStatus: response.status,
+        fields: Object.keys(body),
+        ...(body['details'] !== undefined ? { upstream: body['details'] } : {}),
+      },
     );
   }
 

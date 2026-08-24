@@ -25,7 +25,7 @@ export class AppError extends Error {
 }
 
 export class NotFoundError extends AppError {
-  constructor(m = 'Not found') { super(m, HttpStatus.NOT_FOUND); }
+  constructor(m = 'Not found', d?: unknown) { super(m, HttpStatus.NOT_FOUND, d); }
 }
 export class ForbiddenError extends AppError {
   constructor(m = 'Forbidden') { super(m, HttpStatus.FORBIDDEN); }
@@ -41,6 +41,30 @@ export class ValidationError extends AppError {
 }
 export class UnauthorizedError extends AppError {
   constructor(m = 'Unauthorized') { super(m, HttpStatus.UNAUTHORIZED); }
+}
+
+// Columns the lms.check_*_fk_org_scope() triggers validate. Each RAISE in
+// db_scripts/04_functions_triggers.sql opens with the column name followed by
+// the offending id, e.g. 'assigned_user_id % has no active mapping to org %'.
+// Matching the name against this fixed list (rather than capturing whatever
+// token the message starts with) keeps an attacker-influenced string from
+// reaching the response body — only these literals can ever be returned.
+const FK_ORG_SCOPE_FIELDS = [
+  'assigned_user_id',
+  'campaign_id',
+  'lead_id',
+  'user_id',
+  'city_id',
+  'state_id',
+  'country_id',
+] as const;
+
+/** Which FK the org-scope trigger rejected, or 'unknown' if the RAISE names none. */
+function fkOrgScopeField(message: string): string {
+  const found = FK_ORG_SCOPE_FIELDS.find((field) =>
+    new RegExp(`\\b${field}\\b\\s+\\S+\\s+(?:does not belong to|has no active mapping to)`, 'i').test(message),
+  );
+  return found ?? 'unknown';
 }
 
 /**
@@ -66,7 +90,16 @@ export function translatePgError(error: unknown): AppError | null {
   // Org-scope / ownership RAISE from the FK-org-scope triggers (SQLSTATE P0001):
   // the caller referenced a lead/user/campaign outside their visible org.
   if (/does not belong to org|has no active mapping to org|has been deleted/i.test(message)) {
-    return new NotFoundError('The referenced record was not found or is not accessible');
+    // The client-facing message stays deliberately generic, which left every
+    // distinct trigger failure indistinguishable to the calling service (the
+    // meta webhook logged only `fields: ["success","error"]` and had nothing to
+    // debug with). Name the offending FIELD — never the raw message or the
+    // UUIDs it interpolates — so the reason survives the service hop without
+    // this body becoming a leak of who/what the record referenced.
+    return new NotFoundError(
+      'The referenced record was not found or is not accessible',
+      { constraint: 'fk_org_scope', field: fkOrgScopeField(message) },
+    );
   }
 
   // lms.check_lead_stage_outcome() RAISEs (SQLSTATE P0001) when a required

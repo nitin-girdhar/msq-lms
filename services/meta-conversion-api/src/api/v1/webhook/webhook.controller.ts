@@ -115,6 +115,15 @@ export async function handleWebhookPost(
 
       const leadId = change.value.leadgen_id;
 
+      // Resolved inside the try below, but declared out here so the catch can
+      // still name them. Without this the failure log carried only a Meta lead
+      // id and an integration id — nothing that identifies WHICH branch the
+      // lead was being written to, which is the first thing needed to debug a
+      // rejection from leads-service.
+      let diagFormId: string | undefined;
+      let diagOrgId: string | undefined;
+      let diagTenantId: string | undefined;
+
       try {
         const rawLead = await fetchLeadFromMeta(
           leadId,
@@ -128,6 +137,7 @@ export async function handleWebhookPost(
         // guarantee it — the Graph API lead-detail fetch above is the
         // reliable source. Resolve the owning org only after that fetch.
         const formId = rawLead.form_id ?? change.value.form_id;
+        diagFormId = formId;
 
         // Per-tenant app: tenant is already known, scope the org lookup to
         // it. Shared app (integration.tenant_id is null): tenant isn't
@@ -153,6 +163,11 @@ export async function handleWebhookPost(
         }
 
         const tenantId = integration.tenant_id ?? ('tenantId' in mapping ? mapping.tenantId : undefined);
+        diagOrgId = mapping.orgId;
+        // `tenantId` widens to unknown through the `'tenantId' in mapping`
+        // narrowing on the shared-app branch; only record it when it really is
+        // an id, so the log field stays a string-or-null.
+        diagTenantId = typeof tenantId === 'string' ? tenantId : undefined;
 
         if (isMetaTestLead(rawLead.field_data)) {
           request.log.info(
@@ -246,7 +261,16 @@ export async function handleWebhookPost(
         // which is where lead PII used to arrive: leads-service echoes the
         // rejected fields back, and that message was being logged verbatim.
         request.log.error(
-          { evt: 'webhook.lead_sync_failed', err: leadError, metaLeadId: leadId, integrationId: integration.id },
+          {
+            evt: 'webhook.lead_sync_failed',
+            err: leadError,
+            metaLeadId: leadId,
+            integrationId: integration.id,
+            orgId: diagOrgId ?? null,
+            tenantId: diagTenantId ?? null,
+            pageId: change.value.page_id,
+            formId: diagFormId ?? null,
+          },
           'Failed to sync Meta lead',
         );
         results.push({ leadId, status: 'error' });

@@ -14,6 +14,8 @@ import json
 import random
 from typing import Any, Dict, List, Optional
 
+from . import phone as phone_util
+
 RANK_READ_ONLY = 0
 RANK_ADMIN = 80
 
@@ -27,9 +29,18 @@ def resolve_auto_assigned_user(cur, org_id: str) -> Optional[str]:
         """
         SELECT uom.user_id, uom.lead_assignment_weight AS weight
         FROM iam.user_org_mapping uom
+        JOIN iam.users u ON u.id = uom.user_id
         JOIN iam.user_roles ur ON ur.id = uom.role_id
         WHERE uom.org_id = %(org_id)s
           AND uom.is_active
+          -- Must match iam.fn_actor_can_act_in_org, which
+          -- lms.check_lead_fk_org_scope() re-runs on INSERT: an active
+          -- MAPPING is not enough, the USER row has to be live too.
+          -- Without this a user deactivated via edit-user (which leaves the
+          -- mapping and its weight untouched) still wins the pick and then
+          -- fails the insert. Because every script runs its whole scope in
+          -- ONE transaction, that single RAISE rolls back the entire import.
+          AND u.is_active AND NOT u.is_deleted
           AND uom.lead_assignment_weight > 0
           AND ur.rank > %(read_only)s
           AND ur.rank < %(admin)s
@@ -102,30 +113,76 @@ def create_lead(
     if not phone and not email:
         raise ValueError("At least one of phone or email is required")
 
-    cur.execute("SELECT id FROM lms.lead_stage WHERE name = 'new' LIMIT 1")
+    # lms.lead_stage / lms.lead_sources are tenant-scoped (N-6 Half B): every
+    # tenant carries its own 'new' stage and its own 'facebook'/'instagram'
+    # source rows, all sharing the same `name`. This package connects as
+    # root_service (BYPASSRLS), so a bare `WHERE name = ...` LIMIT 1 has no
+    # policy narrowing it and Postgres returns whichever row it reaches first —
+    # in practice the wrong tenant's about half the time. That stamped 19
+    # Gurugram leads (Civil Lines and Sector 104, Jul 8 - Aug 6) with a foreign
+    # tenant's stage_id/source_id, which then read back blank in the UI because
+    # the list query joins these tables under RLS. Resolve via the LEAD's
+    # tenant, derived from org_id, exactly as createWebhookLead does in
+    # services/leads-service/src/api/v1/intake/intake.repository.ts.
+    cur.execute(
+        """
+        SELECT id FROM lms.lead_stage
+        WHERE name = 'new'
+          AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = %(org_id)s)
+        LIMIT 1
+        """,
+        {"org_id": org_id},
+    )
     stage_row = cur.fetchone()
     if not stage_row:
-        raise RuntimeError('Lead stage "new" not found')
+        raise RuntimeError('Lead stage "new" not found for this tenant')
     default_stage_id = stage_row["id"]
 
     source_id: Optional[str] = None
     if source:
-        cur.execute("SELECT id FROM lms.lead_sources WHERE name = %s LIMIT 1", (source,))
+        cur.execute(
+            """
+            SELECT id FROM lms.lead_sources
+            WHERE name = %(name)s
+              AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = %(org_id)s)
+            LIMIT 1
+            """,
+            {"name": source, "org_id": org_id},
+        )
         src_row = cur.fetchone()
         source_id = src_row["id"] if src_row else None
 
     existing_lead_id: Optional[str] = None
 
+    # Canonical form for the INSERT below, and a format-insensitive key for
+    # the lookup - must stay in step with reconcile.find_active_lead_by_phone,
+    # or the preview and the import disagree about what counts as a duplicate.
+    phone = phone_util.normalize(phone)
+
     if phone:
-        cur.execute(
-            """
-            SELECT id FROM lms.marketing_leads
-            WHERE org_id = %(org_id)s AND phone = %(phone)s
-              AND is_active = true AND NOT is_deleted
-            LIMIT 1
-            """,
-            {"org_id": org_id, "phone": phone},
-        )
+        key = phone_util.match_key(phone)
+        if key is None:
+            cur.execute(
+                """
+                SELECT id FROM lms.marketing_leads
+                WHERE org_id = %(org_id)s AND phone = %(phone)s
+                  AND is_active = true AND NOT is_deleted
+                LIMIT 1
+                """,
+                {"org_id": org_id, "phone": phone},
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id FROM lms.marketing_leads
+                WHERE org_id = %(org_id)s
+                  AND length(regexp_replace(phone, '\\D', '', 'g')) >= 10
+                  AND right(regexp_replace(phone, '\\D', '', 'g'), 10) = %(key)s
+                  AND is_active = true AND NOT is_deleted
+                LIMIT 1
+                """,
+                {"org_id": org_id, "key": key},
+            )
         row = cur.fetchone()
         existing_lead_id = row["id"] if row else None
 

@@ -32,10 +32,20 @@ export async function resolveAutoAssignedUser(tx: DrizzleTx, orgId: string): Pro
   const rows = (await tx.execute(sql`
     SELECT uom.user_id, uom.lead_assignment_weight AS weight, ur.name AS role_name, o.tenant_id
     FROM iam.user_org_mapping uom
+    JOIN iam.users u             ON u.id  = uom.user_id
     JOIN iam.user_roles ur       ON ur.id = uom.role_id
     JOIN entity.organizations o  ON o.id  = uom.org_id
     WHERE uom.org_id = ${orgId}::uuid
       AND uom.is_active
+      -- An active MAPPING is not enough. Deactivating a user writes
+      -- iam.users.is_active only, leaving the org mapping and its weight
+      -- untouched; lms.check_lead_fk_org_scope() then re-validates the pick
+      -- through iam.fn_actor_can_act_in_org, which DOES check the user row.
+      -- Picking such a user makes every insert RAISE — surfacing as a 404 out
+      -- of intake and silently dropping every inbound lead for that branch
+      -- (Gurugram - Sector 104, Aug 13-24). Mirror the trigger predicate
+      -- exactly so the picker and the trigger cannot disagree again.
+      AND u.is_active AND NOT u.is_deleted
       AND uom.lead_assignment_weight > 0
       AND ur.rank > ${LMS_RANK_READ_ONLY}
       AND ur.rank < ${LMS_RANK_ADMIN}

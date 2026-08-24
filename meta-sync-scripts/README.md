@@ -95,7 +95,7 @@ gets written:
 | Script | What it does |
 |---|---|
 | `download_page_leads.py` | **Stage 1.** Downloads every live form and its leads (since `--since`) for every Page in scope into a fresh `output/<run>/`. Opens the DB **read-only** — it cannot write even by accident. |
-| `check_leads_against_db.py` | **Stage 2.** Reconciles that run against the local DB and reports, per lead, exactly what the import would do: `new`, `already_synced`, `unmapped_form`, `phone_duplicate`, `email_duplicate`, `missing_contact`. Read-only; always exits 0. |
+| `check_leads_against_db.py` | **Stage 2.** Reconciles that run against the local DB and reports, per lead, exactly what the import would do: `new`, `already_synced`, `unmapped_form`, `test_lead`, `hiring_form`, `phone_duplicate`, `email_duplicate`, `missing_contact`. Read-only; always exits 0. |
 | `import_downloaded_leads.py` | **Stage 3.** Writes the importable leads from that same run, re-classifying each against the live DB first (the dump may be hours old). Never imports an `unmapped_form` lead. |
 
 `output/<run>/` contains:
@@ -108,6 +108,67 @@ gets written:
 | `unmapped_forms.csv` | The action list — forms needing an `ext.meta_page_form_org_map` row, with the orgs already on that page as candidates. |
 | `reconciliation.csv` / `reconciliation_summary.csv` | Stage 2 output: per-lead verdicts, and counts per form. |
 | `manifest.json` | The run's `--since`, pages covered, and totals. |
+
+### What never reaches the org
+
+Three filters in `common/reconcile.py::classify` decide this once, so the
+preview and the import can never disagree:
+
+| Verdict | Rule |
+| --- | --- |
+| `test_lead` | Any field value matching `/test lead:/i` — Meta stamps this placeholder in when someone uses the Lead Ads Testing Tool. Mirrors `isMetaTestLead()` in `services/meta-conversion-api/src/services/lead-sync.service.ts`. The webhook always skipped these; this path did not, which is how 20 of them reached production as real leads. |
+| `hiring_form` | Form name matching `/hiring|recruit|vacancy|career|job application|sales exe/i`. Recruitment campaigns share Pages with sales campaigns, and a job applicant is not a sales lead. Kept deliberately narrow: a bare `trainer` or `PT` also matches genuine personal-training SALES forms, and dropping a real lead is worse than letting an oddly-named hiring form through to the review CSV. |
+| `unmapped_form` | No active `ext.meta_page_form_org_map` row — never guessed into an org. |
+
+None of the three is in `IMPORTABLE`, so stage 3 skips them.
+
+### Tenant-scoped lookups — always resolve via `org_id`
+
+`lms.lead_stage`, `lms.lead_sources`, `marketing.marketing_platforms` and
+`marketing.campaign_statuses` are tenant-scoped (N-6 Half B, `08_rls.sql`).
+Every tenant carries its own `new` stage and its own `facebook` / `instagram`
+source rows — same `name`, different `id`, different `tenant_id`.
+
+This package connects as `root_service` (**BYPASSRLS**), so nothing narrows a
+lookup for you. A bare `SELECT id FROM lms.lead_sources WHERE name = %s LIMIT 1`
+returns whichever tenant's row Postgres reaches first. Always join through the
+row's own tenant:
+
+```sql
+SELECT id FROM lms.lead_sources
+WHERE name = %(name)s
+  AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = %(org_id)s)
+LIMIT 1
+```
+
+`common/lead_writer.py` did not, and stamped 19 Gurugram leads (Civil Lines and
+Sector 104, 8 Jul – 6 Aug 2026) with a foreign tenant's `stage_id` / `source_id`.
+Those leads read back with an empty Status and Source in the UI: the leads grid
+joins these tables *under* RLS, scoped to the caller's tenant, so a foreign id
+matches nothing. Repair script:
+`db_scripts/one_time/fix_cross_tenant_lead_stage_source.sql` (dry-run pair
+alongside it).
+
+### Phone normalisation
+
+Meta returns whatever the person typed: `+919876543210`, `9876543210`,
+`09876543210`, `+91 98765 43210`. Every dedup check used to be raw string
+equality, so the same person in two formats became two active leads in the
+same branch — production carries 45 such groups.
+
+`common/phone.py` splits this in two:
+
+- `normalize()` decides what is **stored** — E.164 when the value is
+  confidently an Indian mobile (10 digits starting 6-9, optionally prefixed
+  `0`/`91`/`+91`), otherwise returned untouched. Junk like `00000` or a test
+  placeholder is never "cleaned" into something that looks real.
+- `match_key()` decides what is **compared** — the last 10 significant
+  digits, or `None` when there are fewer than 10. `None` means "match on the
+  exact string instead", so short/garbage numbers stay distinct rather than
+  all collapsing onto one key.
+
+Both the dedup lookup and the INSERT go through these, so a number already
+on file in a different format is found rather than inserted again.
 
 `output/latest.txt` records the newest run, so stages 2 and 3 find it
 without being told; pass `--run-dir` to target an older one.
@@ -134,6 +195,11 @@ without being told; pass `--run-dir` to target an older one.
 # Reviewable backfill of everything since the Meta-side reorg
 python download_page_leads.py --since 2026-07-28
 python check_leads_against_db.py            # read the verdicts
+
+# Scope a run to one tenant (Fitclass) — page discovery is filtered by the
+# mapped org's tenant, so another tenant's Pages are never touched.
+python download_page_leads.py --tenant-id 0b39b589-ea7d-446a-b660-350e1d84ebd9 --since 2026-08-01
+python check_leads_against_db.py --tenant-id 0b39b589-ea7d-446a-b660-350e1d84ebd9
 python import_downloaded_leads.py --dry-run # confirm, then drop --dry-run
 
 # Import one page only (recommended for large backfills — see Transaction scope)

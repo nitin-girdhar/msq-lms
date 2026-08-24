@@ -10,16 +10,48 @@ verdict here is a genuine prediction of what create_lead would do, not an
 approximation.
 """
 
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from . import field_mapping, output
+from . import field_mapping, output, phone as phone_util
+
+# Mirrors isMetaTestLead / TEST_LEAD_VALUE_PATTERN in
+# services/meta-conversion-api/src/services/lead-sync.service.ts. Meta stamps
+# this placeholder into whichever fields the form has when someone uses the
+# Lead Ads Testing Tool. The webhook has always skipped these; this path did
+# not, which is how 20 of them reached production as real leads.
+TEST_LEAD_VALUE_PATTERN = re.compile(r"test lead:", re.I)
+
+# Recruitment forms share the Pages that carry sales campaigns, but a job
+# applicant is not a sales lead and must never land in lms.marketing_leads.
+# Deliberately NARROW: it keys on explicit recruitment words only. Broader
+# guesses were tried and rejected - a bare "trainer" or "PT" matches genuine
+# personal-training SALES forms, and dropping a real lead is worse than
+# letting an oddly-named hiring form through to the reviewable CSV.
+HIRING_FORM_PATTERN = re.compile(
+    r"hiring|recruit|vacancy|career|job application|sales exe", re.I
+)
+
+
+def is_hiring_form(form_name: Optional[str]) -> bool:
+    return bool(HIRING_FORM_PATTERN.search(form_name or ""))
+
+
+def is_test_lead(field_data: List[Dict[str, Any]]) -> bool:
+    return any(
+        TEST_LEAD_VALUE_PATTERN.search(str(v))
+        for f in field_data or []
+        for v in (f.get("values") or [])
+    )
 
 # Verdicts, roughly in the order they're decided.
 NEW = "new"
 ALREADY_SYNCED = "already_synced"
 UNMAPPED_FORM = "unmapped_form"
 MISSING_CONTACT = "missing_contact"
+TEST_LEAD = "test_lead"
+HIRING_FORM = "hiring_form"
 PHONE_DUPLICATE = "phone_duplicate"
 EMAIL_DUPLICATE = "email_duplicate"
 
@@ -63,14 +95,33 @@ def is_already_synced(cur, meta_lead_id: int) -> bool:
 
 
 def find_active_lead_by_phone(cur, org_id: str, phone: str) -> Optional[str]:
-    cur.execute(
-        """
-        SELECT id FROM lms.marketing_leads
-        WHERE org_id = %(org_id)s AND phone = %(phone)s AND is_active = true AND NOT is_deleted
-        LIMIT 1
-        """,
-        {"org_id": org_id, "phone": phone},
-    )
+    """Matches on the last 10 significant digits, not the raw string, so a
+    number already on file in another format is found instead of being
+    inserted a second time. Values too malformed for a key ("00000") fall
+    back to exact equality rather than all grouping together."""
+    key = phone_util.match_key(phone)
+    if key is None:
+        cur.execute(
+            """
+            SELECT id FROM lms.marketing_leads
+            WHERE org_id = %(org_id)s AND phone = %(phone)s
+              AND is_active = true AND NOT is_deleted
+            LIMIT 1
+            """,
+            {"org_id": org_id, "phone": phone},
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id FROM lms.marketing_leads
+            WHERE org_id = %(org_id)s
+              AND length(regexp_replace(phone, '\\D', '', 'g')) >= 10
+              AND right(regexp_replace(phone, '\\D', '', 'g'), 10) = %(key)s
+              AND is_active = true AND NOT is_deleted
+            LIMIT 1
+            """,
+            {"org_id": org_id, "key": key},
+        )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -103,6 +154,16 @@ def classify(cur, form: dict, raw_lead: dict, mappings: Dict[str, Any]) -> dict:
 
     if is_already_synced(cur, meta_lead_id):
         return {**base, "verdict": ALREADY_SYNCED, "reason": "meta_lead_id already in ext.meta_leads"}
+
+    if is_test_lead(raw_lead.get("field_data") or []):
+        return {**base, "verdict": TEST_LEAD, "reason": "Meta Lead Ads Testing Tool placeholder data"}
+
+    if is_hiring_form(form.get("name")):
+        return {
+            **base,
+            "verdict": HIRING_FORM,
+            "reason": f"form {form.get('name')!r} is a recruitment form, not a sales lead source",
+        }
 
     org_id = form.get("org_id")
     if not org_id:

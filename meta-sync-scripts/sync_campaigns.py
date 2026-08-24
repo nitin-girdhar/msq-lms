@@ -68,16 +68,38 @@ def get_unresolved_campaigns(cur, tenant_id: str = None, org_id: str = None) -> 
     return cur.fetchall()
 
 
-def resolve_platform_id(cur, platform_key: str):
+# marketing.marketing_platforms / marketing.campaign_statuses are tenant-scoped
+# (08_rls.sql lists them alongside the LMS lookups), so every tenant has its own
+# 'facebook' / 'active' row under the same `name`. This package runs as
+# root_service (BYPASSRLS) and gets no policy narrowing, so both lookups have to
+# resolve against the CAMPAIGN's tenant, derived from org_id — the same defect
+# that mis-stamped lead stage_id/source_id in common/lead_writer.py.
+def resolve_platform_id(cur, org_id: str, platform_key: str):
     name = PLATFORM_MAP.get(platform_key, "facebook")
-    cur.execute("SELECT id FROM marketing.marketing_platforms WHERE name = %s LIMIT 1", (name,))
+    cur.execute(
+        """
+        SELECT id FROM marketing.marketing_platforms
+        WHERE name = %(name)s
+          AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = %(org_id)s)
+        LIMIT 1
+        """,
+        {"name": name, "org_id": org_id},
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
 
-def resolve_status_id(cur, meta_status: str):
+def resolve_status_id(cur, org_id: str, meta_status: str):
     name = STATUS_MAP.get((meta_status or "").upper(), DEFAULT_STATUS_NAME)
-    cur.execute("SELECT id FROM marketing.campaign_statuses WHERE name = %s LIMIT 1", (name,))
+    cur.execute(
+        """
+        SELECT id FROM marketing.campaign_statuses
+        WHERE name = %(name)s
+          AND tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = %(org_id)s)
+        LIMIT 1
+        """,
+        {"name": name, "org_id": org_id},
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -183,8 +205,8 @@ def sync_campaigns_for_integration(
             counts["errors"] += 1
             continue
 
-        platform_id = resolve_platform_id(cur, row["platform"])
-        status_id = resolve_status_id(cur, campaign.get("effective_status") or campaign.get("status"))
+        platform_id = resolve_platform_id(cur, row["org_id"], row["platform"])
+        status_id = resolve_status_id(cur, row["org_id"], campaign.get("effective_status") or campaign.get("status"))
         ad_campaign_id = upsert_campaign(
             cur, row["org_id"], meta_campaign_id, campaign.get("name"), platform_id, status_id, dry_run, campaigns_writer
         )

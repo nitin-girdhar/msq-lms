@@ -15,6 +15,8 @@ the same fields.
 
 from typing import Any, Dict, List, Optional
 
+from . import phone as phone_util
+
 DEFAULT_FIELD_MAPPINGS: Dict[str, Dict[str, List[str]]] = {
     "contact": {
         "phone": ["phone", "phone_number", "mobile_number"],
@@ -87,7 +89,11 @@ def extract_by_keys(field_data: List[Dict[str, Any]], keys: Optional[List[str]])
 
 def build_contact_payload(field_data: List[Dict[str, Any]], mappings: Dict[str, Dict[str, List[str]]]) -> Dict[str, Any]:
     contact = mappings["contact"]
-    phone = extract_by_keys(field_data, contact["phone"])
+    # Normalise at the boundary so every downstream consumer - the dedup
+    # lookups and the INSERT - sees one canonical form. Meta returns whatever
+    # the person typed, and raw string equality made "9876543210" and
+    # "+919876543210" two different people in the same branch.
+    phone = phone_util.normalize(extract_by_keys(field_data, contact["phone"]))
     if not phone:
         raise ValueError("Lead payload is missing a required phone value")
 
@@ -108,7 +114,7 @@ def build_contact_payload(field_data: List[Dict[str, Any]], mappings: Dict[str, 
     if ln_val:
         last_name = ln_val
 
-    whatsapp_number = extract_by_keys(field_data, contact["whatsapp_number"])
+    whatsapp_number = phone_util.normalize(extract_by_keys(field_data, contact["whatsapp_number"]))
 
     return {
         "email": email,

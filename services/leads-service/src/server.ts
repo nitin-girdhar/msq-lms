@@ -31,7 +31,12 @@ app.setErrorHandler((error, request, reply) => {
   const translated = translatePgError(error);
   if (translated) {
     app.log.warn({ err: error, path: request.url }, translated.message);
-    return reply.status(translated.statusCode).send({ success: false, error: translated.message });
+    const body: Record<string, unknown> = { success: false, error: translated.message };
+    // Mirror the AppError branch above: the translated error's details are
+    // constructed to be safe to return (field names, not values), and dropping
+    // them here is what made the generic message undebuggable for callers.
+    if (translated.details !== undefined) body['details'] = translated.details;
+    return reply.status(translated.statusCode).send(body);
   }
   app.log.error({ err: error, path: request.url }, 'Unhandled error');
   return reply.status(500).send({ success: false, error: 'Internal server error' });
