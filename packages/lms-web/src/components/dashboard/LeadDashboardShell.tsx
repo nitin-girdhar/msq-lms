@@ -10,12 +10,14 @@ import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useLocationFilters } from '../../hooks/useLocationFilters';
 import { useLeadSources } from '../../hooks/useLeadSources';
 import StatsCards from '../StatsCards';
+import SourceBreakdownBar from './SourceBreakdownBar';
 import LeadsTable from '../LeadsTable';
 import FollowUpsShell from '../leads/FollowUpsShell';
 import { DownloadButton } from '@platform/ui-kit';
 import { getRulesForTenant, canSeeUnassignedCard } from '@lms/authz';
 import { can, CAPABILITY } from '@platform/rbac';
 import { applyLeadFilter } from '../../lib/leads/filter';
+import { buildStatGroups } from '../../lib/leads/stats';
 import { buildLeadExportColumns } from '../../lib/export/lead-columns';
 import { buildFilename, exportRows, type ExportRowsFormat as ExportFormat } from '@platform/ui-kit';
 
@@ -175,6 +177,8 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     return () => { cancelled = true; };
   }, [canInlineAssign]);
 
+  const statGroups = useMemo(() => buildStatGroups(leads, actor), [leads, actor]);
+
   const handleFilterChange = (filter: CardFilter) => {
     setActiveFilter(prev => (prev === filter ? 'all' : filter));
   };
@@ -209,8 +213,7 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
       <div className="shrink-0 border-b border-[#E2E8F0] bg-white">
         <StatsCards
           stats={stats}
-          leads={leads}
-          actor={actor}
+          groups={statGroups}
           activeFilter={activeFilter}
           onFilterChange={handleFilterChange}
           hideUnassigned={!canSeeUnassignedCard(getRulesForTenant(actor.tenant_id), actor.rank)}
@@ -241,6 +244,12 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
             </span>
           )}
         </div>
+
+        <SourceBreakdownBar
+          rows={statGroups[activeFilter].sources}
+          total={activeFilter === 'all' ? stats.serverTotal : statGroups[activeFilter].count}
+        />
+
         <div className="flex shrink-0 items-center gap-2">
           {error && (
             <span className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-1.5 text-xs text-[#EA580C]">

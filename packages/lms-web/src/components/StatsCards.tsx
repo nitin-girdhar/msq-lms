@@ -1,24 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import type { SessionUser } from '@platform/types';
-import type { LeadView } from '../types/leads';
+import { useEffect, useState } from 'react';
 import type { CardFilter } from './dashboard/LeadDashboardShell';
-import { LMS_RANKS as RANKS } from '@lms/authz';
-import { hashSourceColor } from './leads/SourceBadge';
-
-interface SourceRow { label: string; count: number; dot: string }
-
-function sourceRows(list: LeadView[]): SourceRow[] {
-  const counts = new Map<string, number>();
-  for (const lead of list) {
-    const key = lead.source_label ?? lead.source ?? 'Unknown';
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .map(([label, count]) => ({ label, count, dot: hashSourceColor(label).dot }))
-    .sort((a, b) => b.count - a.count);
-}
+import type { StatGroup } from '../lib/leads/stats';
 
 function useRelativeTime(date: Date | null): string {
   const [label, setLabel] = useState('');
@@ -106,25 +90,6 @@ function IconTrophy() {
   );
 }
 
-function MiniSourceBreakdown({ rows, isActive }: { rows: SourceRow[]; isActive: boolean }) {
-  if (!rows.length) return null;
-  return (
-    <div className="flex flex-col gap-0.5">
-      {rows.map((r) => (
-        <div
-          key={r.label}
-          title={`${r.label}: ${r.count}`}
-          className={`flex items-center gap-1 text-[9.5px] leading-tight ${isActive ? 'text-blue-100' : 'text-[#94A3B8]'}`}
-        >
-          <span style={{ background: r.dot }} className="w-1.5 h-1.5 rounded-full shrink-0" />
-          <span className="truncate flex-1">{r.label}</span>
-          <span className={`font-bold tabular-nums shrink-0 ${isActive ? 'text-blue-50' : 'text-[#475569]'}`}>{r.count}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 interface CardProps {
   label: string;
   count: number;
@@ -137,10 +102,9 @@ interface CardProps {
   filterId: CardFilter;
   activeFilter: CardFilter;
   onFilterChange: (f: CardFilter) => void;
-  sources: SourceRow[];
 }
 
-function StatCard({ label, count, total, iconBg, iconColor, icon, isHero, timeLabel, filterId, activeFilter, onFilterChange, sources }: CardProps) {
+function StatCard({ label, count, total, iconBg, iconColor, icon, isHero, timeLabel, filterId, activeFilter, onFilterChange }: CardProps) {
   const pct      = total > 0 ? Math.round((count / total) * 100) : 0;
   const isActive = activeFilter === filterId;
 
@@ -186,76 +150,49 @@ function StatCard({ label, count, total, iconBg, iconColor, icon, isHero, timeLa
       ) : (
         <p className={`text-[10px] ${isActive ? 'text-blue-100' : 'text-[#94A3B8]'}`}>of total leads</p>
       )}
-
-      <MiniSourceBreakdown rows={sources} isActive={isActive} />
     </button>
   );
 }
 
 interface Props {
   stats: { total: number; lastUpdated: Date | null; serverTotal: number };
-  leads: LeadView[];
-  actor: SessionUser;
+  groups: Record<CardFilter, StatGroup>;
   activeFilter: CardFilter;
   onFilterChange: (f: CardFilter) => void;
   hideUnassigned?: boolean;
 }
 
-export default function StatsCards({ stats, leads, actor, activeFilter, onFilterChange, hideUnassigned }: Props) {
+export default function StatsCards({ stats, groups, activeFilter, onFilterChange, hideUnassigned }: Props) {
   const timeLabel = useRelativeTime(stats.lastUpdated);
-
-  const groups = useMemo(() => {
-    const isSalesTier = actor.rank < RANKS.SSE;
-    const byCategory = {
-      new:            leads.filter(l => l.stage === 'new'),
-      callAttempted:  leads.filter(l => l.stage === 'contacting'),
-      unqualified:    leads.filter(l => l.stage === 'unqualified'),
-      visitScheduled: leads.filter(l => l.stage === 'qualified'),
-      converted:      leads.filter(l => l.stage === 'converted'),
-      // Sourced from marketing_leads → lead_stage.followup_required (per lead's current stage),
-      // not a separately-fetched stage-name list.
-      followUp: leads.filter(l =>
-        l.followup_required &&
-        (!isSalesTier || l.assigned_user_id === actor.id)
-      ),
-      unassigned: leads.filter(l => !l.assigned_user_id),
-    };
-    return Object.fromEntries(
-      Object.entries(byCategory).map(([key, list]) => [key, { count: list.length, sources: sourceRows(list) }]),
-    ) as Record<keyof typeof byCategory, { count: number; sources: SourceRow[] }>;
-  }, [leads, actor]);
-
-  const allSources = useMemo(() => sourceRows(leads), [leads]);
-
   const total = stats.serverTotal;
 
   return (
     <div className="px-4 sm:px-5 py-1.5">
       <div className="flex flex-wrap gap-1.5">
         <StatCard label="TOTAL LEADS" count={total} total={total} iconBg="bg-[#EFF6FF]" iconColor="text-[#0A6BA8]"
-          icon={<IconPeople />} isHero timeLabel={timeLabel} filterId="all" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={allSources} />
+          icon={<IconPeople />} isHero timeLabel={timeLabel} filterId="all" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="NEW LEADS" count={groups.new.count} total={total} iconBg="bg-blue-50" iconColor="text-[#0A6BA8]"
-          icon={<IconPersonPlus />} filterId="new" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.new.sources} />
+          icon={<IconPersonPlus />} filterId="new" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="FOLLOW-UP REQUIRED" count={groups.followUp.count} total={total} iconBg="bg-orange-50" iconColor="text-orange-500"
-          icon={<IconBell />} filterId="followUp" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.followUp.sources} />
+          icon={<IconBell />} filterId="followUp" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="CONTACTING" count={groups.callAttempted.count} total={total} iconBg="bg-amber-50" iconColor="text-amber-600"
-          icon={<IconPhone />} filterId="callAttempted" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.callAttempted.sources} />
+          icon={<IconPhone />} filterId="callAttempted" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="VISIT SCHEDULED" count={groups.visitScheduled.count} total={total} iconBg="bg-teal-50" iconColor="text-teal-600"
-          icon={<IconCalendarCheck />} filterId="visitScheduled" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.visitScheduled.sources} />
+          icon={<IconCalendarCheck />} filterId="visitScheduled" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="CONVERTED" count={groups.converted.count} total={total} iconBg="bg-purple-50" iconColor="text-purple-600"
-          icon={<IconTrophy />} filterId="converted" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.converted.sources} />
+          icon={<IconTrophy />} filterId="converted" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="UNQUALIFIED LEADS" count={groups.unqualified.count} total={total} iconBg="bg-red-50" iconColor="text-red-500"
-          icon={<IconXCircle />} filterId="unqualified" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.unqualified.sources} />
+          icon={<IconXCircle />} filterId="unqualified" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         {!hideUnassigned && (
           <StatCard label="UNASSIGNED" count={groups.unassigned.count} total={total} iconBg="bg-slate-50" iconColor="text-slate-500"
-            icon={<IconUserSlash />} filterId="unassigned" activeFilter={activeFilter} onFilterChange={onFilterChange} sources={groups.unassigned.sources} />
+            icon={<IconUserSlash />} filterId="unassigned" activeFilter={activeFilter} onFilterChange={onFilterChange} />
         )}
       </div>
     </div>
