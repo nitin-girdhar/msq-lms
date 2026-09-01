@@ -29,7 +29,6 @@ const ASSIGNMENT_EXPORT_COLUMNS: ExportColumn<AssignmentView>[] = [
 interface Props {
   actor: SessionUser;
   assignments: AssignmentView[];
-  candidates: SessionUser[];
   title?: string;
   subtitle?: string;
   hideCreate?: boolean;
@@ -42,7 +41,7 @@ function formatDate(dateStr: string): string {
   return `${date} ${time.slice(0, 5)}`;
 }
 
-export default function AssignmentsClient({ actor, assignments, candidates, title = 'Assignments', subtitle, hideCreate }: Props) {
+export default function AssignmentsClient({ actor, assignments, title = 'Assignments', subtitle, hideCreate }: Props) {
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<AssignmentView | null>(null);
@@ -204,11 +203,13 @@ export default function AssignmentsClient({ actor, assignments, candidates, titl
         </ul>
       </div>
 
+      {/* No candidate list is passed down: the modal fetches the roster of the
+          one branch the lead belongs to, which is the only set the write will
+          accept. */}
       <AssignLeadModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         actor={actor}
-        candidates={candidates}
       />
 
       {editing && (
@@ -216,7 +217,6 @@ export default function AssignmentsClient({ actor, assignments, candidates, titl
           open={editing !== null}
           onClose={() => setEditing(null)}
           actor={actor}
-          candidates={candidates}
           existing={editing}
         />
       )}

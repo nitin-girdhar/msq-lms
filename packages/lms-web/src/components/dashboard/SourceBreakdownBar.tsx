@@ -3,17 +3,22 @@ import type { SourceRow } from '../../lib/leads/stats';
 interface Props {
   rows: SourceRow[];
   total: number;
+  /** Placement/visibility is the caller's call — inline in the toolbar on desktop, own row on mobile. */
+  className?: string;
 }
 
 /**
  * Source split of whichever stat card is currently selected. Lives in the toolbar
- * so the cards stay compact and only one breakdown is on screen at a time.
+ * so the cards stay compact and only one breakdown is on screen at a time. Below `md`
+ * the toolbar has no room for it, so the shell renders it as its own scrollable row.
  */
-export default function SourceBreakdownBar({ rows, total }: Props) {
+export default function SourceBreakdownBar({ rows, total, className = '' }: Props) {
   if (!rows.length) return null;
 
   return (
-    <div className="hidden min-w-0 flex-1 items-center gap-1.5 overflow-x-auto md:flex">
+    <div
+      className={`min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
+    >
       <span className="shrink-0 text-[10px] font-semibold uppercase tracking-widest text-[#94A3B8]">
         By source
       </span>

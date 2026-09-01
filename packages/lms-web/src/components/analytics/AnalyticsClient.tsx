@@ -15,7 +15,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { MultiSelect, type SelectOption } from '@platform/ui-kit';
 import { analytics } from '../../lib/api/client';
+import { METRIC_KEYS } from '../../types/analytics';
 import type {
   BranchReportRow,
   LeadReportMetrics,
@@ -94,6 +96,50 @@ function monthStart(): string {
   return `${today().slice(0, 7)}-01`;
 }
 
+/**
+ * Adds every metric column across a set of rows. Iterates METRIC_KEYS rather
+ * than hand-listing the 29 fields for the same reason the backend's rollups do:
+ * a column missed from a sum is a zero that reads as a real measurement.
+ *
+ * Accumulated into a Partial and asserted whole on the way out: every key is
+ * written by the first loop, and types/analytics.ts proves at compile time that
+ * METRIC_KEYS covers LeadReportMetrics exactly — so the result is complete even
+ * though TypeScript cannot follow a loop well enough to see it.
+ */
+function sumMetrics(rows: readonly LeadReportMetrics[]): LeadReportMetrics {
+  const out: Partial<LeadReportMetrics> = {};
+  for (const k of METRIC_KEYS) out[k] = 0;
+  for (const r of rows) {
+    for (const k of METRIC_KEYS) out[k] = (out[k] ?? 0) + Number(r[k] ?? 0);
+  }
+  return out as LeadReportMetrics;
+}
+
+/** The drill-down's source identity: id when the source still exists, label
+ *  otherwise. Both report payloads carry a null source_id for a deleted source,
+ *  so keying on the label is what keeps its rows joinable — the same fallback
+ *  the SQL's COALESCE(src.label, 'Unknown') produces. */
+function sourceKey(row: { source_id: string | null; source_label: string }): string {
+  return row.source_id ?? row.source_label;
+}
+
+/**
+ * lms.lead_stage.name → the LeadReportMetrics field holding that stage's count.
+ * Lets the Pipeline table honour the branch/source filters: /analytics/pipeline
+ * takes no branch or source parameter, so its counts are re-derived from the
+ * filtered rows while the endpoint keeps supplying the stage list, labels and
+ * sort order (all seeded lookup rows the client has no other source for).
+ */
+const STAGE_METRIC: Readonly<Record<string, keyof LeadReportMetrics>> = {
+  new: 'new_count',
+  contacting: 'contacting_count',
+  on_hold: 'on_hold_count',
+  qualified: 'qualified_count',
+  converted: 'converted_count',
+  unqualified: 'unqualified_count',
+  transferred_out: 'transferred_out_count',
+};
+
 export default function AnalyticsClient(_props: Props) {
   // Lead-creation window every section on this page is filtered by. Defaults to
   // the current calendar month to date.
@@ -106,33 +152,136 @@ export default function AnalyticsClient(_props: Props) {
   const { data: pipelineData, isLoading: pipelineLoading } = useSWR(
     ['analytics/pipeline', start, end], () => analytics.pipeline(range), { revalidateOnFocus: false },
   );
-  const { data: branchData, isLoading: branchLoading } = useSWR(
-    ['analytics/report/branches', start, end], () => analytics.branchReport(range), { revalidateOnFocus: false },
-  );
   const { data: sourceData, isLoading: sourceLoading } = useSWR(
     ['analytics/report/sources', start, end], () => analytics.sourceReport(range), { revalidateOnFocus: false },
   );
   // `/report/users` is no longer fetched: its (branch, assignee) grain is a
   // strict subset of `/report/sources`.users, which carries the same metrics at
   // the finer (branch, assignee, source) grain the drill-down needs.
+  //
+  // Nor is `/report/branches`, for the same reason once the branch/source
+  // filters landed: this screen always sends a range, and on the ranged path
+  // that endpoint just returns rollupBranchesFromSources over exactly the rows
+  // below. Deriving the branch level here rather than fetching it is what lets
+  // it move with the filters — a fetched copy could only show every branch.
 
   const [openBranches, setOpenBranches] = useState<ReadonlySet<string>>(() => new Set());
   const [openSources, setOpenSources] = useState<ReadonlySet<string>>(() => new Set());
 
-  const isLoading = pipelineLoading || branchLoading || sourceLoading;
+  const isLoading = pipelineLoading || sourceLoading;
   const pipeline = (pipelineData?.data ?? []) as PipelineStage[];
-  const branches = (branchData?.data ?? []) as BranchReportRow[];
   const sourceBranches = (sourceData?.data?.branches ?? []) as SourceBranchRow[];
   const sourceUsers = (sourceData?.data?.users ?? []) as SourceUserRow[];
 
-  const totalRow = branches.find((b) => b.is_total) ?? branches[0] ?? null;
-  const branchRows = branches.filter((b) => !b.is_total);
-  // Counted from the real branch rows, never from "an is_total row exists": the
-  // ranged path derives its rollup in TS (rollupBranchesFromSources) and so
-  // emits one even for a single-branch org admin, which the old test read as a
-  // tenant-wide actor.
-  const isTenantWide = branchRows.length > 1;
-  const sourceRows = sourceBranches.filter((s) => !s.is_total);
+  // -- Branch / source filters -----------------------------------------------
+  // `null` means "every option" — the initial state, and the state a date-range
+  // change should inherit. Materialising the full id list at mount instead would
+  // silently exclude any branch or source whose leads only fall inside a window
+  // the user picks later. An explicit list is stored only once the user touches
+  // the filter themselves; from then on it is theirs to widen.
+  const [branchPick, setBranchPick] = useState<readonly string[] | null>(null);
+  const [sourcePick, setSourcePick] = useState<readonly string[] | null>(null);
+
+  const allSourceRows = useMemo(
+    () => sourceBranches.filter((s) => !s.is_total),
+    [sourceBranches],
+  );
+
+  // Both option lists are built from the UNFILTERED rows, so narrowing one
+  // filter never removes choices from the other.
+  const branchOptions = useMemo<SelectOption[]>(() => {
+    const names = [...new Set(allSourceRows.map((s) => s.org_name))];
+    return names.sort((a, b) => a.localeCompare(b)).map((name) => ({ id: name, label: name }));
+  }, [allSourceRows]);
+
+  const sourceOptions = useMemo<SelectOption[]>(() => {
+    const byKey = new Map<string, string>();
+    for (const s of allSourceRows) byKey.set(sourceKey(s), s.source_label);
+    return [...byKey.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [allSourceRows]);
+
+  const branchSelected = useMemo(
+    () => (branchPick === null ? branchOptions : branchOptions.filter((o) => branchPick.includes(String(o.id)))),
+    [branchOptions, branchPick],
+  );
+  const sourceSelected = useMemo(
+    () => (sourcePick === null ? sourceOptions : sourceOptions.filter((o) => sourcePick.includes(String(o.id)))),
+    [sourceOptions, sourcePick],
+  );
+
+  const branchSet = useMemo(() => new Set(branchSelected.map((o) => String(o.id))), [branchSelected]);
+  const sourceSet = useMemo(() => new Set(sourceSelected.map((o) => String(o.id))), [sourceSelected]);
+
+  // org_name (not org_id) is the branch key throughout this file — see the
+  // sourcesByBranch note below — so the filter keys on it too.
+  const sourceRows = useMemo(
+    () => allSourceRows.filter((s) => branchSet.has(s.org_name) && sourceSet.has(sourceKey(s))),
+    [allSourceRows, branchSet, sourceSet],
+  );
+  const filteredUsers = useMemo(
+    () => sourceUsers.filter((u) => branchSet.has(u.org_name) && sourceSet.has(sourceKey(u))),
+    [sourceUsers, branchSet, sourceSet],
+  );
+
+  // Branch rows summed out of the filtered (branch, source) rows. Identical to
+  // what /report/branches returns for an unfiltered window — that endpoint's
+  // ranged path performs this very rollup server-side — but it also tracks the
+  // filters, which a fetched copy could not.
+  const branchRows = useMemo<BranchReportRow[]>(() => {
+    const byOrg = new Map<string, SourceBranchRow[]>();
+    for (const s of sourceRows) {
+      const list = byOrg.get(s.org_name);
+      if (list) list.push(s);
+      else byOrg.set(s.org_name, [s]);
+    }
+    return [...byOrg.values()]
+      .map((group) => {
+        const first = group[0]!;
+        return {
+          ...sumMetrics(group),
+          tenant_id: first.tenant_id,
+          org_id: first.org_id,
+          org_name: first.org_name,
+          report_date: group.reduce((max, r) => (r.report_date > max ? r.report_date : max), first.report_date),
+          is_total: false,
+        };
+      })
+      .sort((a, b) => a.org_name.localeCompare(b.org_name));
+  }, [sourceRows]);
+
+  // The ALL BRANCHES rollup behind the KPI strip, the status chart and the
+  // table's pinned footer. Null when the current filters match nothing, which
+  // the empty state below distinguishes from "the window itself is empty".
+  const totalRow = useMemo<BranchReportRow | null>(() => {
+    if (!sourceRows.length) return null;
+    const first = sourceRows[0]!;
+    return {
+      ...sumMetrics(sourceRows),
+      tenant_id: first.tenant_id,
+      org_id: null,
+      org_name: 'ALL BRANCHES',
+      report_date: sourceRows.reduce((max, r) => (r.report_date > max ? r.report_date : max), first.report_date),
+      is_total: true,
+    };
+  }, [sourceRows]);
+
+  // Read off the UNFILTERED option list, never the filtered branch rows:
+  // narrowing to a single branch must not re-root the drill-down at Source or
+  // drop the By Branch chart out from under the user.
+  const isTenantWide = branchOptions.length > 1;
+
+  const pipelineRows = useMemo<PipelineStage[]>(
+    // A stage with no STAGE_METRIC mapping keeps the endpoint's own count —
+    // wrong under a filter, but visibly present rather than silently zero if a
+    // new lms.lead_stage row ever lands before that map is updated.
+    () => pipeline.map((s) => {
+      const key = STAGE_METRIC[s.stage];
+      return key && totalRow ? { ...s, count: totalRow[key] } : s;
+    }),
+    [pipeline, totalRow],
+  );
 
   // Level 2 of the drill-down: a branch's sources. sourceRows is already one row
   // per (branch, source), so grouping by org_name splits it into per-branch
@@ -156,8 +305,8 @@ export default function AnalyticsClient(_props: Props) {
   // way or the child list silently comes back empty.
   const usersByBranchSource = useMemo(() => {
     const m = new Map<string, SourceUserRow[]>();
-    for (const u of sourceUsers) {
-      const key = `${u.org_name}::${u.source_id ?? u.source_label}`;
+    for (const u of filteredUsers) {
+      const key = `${u.org_name}::${sourceKey(u)}`;
       const list = m.get(key);
       if (list) list.push(u);
       else m.set(key, [u]);
@@ -170,7 +319,7 @@ export default function AnalyticsClient(_props: Props) {
           : a.assignee.localeCompare(b.assignee));
     }
     return m;
-  }, [sourceUsers]);
+  }, [filteredUsers]);
 
   // Tenant actors drill Branch ▸ Source ▸ Assignee; a single-branch actor has no
   // branch to pick, so the same tree starts one level in, at Source. Same test
@@ -194,7 +343,7 @@ export default function AnalyticsClient(_props: Props) {
         return;
       }
       for (const s of sources) {
-        const key = `${s.org_name}::${s.source_id ?? s.source_label}`;
+        const key = `${s.org_name}::${sourceKey(s)}`;
         const isOpen = openSources.has(key);
         out.push({ key, depth, label: s.source_label, metrics: s, expandable: true, isOpen });
         if (!isOpen) continue;
@@ -242,7 +391,7 @@ export default function AnalyticsClient(_props: Props) {
     setOpenBranches(new Set(branchRows.map((b) => b.org_name)));
     setOpenSources(new Set(
       [...sourcesByBranch.entries()].flatMap(([org, list]) =>
-        list.map((s) => `${org}::${s.source_id ?? s.source_label}`)),
+        list.map((s) => `${org}::${sourceKey(s)}`)),
     ));
   };
 
@@ -299,13 +448,62 @@ export default function AnalyticsClient(_props: Props) {
           >
             This month
           </button>
+
+          {/* Hidden for a single-branch actor: one option is not a choice.
+              Gated on the option list, not on the current selection, so it
+              cannot vanish once the user narrows it. */}
+          {isTenantWide && (
+            <div className="w-52">
+              <MultiSelect
+                label="Branch"
+                placeholder="None selected"
+                allLabel="All branches"
+                selectAllLabel="Select all"
+                maxChips={2}
+                options={branchOptions}
+                selected={branchSelected}
+                onChange={(next) => setBranchPick(next.map((o) => String(o.id)))}
+              />
+            </div>
+          )}
+
+          {sourceOptions.length > 1 && (
+            <div className="w-52">
+              <MultiSelect
+                label="Source"
+                placeholder="None selected"
+                allLabel="All sources"
+                selectAllLabel="Select all"
+                maxChips={2}
+                options={sourceOptions}
+                selected={sourceSelected}
+                onChange={(next) => setSourcePick(next.map((o) => String(o.id)))}
+              />
+            </div>
+          )}
+
+          {/* Back to null — "every option, including ones a later window
+              introduces" — rather than to the current full id list. */}
+          {(branchPick || sourcePick) && (
+            <button
+              type="button"
+              onClick={() => { setBranchPick(null); setSourcePick(null); }}
+              className="rounded-lg border border-[#E2E8F0] px-2.5 py-1.5 text-xs font-semibold text-[#475569] hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
+            >
+              Reset filters
+            </button>
+          )}
         </div>
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-sm text-[#64748B]">Loading…</div>
       ) : !totalRow ? (
-        <p className="text-sm text-[#64748B]">No data available.</p>
+        <p className="text-sm text-[#64748B]">
+          {allSourceRows.length
+            ? 'No leads match the selected branch and source filters.'
+            : 'No data available.'}
+        </p>
       ) : (
         <>
           {/* ── KPI strip ─────────────────────────────────────────────── */}
@@ -360,7 +558,7 @@ export default function AnalyticsClient(_props: Props) {
             </ChartCard>
           </div>
 
-          <PipelineTable pipeline={pipeline} />
+          <PipelineTable pipeline={pipelineRows} />
 
           {isTenantWide && (
             <ChartCard title="By Branch" subtitle="Total leads per branch">

@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type { RoleTxContext } from '@platform/db';
-import { resolveScope, CAPABILITY } from '@platform/rbac';
 import type { CapabilityHolder } from '@platform/rbac';
 import type { CreateAssignmentInput, UpdateAssignmentInput, BulkAssignInput } from '@lms/validation';
 import {
@@ -33,10 +32,45 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
   return assignment;
 }
 
+/**
+ * The transaction context an assignment write in `orgId` must run under, plus
+ * the assertion that the actor may write there at all.
+ *
+ * RLS pins app_user to the branch the actor is switched INTO, but an actor
+ * mapped to several branches manages all of them — Bulk Assign and the
+ * Assignments grid both let them pick another one. Every statement of the write
+ * therefore has to run with the reach their mappings prove, or the reads return
+ * nothing and the UPDATE matches nothing. Elevating only for tenant_admin-shaped
+ * roles (which is what this used to do) left exactly the multi-branch org and
+ * senior-org roles broken.
+ *
+ * Coverage — the actor's own active iam.user_org_mapping rows, the same rows the
+ * branch picker is built from — is what bounds the elevated context. It is
+ * checked BEFORE any write, so an org the actor does not cover is a 403 rather
+ * than a silent no-op, and a forged org id reaches nothing. Tenancy is still
+ * asserted in SQL, and iam.can_assign_to / fn_actor_can_act_in_org remain the
+ * database's own last word on the write.
+ */
+async function writeCtxForOrg(ctx: RoleTxContext, orgId: string): Promise<RoleTxContext> {
+  if (orgId === ctx.org_id) return ctx;
+  const covered = await repo.getCoveredOrgIds(ctx);
+  if (!covered.includes(orgId)) {
+    throw new ForbiddenError('You cannot assign leads in that branch');
+  }
+  return { ...ctx, tenantWide: true };
+}
+
 export async function createAssignment(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, data: CreateAssignmentInput) {
-  const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
+  // The lead's branch, not ctx.org_id: it decides both who is assignable (the
+  // picker asks the same question of /users/assignable) and which rank the
+  // target holds for the authority check below.
+  const leadOrgId = await repo.getLeadOrgId(ctx, data.lead_id);
+  if (!leadOrgId) throw new NotFoundError('Lead not found');
+  const txCtx = await writeCtxForOrg(ctx, leadOrgId);
+
+  const targetUser = await repo.getUserForAssignment(txCtx, data.assigned_to, leadOrgId);
   if (!targetUser || !targetUser['is_active']) {
-    throw new BadRequestError('Target user not found or inactive');
+    throw new BadRequestError('Target user is not an active member of the branch this lead belongs to');
   }
 
   const targetRank = Number(targetUser['rank'] ?? 0);
@@ -51,7 +85,7 @@ export async function createAssignment(ctx: RoleTxContext, actor: CapabilityHold
       action_type: 'privilege_denied_attempt',
       performed_by: ctx.user_id,
       lead_id: data.lead_id,
-      org_id: ctx.org_id,
+      org_id: leadOrgId,
       new_value: { reason, target_id: targetUser['id'], target_role: targetUser['role_name'] },
     });
 
@@ -59,13 +93,13 @@ export async function createAssignment(ctx: RoleTxContext, actor: CapabilityHold
   }
 
   try {
-    const result = await repo.assignLead(ctx, { lead_id: data.lead_id, assigned_to: data.assigned_to });
+    const result = await repo.assignLead(txCtx, { lead_id: data.lead_id, assigned_to: data.assigned_to });
 
     await logActivity({
       action_type: 'assignment_created',
       performed_by: ctx.user_id,
       lead_id: data.lead_id,
-      org_id: ctx.org_id,
+      org_id: leadOrgId,
       new_value: { assigned_to: data.assigned_to },
     });
 
@@ -87,9 +121,13 @@ export async function createAssignment(ctx: RoleTxContext, actor: CapabilityHold
 }
 
 export async function reassignLead(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, leadId: string, data: UpdateAssignmentInput) {
-  const targetUser = await repo.getUserForAssignment(ctx, data.assigned_to);
+  const leadOrgId = await repo.getLeadOrgId(ctx, leadId);
+  if (!leadOrgId) throw new NotFoundError('Assignment not found');
+  const txCtx = await writeCtxForOrg(ctx, leadOrgId);
+
+  const targetUser = await repo.getUserForAssignment(txCtx, data.assigned_to, leadOrgId);
   if (!targetUser || !targetUser['is_active']) {
-    throw new BadRequestError('Target user not found or inactive');
+    throw new BadRequestError('Target user is not an active member of the branch this lead belongs to');
   }
 
   const targetRank = Number(targetUser['rank'] ?? 0);
@@ -97,7 +135,7 @@ export async function reassignLead(ctx: RoleTxContext, actor: CapabilityHolder, 
     throw new ForbiddenError('Insufficient permissions to assign to this user');
   }
 
-  const { result, previous_assignee } = await repo.reassignLead(ctx, {
+  const { result, previous_assignee } = await repo.reassignLead(txCtx, {
     lead_id: leadId,
     assigned_to: data.assigned_to,
   });
@@ -108,7 +146,7 @@ export async function reassignLead(ctx: RoleTxContext, actor: CapabilityHolder, 
     action_type: 'assignment_reassigned',
     performed_by: ctx.user_id,
     lead_id: leadId,
-    org_id: ctx.org_id,
+    org_id: leadOrgId,
     old_value: { assigned_to: previous_assignee },
     new_value: { assigned_to: data.assigned_to },
   });
@@ -123,9 +161,15 @@ export async function reassignLead(ctx: RoleTxContext, actor: CapabilityHolder, 
 }
 
 export async function unassignLead(ctx: RoleTxContext, leadId: string) {
-  const result = await repo.unassignLead(ctx, leadId);
+  // Same branch reach as the two assign paths: unassigning a lead in another
+  // branch the actor covers is the same authority as reassigning it.
+  const leadOrgId = await repo.getLeadOrgId(ctx, leadId);
+  if (!leadOrgId) throw new NotFoundError('Assignment not found');
+  const txCtx = await writeCtxForOrg(ctx, leadOrgId);
+
+  const result = await repo.unassignLead(txCtx, leadId);
   if (!result) throw new NotFoundError('Assignment not found');
-  await logActivity({ action_type: 'assignment_removed', performed_by: ctx.user_id, lead_id: leadId, org_id: ctx.org_id });
+  await logActivity({ action_type: 'assignment_removed', performed_by: ctx.user_id, lead_id: leadId, org_id: leadOrgId });
 
   publishEvent('lead:updated', {
     lead_id: leadId,
@@ -139,42 +183,46 @@ export async function unassignLead(ctx: RoleTxContext, leadId: string) {
 export async function bulkAssignLeads(ctx: RoleTxContext, actor: CapabilityHolder, actorRank: number, data: BulkAssignInput) {
   // Bulk Assign lets a multi-branch actor pick a branch and hand its leads to
   // someone in THAT branch, so every statement below — reading the leads,
-  // reading the assignee, and the UPDATE — has to run under the same reach the
-  // actor's capability grants. Without this the reads return nothing and the
-  // UPDATE matches nothing for any cross-branch actor whose platform_role is not
-  // literally tenant_admin: RLS is still pinned to their home branch.
+  // reading the assignee, and the UPDATE — has to run under the reach the
+  // actor's own branch mappings prove. Reading the leads therefore comes FIRST
+  // and under an elevated read-only context: which branch the selection lives in
+  // is the question everything else is checked against, and RLS would have
+  // answered "no such leads" for any branch other than the one the actor is
+  // switched into.
   //
-  // The org checks below (all leads in one org, assignee in that same org) are
-  // what keep this from becoming "assign anything to anyone" — tenant reach is
-  // not org reach.
-  const viewScope = resolveScope(actor, CAPABILITY.LMS_LEADS_VIEW);
-  const txCtx: RoleTxContext = (viewScope === 'tenant' || viewScope === 'all')
-    ? { ...ctx, tenantWide: true }
-    : ctx;
+  // This used to elevate only when lms.leads.view resolved to tenant/all, which
+  // is not a rung the multi-branch org and senior-org roles sit on: picking any
+  // other covered branch read back zero leads and failed as "One or more leads
+  // were not found" — the reported Bulk Assign error.
+  const readCtx: RoleTxContext = { ...ctx, tenantWide: true, readOnly: true };
 
-  const targetUser = await repo.getUserForAssignment(txCtx, data.assigned_to);
+  const leadIds = [...new Set(data.lead_ids)];
+  const leads = await repo.getLeadsForBulkAssignment(readCtx, leadIds);
+  if (leads.length !== leadIds.length) {
+    throw new NotFoundError('One or more leads were not found');
+  }
+
+  const firstLead = leads[0];
+  if (!firstLead) throw new BadRequestError('No leads selected');
+  const leadsOrgId = firstLead.org_id;
+  if (leads.some((l) => l.org_id !== leadsOrgId)) {
+    throw new BadRequestError('All selected leads must belong to the same org');
+  }
+
+  // Coverage is the bound on everything the elevated read just made visible: an
+  // org the actor is not mapped to is refused here, before any write.
+  const txCtx = await writeCtxForOrg(ctx, leadsOrgId);
+
+  // Scoped to the leads' branch, so a null row means "not an active member of
+  // that branch" — the assignee's HOME org is no longer part of the question.
+  const targetUser = await repo.getUserForAssignment(txCtx, data.assigned_to, leadsOrgId);
   if (!targetUser || !targetUser['is_active']) {
-    throw new BadRequestError('Target user not found or inactive');
+    throw new BadRequestError('The assignee must be an active member of the branch the leads live in');
   }
 
   const targetRank = Number(targetUser['rank'] ?? 0);
   if (!canAssignToUser(actor, actorRank, targetRank, ctx.user_id, String(targetUser['id']))) {
     throw new ForbiddenError('You cannot assign leads to this user');
-  }
-
-  const leadIds = [...new Set(data.lead_ids)];
-  const leads = await repo.getLeadsForBulkAssignment(txCtx, leadIds);
-  if (leads.length !== leadIds.length) {
-    throw new NotFoundError('One or more leads were not found');
-  }
-
-  const orgIds = new Set(leads.map((l) => l.org_id));
-  if (orgIds.size > 1) {
-    throw new BadRequestError('All selected leads must belong to the same org');
-  }
-  const [leadsOrgId] = orgIds;
-  if (leadsOrgId !== targetUser['org_id']) {
-    throw new BadRequestError('The assignee must belong to the org the leads live in');
   }
 
   const previousAssigneeByLead = new Map(leads.map((l) => [l.id, l.assigned_user_id]));
@@ -188,7 +236,7 @@ export async function bulkAssignLeads(ctx: RoleTxContext, actor: CapabilityHolde
       action_type: previousAssignee ? 'assignment_reassigned' : 'assignment_created',
       performed_by: ctx.user_id,
       lead_id: leadId,
-      org_id: ctx.org_id,
+      org_id: leadsOrgId,
       old_value: { assigned_to: previousAssignee },
       new_value: { assigned_to: data.assigned_to, bulk: true, batch_id: batchId },
     });

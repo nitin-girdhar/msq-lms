@@ -13,11 +13,13 @@ interface Props {
   open: boolean;
   onClose: () => void;
   orgId: string;
+  /** Name of the branch `orgId` refers to, shown so the list has visible provenance. */
+  orgName?: string;
   leadIds: string[];
   onAssigned: (result: { updated: number; skipped: string[] }) => void;
 }
 
-export default function BulkAssignModal({ open, onClose, orgId, leadIds, onAssigned }: Props) {
+export default function BulkAssignModal({ open, onClose, orgId, orgName, leadIds, onAssigned }: Props) {
   const [candidates, setCandidates] = useState<SessionUser[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const [assignedTo, setAssignedTo] = useState('');
@@ -102,17 +104,28 @@ export default function BulkAssignModal({ open, onClose, orgId, leadIds, onAssig
   );
 
   return (
-    <Modal open={open} onClose={close} title="Bulk assign leads" locked={pending} footer={footer}>
-      <form id={FORM_ID} onSubmit={submit} className="flex flex-col gap-4" noValidate>
+    <Modal
+      open={open}
+      onClose={close}
+      title="Bulk assign leads"
+      subtitle={orgName ? `Branch: ${orgName}` : undefined}
+      maxWidth="max-w-2xl"
+      locked={pending}
+      footer={footer}
+    >
+      <form id={FORM_ID} onSubmit={submit} className="flex flex-col gap-5" noValidate>
         {error && (
-          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        <p className="text-xs text-[#64748B]">
+        {/* The eligible set is whatever this actor's own lms.leads.assign.*
+            grants reach within this branch — not a fixed pair of job titles, as
+            this line used to claim. */}
+        <p className="text-sm text-[#64748B]">
           {leadIds.length} lead{leadIds.length === 1 ? '' : 's'} will be assigned to whoever you pick below.
-          Only Senior Sales Executives and reps in this branch are eligible.
+          The list holds the people you may assign to in{orgName ? ` ${orgName}` : ' this branch'}.
         </p>
 
         <AssignmentSelector
@@ -124,7 +137,7 @@ export default function BulkAssignModal({ open, onClose, orgId, leadIds, onAssig
           label="Assign to"
         />
         {candidatesLoading && (
-          <p className="-mt-2 text-[11px] text-[#64748B]">Loading eligible assignees…</p>
+          <p className="-mt-3 text-xs text-[#64748B]">Loading eligible assignees…</p>
         )}
       </form>
     </Modal>

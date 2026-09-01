@@ -4,9 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionUser } from '@platform/types';
 import type { StageOption, StageOutcome, UpdatePayload } from '../types/leads';
 import { lookups, leads as leadsApi } from '../lib/api/client';
-import { users as usersApi } from '@platform/ui-kit';
-import { can, CAPABILITY } from '@platform/rbac';
-import { toAssignableUsers } from '../lib/users/assignable';
+import { useAssignableCandidates } from './useAssignableCandidates';
 
 interface UseLeadEditDataReturn {
   statusOptions: string[];
@@ -34,12 +32,11 @@ export function useLeadEditData(actor: SessionUser, leadOrgId?: string): UseLead
   const [rejectionStatuses, setRejectionStatuses] = useState<string[]>([]);
   const [stageOutcomes, setStageOutcomes] = useState<StageOutcome[]>([]);
   const [stageIdToName, setStageIdToName] = useState<Record<string, string>>({});
-  const [candidates, setCandidates] = useState<SessionUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const stageNameToIdRef = useRef<Record<string, string>>({});
-  const canAssign = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
+  const { candidates } = useAssignableCandidates(actor, leadOrgId);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,30 +90,6 @@ export function useLeadEditData(actor: SessionUser, leadOrgId?: string): UseLead
 
     return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    if (!canAssign) { setCandidates([]); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        // Scoped to the LEAD's branch, because that is the org
-        // iam.can_assign_to is evaluated against: the target must hold an active
-        // mapping there. The server now returns candidates across every branch
-        // the actor covers, so without this a Wingman covering six branches
-        // would be offered ~16 names of whom only the lead's own branch could
-        // actually be assigned — a picker full of choices the write rejects.
-        // Falls back to full coverage when no lead is in context.
-        const json = await usersApi.assignable(
-          leadOrgId ? { product: 'lms', orgId: leadOrgId } : { product: 'lms' },
-        );
-        if (cancelled) return;
-        setCandidates(toAssignableUsers(json.data));
-      } catch {
-        if (!cancelled) setCandidates([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [canAssign, leadOrgId]);
 
   const followUpSet = useMemo(() => new Set(requiresFollowup), [requiresFollowup]);
   const rejectionSet = useMemo(() => new Set(rejectionStatuses), [rejectionStatuses]);

@@ -12,10 +12,16 @@ import type { SessionUser } from '@platform/types';
  * `assignable()` is typed `data: unknown[]` precisely so callers map rather than
  * cast. This is that mapping, in one place — the three pickers that show
  * assignees must agree on how a person is labelled.
+ *
+ * Rows come back alphabetically from the server; they are sorted again here on
+ * the label the pickers actually render, so a caller that merges or extends a
+ * list cannot reintroduce the shuffled order users reported. `localeCompare`
+ * with `sensitivity: 'base'` keeps accents and casing from splitting a name away
+ * from where someone would look for it.
  */
 export function toAssignableUsers(raw: unknown): SessionUser[] {
   const rows = Array.isArray(raw) ? (raw as Record<string, unknown>[]) : [];
-  return rows.map((u) => ({
+  return sortByDisplayName(rows.map((u) => ({
     ...u,
     id: (u['id'] ?? '') as string,
     email: (u['email'] ?? '') as string,
@@ -30,7 +36,7 @@ export function toAssignableUsers(raw: unknown): SessionUser[] {
     manager_id: null,
     manager_name: null,
     last_login_at: null,
-  })) as SessionUser[];
+  })) as SessionUser[]);
 }
 
 /**
@@ -40,4 +46,11 @@ export function toAssignableUsers(raw: unknown): SessionUser[] {
 export function displayName(u: Pick<SessionUser, 'name' | 'email'>): string {
   const name = (u.name ?? '').trim();
   return name || u.email;
+}
+
+/** Ascending by the label the list renders. Does not mutate the input. */
+export function sortByDisplayName<T extends Pick<SessionUser, 'name' | 'email'>>(users: T[]): T[] {
+  return [...users].sort((a, b) =>
+    displayName(a).localeCompare(displayName(b), undefined, { sensitivity: 'base' }),
+  );
 }

@@ -24,29 +24,36 @@ interface OpenLeadCount {
 
 /**
  * Picks who a new, unassigned lead should go to based on each org member's
- * lead_assignment_weight (% share) vs their current open-lead workload.
+ * lms.lead_assignment_weights.weight (% share) vs their current open-lead
+ * workload.
  * Returns null when the org has no eligible weighted users — callers should
  * leave the lead unassigned in that case (existing/manual behavior).
  */
 export async function resolveAutoAssignedUser(tx: DrizzleTx, orgId: string): Promise<string | null> {
   const rows = (await tx.execute(sql`
-    SELECT uom.user_id, uom.lead_assignment_weight AS weight, ur.name AS role_name, o.tenant_id
+    SELECT uom.user_id, w.weight, ur.name AS role_name, o.tenant_id
     FROM iam.user_org_mapping uom
+    -- INNER JOIN: a membership with no weight row is not in the rotation, which
+    -- is what the weight > 0 filter below already meant when the weight was a
+    -- NOT NULL DEFAULT 0 column on the mapping. The join does that filtering
+    -- now; the explicit predicate is kept because an existing row CAN hold 0
+    -- (deactivating a user zeroes it rather than deleting it).
+    JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = uom.id
     JOIN iam.users u             ON u.id  = uom.user_id
     JOIN iam.user_roles ur       ON ur.id = uom.role_id
     JOIN entity.organizations o  ON o.id  = uom.org_id
     WHERE uom.org_id = ${orgId}::uuid
       AND uom.is_active
       -- An active MAPPING is not enough. Deactivating a user writes
-      -- iam.users.is_active only, leaving the org mapping and its weight
-      -- untouched; lms.check_lead_fk_org_scope() then re-validates the pick
+      -- iam.users.is_active and zeroes the weight, but leaves the org mapping
+      -- itself untouched; lms.check_lead_fk_org_scope() then re-validates the pick
       -- through iam.fn_actor_can_act_in_org, which DOES check the user row.
       -- Picking such a user makes every insert RAISE — surfacing as a 404 out
       -- of intake and silently dropping every inbound lead for that branch
       -- (Gurugram - Sector 104, Aug 13-24). Mirror the trigger predicate
       -- exactly so the picker and the trigger cannot disagree again.
       AND u.is_active AND NOT u.is_deleted
-      AND uom.lead_assignment_weight > 0
+      AND w.weight > 0
       AND ur.rank > ${LMS_RANK_READ_ONLY}
       AND ur.rank < ${LMS_RANK_ADMIN}
   `)) as unknown as Array<EligibleUser & { tenant_id: string }>;

@@ -21,7 +21,6 @@ interface Props {
   open: boolean;
   onClose: () => void;
   actor: SessionUser;
-  candidates: SessionUser[];
   existing?: AssignmentView | null;
 }
 
@@ -29,7 +28,6 @@ export default function AssignLeadModal({
   open,
   onClose,
   actor,
-  candidates,
   existing,
 }: Props) {
   const router = useRouter();
@@ -40,10 +38,12 @@ export default function AssignLeadModal({
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [orgId, setOrgId] = useState("");
-  // The walk-in-lead org picker lets a tenant/super admin file the lead into ANY
-  // branch, so the assignee list must be re-fetched for whichever branch is
-  // selected — the static `candidates` prop is scoped to the actor's own org
-  // and would otherwise show the wrong branch's users (see AssignmentSelector).
+  // Assignees are always fetched for ONE branch: the one picked in the walk-in
+  // form, or the one the edited assignment's lead already lives in. Edit mode
+  // used to render the static `candidates` prop instead, which the page fetches
+  // with no org at all — so a multi-branch actor was offered every name they
+  // cover and could pick someone the write then rejected, because
+  // iam.can_assign_to is evaluated against the LEAD's branch.
   const [orgCandidates, setOrgCandidates] = useState<SessionUser[]>([]);
   const [orgCandidatesLoading, setOrgCandidatesLoading] = useState(false);
   // Resolved once so walk-in leads are attributed via source_id — the same
@@ -66,12 +66,10 @@ export default function AssignLeadModal({
     };
   }, []);
 
-  const validAssignedTo = (id: string | null | undefined) =>
-    candidates.some((c) => c.id === id) ? (id ?? "") : "";
+  // The branch whose roster the assignee list must come from.
+  const candidateOrgId = existing?.org_id ?? orgId;
 
-  const [assignedTo, setAssignedTo] = useState(() =>
-    validAssignedTo(existing?.assigned_to),
-  );
+  const [assignedTo, setAssignedTo] = useState("");
   const [notes, setNotes] = useState("");
 
   const [pending, setPending] = useState(false);
@@ -87,7 +85,7 @@ export default function AssignLeadModal({
     setEmail("");
     setOrgId("");
     setOrgCandidates([]);
-    setAssignedTo(validAssignedTo(existing?.assigned_to));
+    setAssignedTo("");
     setNotes("");
     setError(null);
     setPhoneError(null);
@@ -96,16 +94,24 @@ export default function AssignLeadModal({
   }, [open, existing]);
 
   useEffect(() => {
-    if (existing || !orgId) {
+    if (!open || !candidateOrgId) {
       setOrgCandidates([]);
       return;
     }
     let cancelled = false;
     setOrgCandidatesLoading(true);
     usersApi
-      .assignable({ product: 'lms', orgId })
+      .assignable({ product: 'lms', orgId: candidateOrgId })
       .then((res) => {
-        if (!cancelled) setOrgCandidates(toAssignableUsers(res.data));
+        if (cancelled) return;
+        const list = toAssignableUsers(res.data);
+        setOrgCandidates(list);
+        // Preselect the current owner when they are still assignable in this
+        // branch, so "Save changes" on an untouched form is a no-op rather than
+        // an error. When they are not, the field stays empty and the Current
+        // Owner banner is what says who holds the lead today.
+        const current = existing?.assigned_to;
+        if (current && list.some((u) => u.id === current)) setAssignedTo(current);
       })
       .catch(() => {
         if (!cancelled) setOrgCandidates([]);
@@ -116,7 +122,7 @@ export default function AssignLeadModal({
     return () => {
       cancelled = true;
     };
-  }, [orgId, existing]);
+  }, [open, candidateOrgId, existing]);
 
   const close = () => {
     if (pending) return;
@@ -139,7 +145,7 @@ export default function AssignLeadModal({
         setError("Pick an assignee from the list.");
         return;
       }
-      if (!candidates.some((c) => c.id === assignedTo)) {
+      if (!orgCandidates.some((c) => c.id === assignedTo)) {
         setError(
           "The selected assignee is no longer available. Please pick another.",
         );
@@ -452,13 +458,13 @@ export default function AssignLeadModal({
           id="wl-assignee"
           value={assignedTo}
           onChange={setAssignedTo}
-          users={isEdit ? candidates : orgCandidates}
-          disabled={pending || (!isEdit && (!orgId || orgCandidatesLoading))}
+          users={orgCandidates}
+          disabled={pending || !candidateOrgId || orgCandidatesLoading}
         />
         {!isEdit && !orgId && (
           <p className="-mt-2 text-[11px] text-[#64748B]">Select an org above to see who&apos;s assignable there.</p>
         )}
-        {!isEdit && orgId && orgCandidatesLoading && (
+        {candidateOrgId && orgCandidatesLoading && (
           <p className="-mt-2 text-[11px] text-[#64748B]">Loading assignable users…</p>
         )}
 

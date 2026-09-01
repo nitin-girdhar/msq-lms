@@ -94,13 +94,27 @@ export async function getAssignmentById(ctx: RoleTxContext, id: string) {
  * the same person can hold different roles in different branches and it is the
  * role in the branch they are being assigned in that governs.
  *
+ * `orgId` — the branch the LEAD lives in — narrows the lookup to that branch's
+ * mapping and is what callers on a write path must pass. Two things follow from
+ * it. The returned rank is the target's rank in the branch the assignment
+ * actually happens in, matching what iam.can_assign_to evaluates. And a null row
+ * now *means* "not an active member of that branch": callers must no longer
+ * compare the lead's org against the returned org_id, which is u.org_id — the
+ * target's HOME branch. That comparison is what rejected every assignee mapped
+ * into the selected branch but homed in another one, which is the normal shape
+ * of a multi-branch tenant. `mapping_org_id` is the membership that was matched.
+ *
  * A tenant-wide role skips the shared-branch requirement: they are not always
  * mapped to every branch individually (see auth.service's getMyOrgs), so
  * requiring a shared mapping would REMOVE reach they have today. The tenant
  * predicate still bounds them. This is only the lookup — iam.can_assign_to,
  * evaluated against the lead's own org, remains the authority on the write.
  */
-export async function getUserForAssignment(ctx: RoleTxContext, targetUserId: string) {
+export async function getUserForAssignment(
+  ctx: RoleTxContext,
+  targetUserId: string,
+  orgId?: string,
+) {
   const sharesABranchWithCaller = isTenantWideRole(ctx.role)
     ? sql`TRUE`
     : sql`EXISTS (
@@ -109,21 +123,47 @@ export async function getUserForAssignment(ctx: RoleTxContext, targetUserId: str
           AND a_uom.org_id = t_uom.org_id
           AND a_uom.is_active
       )`;
+  const inTargetBranch = orgId ? sql`t_uom.org_id = ${orgId}::uuid` : sql`TRUE`;
   return withRoleTx({ ...ctx, tenantWide: true, readOnly: true }, async (tx) => {
     const rows = (await tx.execute(sql`
       SELECT u.id, u.org_id, u.full_name, u.email, u.is_active, u.is_deleted,
-             ur.rank, ur.name AS role_name
+             ur.rank, ur.name AS role_name, t_uom.org_id AS mapping_org_id
       FROM iam.users u
       JOIN iam.user_org_mapping t_uom ON t_uom.user_id = u.id AND t_uom.is_active
       JOIN iam.user_roles ur          ON ur.id = t_uom.role_id
       JOIN entity.organizations o     ON o.id = t_uom.org_id
       WHERE u.id = ${targetUserId}::uuid AND NOT u.is_deleted
         AND o.tenant_id = ${ctx.tenant_id}::uuid
+        AND ${inTargetBranch}
         AND ${sharesABranchWithCaller}
       ORDER BY ur.rank DESC
       LIMIT 1
     `)) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
+  });
+}
+
+/**
+ * The branch a lead lives in, read before any authority check so the assignee
+ * lookup and iam.can_assign_to are both evaluated against the LEAD's branch
+ * rather than whichever one the actor happens to be switched into.
+ *
+ * Elevated read-only for the same reason as getUserForAssignment: a lead in
+ * another branch the actor covers is invisible under the branch-pinned role, and
+ * "which branch is this lead in" is the question that decides whether they may
+ * touch it at all. The caller is responsible for checking the answer against
+ * their coverage before writing anything.
+ */
+export async function getLeadOrgId(ctx: RoleTxContext, leadId: string): Promise<string | null> {
+  return withRoleTx({ ...ctx, tenantWide: true, readOnly: true }, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT ml.org_id
+      FROM lms.marketing_leads ml
+      JOIN entity.organizations o ON o.id = ml.org_id
+      WHERE ml.id = ${leadId}::uuid AND NOT ml.is_deleted
+        AND o.tenant_id = ${ctx.tenant_id}::uuid
+    `)) as Array<{ org_id: string }>;
+    return rows[0] ? String(rows[0].org_id) : null;
   });
 }
 
@@ -389,10 +429,14 @@ export async function getStageAndOutcomeOptions(ctx: RoleTxContext) {
  * just ctx.org_id, which is only the branch they are currently switched into
  * (BranchSwitcher / POST /auth/switch-org).
  *
- * Reads iam.vw_user_org_access, the same view identity-service's getUserOrgs
- * uses to build the branch picker, so the picker and the rows behind it cannot
- * disagree. The view is security_invoker and granted to app_user/tenant_admin
- * (07_grants.sql), so RLS still applies on top.
+ * Reads the base tables rather than iam.vw_user_org_access: that view is
+ * security_invoker and joins entity.tenants for tenant_name, and app_user (the
+ * role lms_svc runs statements as) has no SELECT on entity.tenants by design
+ * (see 05_views.sql), so selecting through it fails with "permission denied for
+ * table tenants". The membership rows are the same ones the branch picker sees —
+ * iam.user_org_mapping.self_read_policy lets a user read all of their own active
+ * mappings regardless of the branch they are switched into — and the tenant is
+ * bounded here by entity.organizations.tenant_id, which app_user can read.
  *
  * Falls back to the current org when a legacy single-branch user has no mapping
  * row at all — never to "every org", which would be a silent widening.
@@ -400,9 +444,12 @@ export async function getStageAndOutcomeOptions(ctx: RoleTxContext) {
 export async function getCoveredOrgIds(ctx: RoleTxContext): Promise<string[]> {
   return withRoleTx(ctx, async (tx) => {
     const rows = (await tx.execute(sql`
-      SELECT DISTINCT org_id
-      FROM iam.vw_user_org_access
-      WHERE user_id = ${ctx.user_id}::uuid AND tenant_id = ${ctx.tenant_id}::uuid
+      SELECT DISTINCT uom.org_id
+      FROM iam.user_org_mapping uom
+      JOIN entity.organizations o ON o.id = uom.org_id AND NOT o.is_deleted
+      WHERE uom.user_id = ${ctx.user_id}::uuid
+        AND uom.is_active
+        AND o.tenant_id = ${ctx.tenant_id}::uuid
     `)) as Array<{ org_id: string }>;
     const ids = rows.map((r) => String(r.org_id));
     return ids.length ? ids : [ctx.org_id];

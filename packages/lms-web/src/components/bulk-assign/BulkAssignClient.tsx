@@ -138,7 +138,7 @@ export default function BulkAssignClient({ actor }: Props) {
               onChange={(e) => setOrgId(e.target.value)}
               disabled={orgsLoading}
               aria-label="Branch"
-              className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+              className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
             >
               {orgs.map((o) => (
                 <option key={o.id} value={o.id}>
@@ -147,7 +147,7 @@ export default function BulkAssignClient({ actor }: Props) {
               ))}
             </select>
           ) : (
-            <span className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-1.5 text-sm font-semibold text-[#0F172A]">
+            <span className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-sm font-semibold text-[#0F172A]">
               {orgsLoading ? 'Loading branch…' : (orgs[0]?.name ?? 'No branch available')}
             </span>
           )}
@@ -156,9 +156,9 @@ export default function BulkAssignClient({ actor }: Props) {
             placeholder="Search name, phone, or stage…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="min-w-[200px] flex-1 rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
+            className="min-w-[240px] flex-1 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
           />
-          <span className="text-xs text-[#64748B]">
+          <span className="text-sm text-[#64748B]">
             {selected.size} selected of {filtered.length}
           </span>
           <button
@@ -192,7 +192,7 @@ export default function BulkAssignClient({ actor }: Props) {
             <tbody className="divide-y divide-[#F1F5F9]">
               {filtered.map((l) => (
                 <tr key={l.lead_id} className="text-[#0F172A]">
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-3">
                     <input
                       type="checkbox"
                       checked={selected.has(l.lead_id)}
@@ -200,12 +200,12 @@ export default function BulkAssignClient({ actor }: Props) {
                       aria-label={`Select ${l.full_name}`}
                     />
                   </td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-3">
                     <p className="text-sm font-semibold">{l.full_name}</p>
-                    {l.phone && <p className="text-[11px] text-[#64748B]">{l.phone}</p>}
+                    {l.phone && <p className="text-xs text-[#64748B]">{l.phone}</p>}
                   </td>
-                  <td className="px-4 py-2.5 text-[#475569]">{l.stage_label}</td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-4 py-3 text-[#475569]">{l.stage_label}</td>
+                  <td className="px-4 py-3">
                     <AssigneeBadge
                       user={
                         l.assigned_rep_name || l.assigned_rep_email
@@ -259,6 +259,7 @@ export default function BulkAssignClient({ actor }: Props) {
           open={assignOpen}
           onClose={() => setAssignOpen(false)}
           orgId={orgId}
+          orgName={orgs.find((o) => o.id === orgId)?.name ?? ''}
           leadIds={selectedIds}
           onAssigned={(result) => {
             setAssignOpen(false);

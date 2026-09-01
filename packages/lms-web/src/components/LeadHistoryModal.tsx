@@ -795,12 +795,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
   const [activeFollowUp, setActiveFollowUp] = useState<TimelineEvent | null>(null);
   const leadId = leadProp.lead_id;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
-  }, [onClose]);
+  // Escape-to-close and background scroll-lock are handled by the shared Modal.
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -871,6 +866,7 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
         subtitle={subtitle}
         maxWidth="max-w-5xl"
         footer={footer}
+        closeOnBackdropClick
         // Two panes on desktop, each with its own scroller; below md this wrapper
         // is the ONLY scroller, so a large form submission can never push the
         // activity history out of view. Hence the custom body instead of the

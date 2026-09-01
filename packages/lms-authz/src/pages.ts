@@ -39,9 +39,9 @@ export function canOpenAssignments(actor: CapabilityHolder): boolean {
 
 /**
  * Bulk Lead Assignment has no page node of its own — it's an operation scope
- * under lms.leads, gated the same way canOpenTeam gates a scope: a plain
- * can() check rather than holdsUsableNode(), since there's no sub-tree of
- * operations beneath it to require being "usable".
+ * under lms.leads, so it takes a plain can() check rather than
+ * holdsUsableNode(): there is no sub-tree of operations beneath it that could
+ * make it "usable".
  */
 export function canOpenBulkAssign(actor: CapabilityHolder): boolean {
   return can(actor, CAPABILITY.LMS_LEADS_ASSIGN_BULK);
@@ -51,18 +51,23 @@ export function canOpenAnalytics(actor: CapabilityHolder): boolean {
   return holdsUsableNode(actor, CAPABILITY.LMS_ANALYTICS);
 }
 
-export function canOpenUsers(actor: CapabilityHolder): boolean {
-  return holdsUsableNode(actor, CAPABILITY.LMS_USERS);
-}
-
 /**
- * /dashboard/team has no nav entry and no page node of its own — it is the
- * team-scoped slice of the people directory.
+ * The Team screen — the people directory, scoped to whatever slice of the roster
+ * the actor's `admin.team.view.*` rung allows.
  *
- * Gated on the SCOPE rather than a nav node, deliberately: a scope always needs
- * its own grant row and never inherits, so this fails closed instead of
- * switching itself on the moment someone is granted the `lms` tool.
+ * Gated on the OPERATION, not on the `team` scope. Asking for `.view.team`
+ * specifically locked out a role granted `.view.org` and not `.view.team`,
+ * despite that role having strictly WIDER reach. holdsUsableNode() asks the
+ * question that actually matters — the operation is granted, and some scope
+ * beneath it is too — and still fails closed, because a scope never inherits
+ * and always needs its own grant row. resolveScope() then decides whose rows
+ * they see.
+ *
+ * Duplicated as a one-liner rather than imported from @platform/team-web, which
+ * owns the canonical copy: this package is authz, and taking a dependency on a
+ * UI package to answer a capability question would invert the layering. If the
+ * two ever need to disagree, that is the bug.
  */
 export function canOpenTeam(actor: CapabilityHolder): boolean {
-  return can(actor, CAPABILITY.LMS_USERS_VIEW_TEAM);
+  return holdsUsableNode(actor, CAPABILITY.ADMIN_TEAM_VIEW);
 }

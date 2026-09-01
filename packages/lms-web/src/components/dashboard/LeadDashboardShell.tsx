@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionUser } from '@platform/types';
-import { users as usersApi, useNotifications } from '@platform/ui-kit';
+import { useNotifications } from '@platform/ui-kit';
 import type { PlatformModule } from '@platform/ui-kit/server';
 import { useOrgs, type DynamicOrg } from '../../hooks/useOrgs';
 import { useLeads } from '../../hooks/useLeads';
@@ -15,7 +15,6 @@ import LeadsTable from '../LeadsTable';
 import FollowUpsShell from '../leads/FollowUpsShell';
 import { DownloadButton } from '@platform/ui-kit';
 import { getRulesForTenant, canSeeUnassignedCard } from '@lms/authz';
-import { can, CAPABILITY } from '@platform/rbac';
 import { applyLeadFilter } from '../../lib/leads/filter';
 import { buildStatGroups } from '../../lib/leads/stats';
 import { buildLeadExportColumns } from '../../lib/export/lead-columns';
@@ -138,44 +137,11 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     }, [addNotification]),
   });
 
-  const [candidates, setCandidates] = useState<SessionUser[]>([]);
-  // Capability, not a role-name allowlist. This used to be
-  // INLINE_ASSIGN_ROLES.includes(actor.role) against six literal built-in role
-  // names, which a TENANT-DEFINED role can never match — so a Pre Sales Captain
-  // managing five reps got no candidates fetched and an empty "Assigned To"
-  // dropdown here, while the very same LeadEditModal reached from Follow-ups
-  // was populated (FollowUpsShell takes its candidates from useLeadEditData,
-  // which already asks this capability). One predicate now, in both places.
-  const canInlineAssign = can(actor, CAPABILITY.LMS_LEADS_ASSIGN);
-
-  useEffect(() => {
-    if (!canInlineAssign) { setCandidates([]); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const json = await usersApi.assignable({ product: 'lms' });
-        if (cancelled) return;
-        const raw = Array.isArray(json.data) ? json.data as Record<string, unknown>[] : [];
-        setCandidates(raw.map((u) => ({
-          ...u,
-          name: (u.full_name ?? u.name ?? '') as string,
-          role: (u.role_name ?? u.role ?? '') as SessionUser['role'],
-          role_label: (u.role_label ?? '') as string,
-          rank: Number(u.rank ?? 0),
-          org_id: (u.org_id ?? '') as string,
-          org_name: '',
-          tenant_id: '',
-          tenant_name: '',
-          manager_id: null,
-          manager_name: null,
-          last_login_at: null,
-        })) as SessionUser[]);
-      } catch {
-        if (!cancelled) setCandidates([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [canInlineAssign]);
+  // Assignees are no longer fetched here. This grid spans branches, so the only
+  // correct list is the one for the branch of the row being edited — LeadsTable
+  // asks useAssignableCandidates for exactly that, with the capability check
+  // (never a role-name allowlist, which tenant-defined roles never match) living
+  // inside the hook alongside it.
 
   const statGroups = useMemo(() => buildStatGroups(leads, actor), [leads, actor]);
 
@@ -205,6 +171,10 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     : selectedOrgs.length === 1
       ? selectedOrgs[0].name
       : `${selectedOrgs.length} orgs`;
+
+  // Rendered twice — inline in the toolbar on desktop, own row below it on mobile.
+  const sourceRowsForFilter = statGroups[activeFilter].sources;
+  const sourceTotal = activeFilter === 'all' ? stats.serverTotal : statGroups[activeFilter].count;
 
   return (
     <div className="flex w-full flex-1 flex-col bg-[#F8FAFC] lg:min-h-0">
@@ -246,8 +216,9 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
         </div>
 
         <SourceBreakdownBar
-          rows={statGroups[activeFilter].sources}
-          total={activeFilter === 'all' ? stats.serverTotal : statGroups[activeFilter].count}
+          rows={sourceRowsForFilter}
+          total={sourceTotal}
+          className="hidden flex-1 md:flex"
         />
 
         <div className="flex shrink-0 items-center gap-2">
@@ -261,6 +232,13 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
           )}
         </div>
       </div>
+
+      {/* Source breakdown — its own scrollable row on mobile, where the toolbar has no room for it */}
+      <SourceBreakdownBar
+        rows={sourceRowsForFilter}
+        total={sourceTotal}
+        className="flex w-full shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-1.5 md:hidden"
+      />
 
       {/* Grid region */}
       <div className={`flex w-full flex-1 flex-col lg:min-h-0 lg:overflow-hidden ${activeFilter === 'followUp' ? 'p-2 sm:px-5 sm:py-1.5' : 'p-2 sm:px-5 sm:py-3'}`}>
@@ -279,7 +257,6 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
               statusOptions={statusOptions}
               statusLabelMap={statusLabelMap}
               actor={actor}
-              assignmentCandidates={candidates}
               onAssignmentChanged={refetch}
               requiresFollowupStatuses={requiresFollowupStatuses}
               rejectionStatuses={rejectionStatuses}

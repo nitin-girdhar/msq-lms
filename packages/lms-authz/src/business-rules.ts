@@ -154,7 +154,7 @@ export function checkAnalyticsAccess(actor: CapabilityHolder): boolean {
 }
 
 export function checkManageUsersAccess(actor: CapabilityHolder): boolean {
-  return can(actor, CAPABILITY.LMS_USERS_MANAGE);
+  return can(actor, CAPABILITY.ADMIN_TEAM_MANAGE);
 }
 
 // ── Leads-history scope (SENIORITY, not permission) ─────────────────────

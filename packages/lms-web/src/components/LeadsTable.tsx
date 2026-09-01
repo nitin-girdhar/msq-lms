@@ -1,9 +1,9 @@
 'use client';
 
 import '@platform/ui-kit/ag-grid.css';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import type { ColDef, GridReadyEvent, ICellRendererParams, RowClassParams } from 'ag-grid-community';
+import type { ColDef, GridApi, GridReadyEvent, ICellRendererParams, IRowNode, RowClassParams } from 'ag-grid-community';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../types/leads';
@@ -17,6 +17,7 @@ import { SourceBadge } from './leads/SourceBadge';
 import { LeadAssigneeBadge } from './leads/LeadAssigneeBadge';
 import { MobileLeadCard } from './leads/MobileLeadCard';
 import { LeadEditModal } from './leads/LeadEditModal';
+import { useAssignableCandidates } from '../hooks/useAssignableCandidates';
 
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -30,7 +31,6 @@ interface Props {
   statusOptions: string[];
   statusLabelMap?: Record<string, string>;
   actor: SessionUser;
-  assignmentCandidates: SessionUser[];
   onAssignmentChanged: () => void;
   requiresFollowupStatuses?: Set<string> | string[];
   rejectionStatuses?: Set<string> | string[];
@@ -41,7 +41,7 @@ interface Props {
 export default function LeadsTable({
   leads, loading, statusFilter = 'all', onUpdate,
   newLeadRowKeys, statusOptions, statusLabelMap,
-  actor, assignmentCandidates, onAssignmentChanged,
+  actor, onAssignmentChanged,
   requiresFollowupStatuses, rejectionStatuses,
   stageOutcomes, stageIdToName,
 }: Props) {
@@ -49,6 +49,12 @@ export default function LeadsTable({
   const isMobile = useIsMobile();
   const [editingLead,  setEditingLead]  = useState<LeadView | null>(null);
   const [historyLead,  setHistoryLead]  = useState<LeadView | null>(null);
+
+  // Keyed on the row being edited, because this grid spans branches: one list
+  // for all of them offered names from branches the lead does not belong to,
+  // which iam.can_assign_to then refused. Same rule as Follow-ups, which reaches
+  // this modal through useLeadEditData.
+  const { candidates: assignmentCandidates } = useAssignableCandidates(actor, editingLead?.org_id);
 
   const followUpSet = useMemo(
     () => requiresFollowupStatuses instanceof Set ? requiresFollowupStatuses : new Set(requiresFollowupStatuses ?? []),
@@ -62,6 +68,15 @@ export default function LeadsTable({
   const filtered = useMemo(
     () => applyLeadFilter(leads, statusFilter),
     [leads, statusFilter],
+  );
+
+  // Whether a single lead matches the active dashboard-card filter — backs
+  // both the AG Grid external-filter hooks (desktop) and reuses
+  // applyLeadFilter so the predicate can't drift from `filtered` above
+  // (mobile list, "X leads" count).
+  const matchesStatusFilter = useCallback(
+    (lead: LeadView) => applyLeadFilter([lead], statusFilter).length > 0,
+    [statusFilter],
   );
 
   const assigneeCellRenderer = useCallback((params: ICellRendererParams<LeadView>) => {
@@ -163,7 +178,24 @@ export default function LeadsTable({
     onHistory: setHistoryLead,
   }), [actor]);
 
-  const onGridReady = useCallback((_: GridReadyEvent) => {}, []);
+  // rowData (below) stays a stable reference to `leads` — the status-card
+  // filter is applied through these external-filter hooks instead of by
+  // swapping rowData every time `statusFilter` changes. Reassigning rowData
+  // that often while a column sort is active is what makes AG Grid's sort
+  // look broken/reverted once a filter is applied; keeping rowData stable
+  // lets AG Grid's own filter+sort pipeline handle the combination correctly.
+  const [gridApi, setGridApi] = useState<GridApi<LeadView> | null>(null);
+  const onGridReady = useCallback((params: GridReadyEvent<LeadView>) => {
+    setGridApi(params.api);
+  }, []);
+  const isExternalFilterPresent = useCallback(() => statusFilter !== 'all', [statusFilter]);
+  const doesExternalFilterPass = useCallback(
+    (node: IRowNode<LeadView>) => (node.data ? matchesStatusFilter(node.data) : false),
+    [matchesStatusFilter],
+  );
+  useEffect(() => {
+    gridApi?.onFilterChanged();
+  }, [gridApi, statusFilter]);
 
   const getRowClass = useCallback((params: RowClassParams<LeadView>) => {
     if (!params.data) return '';
@@ -256,10 +288,12 @@ export default function LeadsTable({
       >
         <AgGridReact<LeadView>
           ref={gridRef}
-          rowData={filtered}
+          rowData={leads}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           context={gridContext}
+          isExternalFilterPresent={isExternalFilterPresent}
+          doesExternalFilterPass={doesExternalFilterPass}
           onGridReady={onGridReady}
           pagination
           paginationPageSize={25}

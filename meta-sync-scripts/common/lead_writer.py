@@ -22,13 +22,19 @@ RANK_ADMIN = 80
 
 def resolve_auto_assigned_user(cur, org_id: str) -> Optional[str]:
     """Weighted round-robin auto-assignment. Direct port of
-    packages/db/src/assignment.ts::resolveAutoAssignedUser — same queries,
+    msq-lms/services/leads-service/src/lib/assignment.ts::resolveAutoAssignedUser — same queries,
     same weight-vs-open-workload deficit formula. Returns None (leave
     unassigned) when the org has no eligible weighted users."""
     cur.execute(
         """
-        SELECT uom.user_id, uom.lead_assignment_weight AS weight
+        SELECT uom.user_id, w.weight
         FROM iam.user_org_mapping uom
+        -- INNER JOIN: a membership with no weight row is not in the rotation,
+        -- which is what the weight > 0 filter below already meant when the
+        -- weight was a NOT NULL DEFAULT 0 column on the mapping. The explicit
+        -- predicate stays because an existing row CAN hold 0 (deactivating a
+        -- user zeroes it rather than deleting it).
+        JOIN lms.lead_assignment_weights w ON w.user_org_mapping_id = uom.id
         JOIN iam.users u ON u.id = uom.user_id
         JOIN iam.user_roles ur ON ur.id = uom.role_id
         WHERE uom.org_id = %(org_id)s
@@ -37,11 +43,11 @@ def resolve_auto_assigned_user(cur, org_id: str) -> Optional[str]:
           -- lms.check_lead_fk_org_scope() re-runs on INSERT: an active
           -- MAPPING is not enough, the USER row has to be live too.
           -- Without this a user deactivated via edit-user (which leaves the
-          -- mapping and its weight untouched) still wins the pick and then
+          -- mapping itself untouched) still wins the pick and then
           -- fails the insert. Because every script runs its whole scope in
           -- ONE transaction, that single RAISE rolls back the entire import.
           AND u.is_active AND NOT u.is_deleted
-          AND uom.lead_assignment_weight > 0
+          AND w.weight > 0
           AND ur.rank > %(read_only)s
           AND ur.rank < %(admin)s
         """,
