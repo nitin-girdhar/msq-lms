@@ -549,7 +549,13 @@ async function assertOutcomeCommentIsKeepable(
   }
 }
 
-export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput) {
+/**
+ * `leadOrgId` is the LEAD's own branch, resolved by the service via
+ * resolveLeadOrgId/leadWriteCtx — not ctx.org_id, the branch the caller happens to
+ * be switched into. Every statement below is fenced on it, so an elevated
+ * (tenantWide) context can only ever touch this one lead's branch.
+ */
+export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput, leadOrgId: string) {
   return withRoleTx(ctx, async (tx) => {
     if (data.assigned_user_id !== undefined && data.assigned_user_id !== null) {
       // Scope to the LEAD's org, not ctx.org_id — the branch the caller happens
@@ -592,7 +598,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
              scheduled_at,
              (SELECT name FROM lms.lead_sources WHERE id = ml.source_id) AS source_name
       FROM lms.marketing_leads ml
-      WHERE id = ${leadId}::uuid AND org_id = ${ctx.org_id}::uuid AND NOT is_deleted
+      WHERE id = ${leadId}::uuid AND org_id = ${leadOrgId}::uuid AND NOT is_deleted
       FOR UPDATE
     `)) as unknown as CurrentLeadRow[];
     const current = currentRows[0];
@@ -664,7 +670,9 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
           'follow_up_scheduled_at must accompany a lead change. Use POST /leads/:id/follow-ups to schedule one on its own.',
         );
       }
-      return null;
+      // Nothing to write is not a missing lead. Returning null here made the
+      // service report "Lead not found" for a lead it had just read.
+      throw new BadRequestError('No changes to save');
     }
 
     // The row is already locked and version-checked above, so a plain guarded
@@ -674,7 +682,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
       .set(updateData as Parameters<typeof tx.update>[0] extends infer U ? Record<string, unknown> : never)
       .where(and(
         eq(marketingLeadsTable.id, leadId),
-        eq(marketingLeadsTable.orgId, ctx.org_id),
+        eq(marketingLeadsTable.orgId, leadOrgId),
         eq(marketingLeadsTable.isDeleted, false),
       ))
       .returning({ id: marketingLeadsTable.id, assignedUserId: marketingLeadsTable.assignedUserId });
@@ -688,9 +696,9 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
     if (data.follow_up_scheduled_at !== undefined) {
       const assignedUserId = data.follow_up_assigned_user_id
         ?? updated.assignedUserId
-        ?? await effectiveInOrgActor(tx, ctx.user_id, { orgId: ctx.org_id, assignedUserId: null });
+        ?? await effectiveInOrgActor(tx, ctx.user_id, { orgId: leadOrgId, assignedUserId: null });
       await insertFollowUpTx(tx, {
-        orgId: ctx.org_id,
+        orgId: leadOrgId,
         leadId,
         assignedUserId,
         scheduledAt: new Date(data.follow_up_scheduled_at),
@@ -720,7 +728,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
 
     if (data.note?.trim()) {
       await tx.insert(leadInteractionsTable).values({
-        orgId: ctx.org_id,
+        orgId: leadOrgId,
         leadId,
         userId: ctx.user_id,
         notes: data.note.trim(),
@@ -731,19 +739,24 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
   });
 }
 
-export async function deleteLead(ctx: RoleTxContext, leadId: string, comment: string) {
+/** `leadOrgId`: the lead's own branch — see updateLead. Scoping the soft delete to
+ *  ctx.org_id instead made a cross-branch delete update ZERO rows and still answer
+ *  204, as if it had worked. */
+export async function deleteLead(ctx: RoleTxContext, leadId: string, comment: string, leadOrgId: string) {
   return withRoleTx(ctx, async (tx) => {
     await tx.insert(leadInteractionsTable).values({
-      orgId: ctx.org_id,
+      orgId: leadOrgId,
       leadId,
       userId: ctx.user_id,
       notes: `Deletion reason: ${comment}`,
     });
-    await tx.execute(sql`
+    const deleted = (await tx.execute(sql`
       UPDATE lms.marketing_leads
       SET is_deleted = TRUE, deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
-      WHERE id = ${leadId} AND org_id = ${ctx.org_id}
-    `);
+      WHERE id = ${leadId}::uuid AND org_id = ${leadOrgId}::uuid AND NOT is_deleted
+      RETURNING id
+    `)) as Array<{ id: string }>;
+    return deleted.length > 0;
   });
 }
 

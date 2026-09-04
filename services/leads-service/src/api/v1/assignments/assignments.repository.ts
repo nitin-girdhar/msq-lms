@@ -441,20 +441,11 @@ export async function getStageAndOutcomeOptions(ctx: RoleTxContext) {
  * Falls back to the current org when a legacy single-branch user has no mapping
  * row at all — never to "every org", which would be a silent widening.
  */
-export async function getCoveredOrgIds(ctx: RoleTxContext): Promise<string[]> {
-  return withRoleTx(ctx, async (tx) => {
-    const rows = (await tx.execute(sql`
-      SELECT DISTINCT uom.org_id
-      FROM iam.user_org_mapping uom
-      JOIN entity.organizations o ON o.id = uom.org_id AND NOT o.is_deleted
-      WHERE uom.user_id = ${ctx.user_id}::uuid
-        AND uom.is_active
-        AND o.tenant_id = ${ctx.tenant_id}::uuid
-    `)) as Array<{ org_id: string }>;
-    const ids = rows.map((r) => String(r.org_id));
-    return ids.length ? ids : [ctx.org_id];
-  });
-}
+// The branches this actor manages. Lives in lib/lead-write-scope alongside
+// leadWriteCtx now, so the assignment paths and the lead edit path cannot drift
+// apart on what "a branch I may write in" means. Re-exported here because callers
+// (and their tests) reach for it through the repository.
+export { getCoveredOrgIds } from '../../../lib/lead-write-scope.js';
 
 export async function getTeamMemberIds(ctx: RoleTxContext, managerId: string, orgId: string): Promise<string[]> {
   return withRoleTx(ctx, async (tx) => {

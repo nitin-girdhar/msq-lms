@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { SessionUser } from '@platform/types';
-import type { LeadView } from '../../types/leads';
+import { FilterField, MultiSelect, type SelectOption } from '@platform/ui-kit';
+import type { LeadView, StageOption } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
 import { useOrgs } from '../../hooks/useOrgs';
 import { MAX_PAGE_SIZE } from '../../hooks/useLeads';
@@ -13,12 +14,23 @@ interface Props {
   actor: SessionUser;
 }
 
+// Sentinel for the "no assignee" bucket in the Assigned To filter. A lead's
+// assigned_user_id is a UUID or null, so this cannot collide with a real one.
+const UNASSIGNED = 'unassigned';
+
 export default function BulkAssignClient({ actor }: Props) {
   const { orgs, loading: orgsLoading, error: orgsError } = useOrgs();
   const [orgId, setOrgId] = useState('');
   const [leads, setLeads] = useState<LeadView[]>([]);
+  const [stages, setStages] = useState<StageOption[]>([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  // `null` means "every option", so a branch whose leads sit in stages the
+  // previous branch never had is not silently filtered down to nothing. An
+  // explicit list is stored only once the user picks one — same convention as
+  // the Analytics filters.
+  const [stagePick, setStagePick] = useState<readonly string[] | null>(null);
+  const [assigneePick, setAssigneePick] = useState<readonly string[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignOpen, setAssignOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -40,10 +52,16 @@ export default function BulkAssignClient({ actor }: Props) {
     setLeadsLoading(true);
     setLoadError(null);
     setSelected(new Set());
+    // Both filters key on this branch's rows, so a pick carried over from the
+    // last branch would hide leads the user came here to assign.
+    setStagePick(null);
+    setAssigneePick(null);
     leadsApi
       .list({ org_ids: orgId, active_only: 'true', page_size: MAX_PAGE_SIZE })
       .then((res) => {
-        if (!cancelled) setLeads(res.data ?? []);
+        if (cancelled) return;
+        setLeads(res.data ?? []);
+        setStages((res.stage_options ?? []) as StageOption[]);
       })
       .catch((err) => {
         // Never swallow this. A failed request used to render exactly like an
@@ -52,6 +70,7 @@ export default function BulkAssignClient({ actor }: Props) {
         // holding hundreds of them.
         if (!cancelled) {
           setLeads([]);
+          setStages([]);
           setLoadError(err instanceof Error ? err.message : 'Could not load leads for this branch.');
         }
       })
@@ -69,14 +88,57 @@ export default function BulkAssignClient({ actor }: Props) {
   // trimming the branch first and filtering afterwards.
   const openLeads = leads;
 
+  // Only the stages this branch's open leads are actually in — a stage that can
+  // match nothing is a filter that only ever empties the table. Ordered by the
+  // lookup's sort_order so the list reads as the pipeline, not alphabetically.
+  const stageOptions = useMemo<SelectOption[]>(() => {
+    const present = new Set(openLeads.map((l) => l.stage_id));
+    return [...stages]
+      .filter((s) => present.has(s.id))
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((s) => ({ id: s.id, label: s.label }));
+  }, [stages, openLeads]);
+
+  // Derived from the rows rather than /users/assignable: that endpoint answers
+  // "who may I assign TO", which can omit a lead's current owner (a departed rep,
+  // someone outside this actor's assign scope) — and every name in the CURRENTLY
+  // ASSIGNED column has to be selectable here. It also gives Unassigned for free.
+  const assigneeOptions = useMemo<SelectOption[]>(() => {
+    const byId = new Map<string, string>();
+    let hasUnassigned = false;
+    for (const l of openLeads) {
+      if (!l.assigned_user_id) hasUnassigned = true;
+      else byId.set(l.assigned_user_id, l.assigned_rep_name || l.assigned_rep_email || 'Unnamed user');
+    }
+    const named = [...byId.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+    return hasUnassigned ? [{ id: UNASSIGNED, label: 'Unassigned' }, ...named] : named;
+  }, [openLeads]);
+
+  const stageSelected = useMemo(
+    () => (stagePick === null ? stageOptions : stageOptions.filter((o) => stagePick.includes(String(o.id)))),
+    [stageOptions, stagePick],
+  );
+  const assigneeSelected = useMemo(
+    () => (assigneePick === null ? assigneeOptions : assigneeOptions.filter((o) => assigneePick.includes(String(o.id)))),
+    [assigneeOptions, assigneePick],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return openLeads;
+    const stageSet = stagePick === null ? null : new Set(stagePick);
+    const assigneeSet = assigneePick === null ? null : new Set(assigneePick);
     return openLeads.filter((l) => {
+      if (stageSet && !stageSet.has(l.stage_id)) return false;
+      if (assigneeSet && !assigneeSet.has(l.assigned_user_id ?? UNASSIGNED)) return false;
+      if (!q) return true;
       const hay = `${l.full_name} ${l.phone ?? ''} ${l.stage_label} ${l.assigned_rep_name ?? ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [openLeads, search]);
+  }, [openLeads, search, stagePick, assigneePick]);
+
+  const isFiltered = search.trim() !== '' || stagePick !== null || assigneePick !== null;
 
   const allFilteredSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.lead_id));
 
@@ -128,47 +190,89 @@ export default function BulkAssignClient({ actor }: Props) {
       )}
 
       <div className="rounded-xl border border-[#E2E8F0] bg-white shadow-sm">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[#F1F5F9] p-3 sm:p-4">
+        {/* Narrow first, then assign: the branch and the two lookups come first,
+            the free-text box last so it reads as "…and anything else". */}
+        <div className="flex flex-wrap items-end gap-3 border-b border-[#F1F5F9] p-3 sm:p-4">
           {/* One branch in reach is the normal case for a branch-scoped role, and a
               greyed-out dropdown reads as a broken control rather than as "this
               is your branch" — so only render a picker when there is a choice. */}
-          {orgs.length > 1 ? (
-            <select
-              value={orgId}
-              onChange={(e) => setOrgId(e.target.value)}
-              disabled={orgsLoading}
-              aria-label="Branch"
-              className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
-            >
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-sm font-semibold text-[#0F172A]">
-              {orgsLoading ? 'Loading branch…' : (orgs[0]?.name ?? 'No branch available')}
+          <FilterField label="Branch">
+            {orgs.length > 1 ? (
+              <select
+                value={orgId}
+                onChange={(e) => setOrgId(e.target.value)}
+                disabled={orgsLoading}
+                aria-label="Branch"
+                className="h-[34px] rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20 disabled:cursor-not-allowed disabled:bg-[#F8FAFC]"
+              >
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="flex h-[34px] items-center rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 text-sm font-semibold text-[#0F172A]">
+                {orgsLoading ? 'Loading branch…' : (orgs[0]?.name ?? 'No branch available')}
+              </span>
+            )}
+          </FilterField>
+
+          <div className="w-52">
+            <MultiSelect
+              label="Stage"
+              placeholder={leadsLoading ? 'Loading…' : 'None selected'}
+              allLabel="All stages"
+              selectAllLabel="Select all"
+              maxChips={2}
+              loading={leadsLoading}
+              disabled={leadsLoading || stageOptions.length === 0}
+              options={stageOptions}
+              selected={stageSelected}
+              onChange={(next) => setStagePick(next.map((o) => String(o.id)))}
+            />
+          </div>
+
+          <div className="w-52">
+            <MultiSelect
+              label="Assigned To"
+              placeholder={leadsLoading ? 'Loading…' : 'None selected'}
+              allLabel="All assignees"
+              selectAllLabel="Select all"
+              maxChips={2}
+              loading={leadsLoading}
+              disabled={leadsLoading || assigneeOptions.length === 0}
+              options={assigneeOptions}
+              selected={assigneeSelected}
+              onChange={(next) => setAssigneePick(next.map((o) => String(o.id)))}
+            />
+          </div>
+
+          <div className="min-w-[240px] flex-1">
+            <FilterField label="Search">
+              <input
+                type="search"
+                placeholder="Search name, phone, or stage…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-[34px] w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
+              />
+            </FilterField>
+          </div>
+
+          <div className="ml-auto flex items-center gap-3 pb-0.5">
+            <span className="text-sm text-[#64748B]">
+              {selected.size} selected of {filtered.length}
             </span>
-          )}
-          <input
-            type="search"
-            placeholder="Search name, phone, or stage…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="min-w-[240px] flex-1 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
-          />
-          <span className="text-sm text-[#64748B]">
-            {selected.size} selected of {filtered.length}
-          </span>
-          <button
-            type="button"
-            onClick={() => setAssignOpen(true)}
-            disabled={selected.size === 0}
-            className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Assign selected
-          </button>
+            <button
+              type="button"
+              onClick={() => setAssignOpen(true)}
+              disabled={selected.size === 0}
+              className="rounded-xl bg-[#0b6cbf] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#095699] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Assign selected
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -234,8 +338,8 @@ export default function BulkAssignClient({ actor }: Props) {
               {!leadsLoading && !loadError && filtered.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-xs text-[#64748B]">
-                    {search
-                      ? 'No leads match.'
+                    {isFiltered
+                      ? 'No leads match these filters.'
                       : orgs.length > 1
                         ? 'No open leads in this branch. Try another branch from the dropdown above.'
                         : 'No open leads in this branch.'}

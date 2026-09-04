@@ -2,11 +2,13 @@ import Fastify from 'fastify';
 import { closeAllPools } from '@platform/db';
 import { config } from './config/index.js';
 import { streamRoutes } from './routes/stream.js';
+import { pushRoutes } from './routes/push.js';
 import { PgNotifyTransport } from './transport/pg-notify.transport.js';
 import { connectionManager } from './connections/manager.js';
 import { startFollowUpChecker, stopFollowUpChecker, setFollowUpCheckerLogger } from './services/followup-checker.js';
 import { assertInternalServiceSecret } from '@platform/service-auth';
 import { createLoggerOptions } from '@platform/logger';
+import { assertWebPushEnv, setWebPushLogger } from '@platform/web-push';
 
 const app = Fastify({
   logger: createLoggerOptions({
@@ -19,6 +21,9 @@ const app = Fastify({
 
 app.get('/health', async () => ({ status: 'ok', service: 'notifications-service' }));
 app.register(streamRoutes, { prefix: '/api/v1' });
+// Web Push device registration. Authenticated (gateway headers) but deliberately
+// not capability-gated — see the comment at the top of routes/push.ts.
+app.register(pushRoutes, { prefix: '/api/v1' });
 
 const transport = new PgNotifyTransport();
 
@@ -29,10 +34,16 @@ const start = async () => {
     // and in production a placeholder value is refused outright.
     assertInternalServiceSecret({ nodeEnv: config.nodeEnv, logPrefix: '[notifications-service] ' });
 
+    // Fail fast on missing VAPID config too. Deferred to the first send, this
+    // surfaces as "the phones just stopped buzzing" inside a poller tick nobody
+    // is watching, rather than as a failed boot.
+    assertWebPushEnv();
+
     // Hand the connection manager and the follow-up poller the real pino logger
     // before either can emit — both used console.* directly before this.
     connectionManager.setLogger(app.log);
     setFollowUpCheckerLogger(app.log);
+    setWebPushLogger(app.log);
 
     await transport.subscribe((event) => {
       app.log.info(

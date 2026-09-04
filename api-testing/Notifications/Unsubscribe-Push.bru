@@ -1,0 +1,30 @@
+meta {
+  name: Unsubscribe Push
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/notifications/push/subscribe
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/bruno-test-endpoint-001"
+  }
+}
+
+docs {
+  Used on logout and on permission revoke. 204 regardless of whether a row
+  matched — the delete is scoped to the acting user and org, so an endpoint
+  belonging to someone else removes nothing and returns no existence oracle.
+
+  The endpoint may also be passed as ?endpoint=... for clients that cannot
+  attach a DELETE body.
+}

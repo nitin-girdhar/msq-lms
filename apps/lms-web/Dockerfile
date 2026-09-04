@@ -15,13 +15,20 @@ ARG NEXT_PUBLIC_PASSWORD_MIN_LENGTH=12
 ENV NEXT_PUBLIC_PASSWORD_MIN_LENGTH=$NEXT_PUBLIC_PASSWORD_MIN_LENGTH
 # SSO origins baked into the client bundle (NEXT_PUBLIC_*) at build time — drive
 # the product switcher and the auth-origin redirect.
-ARG NEXT_PUBLIC_AUTH_URL=http://localhost:3000
+# SSO base URLs baked into the client bundle (NEXT_PUBLIC_*) at build time.
+# LEGACY FALLBACK ONLY: sso.ts prefers the UNPREFIXED runtime names (AUTH_URL,
+# LMS_URL, ...) precisely so an image can be repointed without a rebuild — a
+# real deployment sets those in .env and never relies on these defaults.
+# They are the single-origin dev values (host + this app's path prefix), so a
+# build with no --build-arg is at least self-consistent rather than pointing at
+# a per-port topology that no longer exists.
+ARG NEXT_PUBLIC_AUTH_URL=http://app.localhost
 ENV NEXT_PUBLIC_AUTH_URL=$NEXT_PUBLIC_AUTH_URL
-ARG NEXT_PUBLIC_LMS_URL=http://localhost:3001
+ARG NEXT_PUBLIC_LMS_URL=http://app.localhost/lms
 ENV NEXT_PUBLIC_LMS_URL=$NEXT_PUBLIC_LMS_URL
-ARG NEXT_PUBLIC_HR_URL=http://localhost:3002
+ARG NEXT_PUBLIC_HR_URL=http://app.localhost/hrms
 ENV NEXT_PUBLIC_HR_URL=$NEXT_PUBLIC_HR_URL
-ARG NEXT_PUBLIC_TASK_URL=http://localhost:3003
+ARG NEXT_PUBLIC_TASK_URL=http://app.localhost/todo
 ENV NEXT_PUBLIC_TASK_URL=$NEXT_PUBLIC_TASK_URL
 COPY . .
 RUN pnpm install --frozen-lockfile

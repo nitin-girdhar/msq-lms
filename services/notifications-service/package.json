@@ -10,6 +10,8 @@
     "dev": "tsx watch --env-file ../../.env src/server.ts",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rimraf dist",
     "dev:local": "tsx watch --env-file .env src/server.ts"
   },
@@ -19,14 +21,17 @@
     "@platform/logger": "workspace:*",
     "@platform/service-auth": "workspace:*",
     "@platform/types": "workspace:*",
+    "@platform/web-push": "workspace:*",
     "fastify": "^5.2.1",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",
     "pino-pretty": "^13.0.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
   }
 }

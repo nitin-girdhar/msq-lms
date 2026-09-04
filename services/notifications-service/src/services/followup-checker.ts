@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { serviceDb } from '@platform/db';
+import * as webPush from '@platform/web-push';
 import { connectionManager } from '../connections/manager.js';
 import { config } from '../config/index.js';
 
@@ -36,6 +37,13 @@ export function setFollowUpCheckerLogger(logger: Logger): void {
 // by leads-service (/follow-ups, /leads/:id/follow-ups) and are unaffected by
 // anything here — including the lookback bound below, which limits how far back
 // a PUSH notification is worth sending, not what the UI can display.
+//
+// KNOWN LIMITATION (accepted, not a bug to fix in passing): these sets live in
+// process memory and are lost on restart, so a mid-morning deploy can re-notify
+// the day's follow-ups once. Now that push is wired in, that means one extra
+// buzz per affected lead, not just a duplicate toast. Moving the sets to a
+// table is the remedy if it ever becomes a complaint; until then the cost of a
+// rare duplicate is lower than the cost of the extra write path.
 const notifiedDueKeys = new Set<string>();
 const notifiedMissedKeys = new Set<string>();
 let lastResetDate = '';
@@ -64,8 +72,12 @@ function resetIfNewDay(): void {
 async function checkFollowUps(): Promise<void> {
   resetIfNewDay();
 
+  // Kept for the debug line at the bottom only. This used to be
+  // `if (clientCount === 0) return;`, which short-circuited the entire check
+  // whenever nobody held an open SSE stream — precisely the situation Web Push
+  // exists to serve. It made push work in dev, where a browser tab is always
+  // open, and do nothing on a closed phone. Do not reinstate it.
   const clientCount = connectionManager.getClientCount();
-  if (clientCount === 0) return;
 
   const db = serviceDb();
   const rows = (await db`
@@ -96,6 +108,8 @@ async function checkFollowUps(): Promise<void> {
   let notified = 0;
   let deduped = 0;
   let offline = 0;
+  let pushed = 0;
+  let pruned = 0;
 
   for (const row of rows) {
     const scheduledIso = new Date(row.scheduled_at).toISOString();
@@ -121,12 +135,52 @@ async function checkFollowUps(): Promise<void> {
       row.org_id,
     );
 
+    // Web Push, additive to the SSE above — never a replacement for it. SSE
+    // stays the in-app channel for open tabs; push covers closed ones. A user
+    // with the tab open may get both, which is correct: the service worker
+    // tags the notification per lead so they do not stack up.
+    //
+    // org_id is passed for the same reason it is passed to sendToUser above,
+    // and @platform/web-push filters registrations on it: a rep mapped to
+    // several branches must not have a branch-B follow-up land on a handset
+    // registered in branch A.
+    try {
+      const result = await webPush.sendToUser(row.assigned_user_id, row.org_id, {
+        title: isOverdue ? 'Follow-up overdue' : 'Follow-up due',
+        body: message,
+        // Deep link to the lead itself. There is still no per-lead ROUTE —
+        // `/dashboard/leads` has no `[id]` segment, so `/lms/dashboard/leads/<id>`
+        // would open a 404 on the user's phone. Instead the follow-ups grid
+        // takes `?leadId=` and opens that lead's history on arrival (see
+        // FollowUpsShell's `focusLeadId`), which is what makes "tapping the
+        // notification opens that lead" actually true.
+        //
+        // The id is a hint, not an authorization: the grid matches it against
+        // the follow-ups the API already scoped to this actor and ignores
+        // anything else, so the URL cannot be used to pull a foreign lead.
+        url: `/lms/dashboard/follow-ups?leadId=${row.id}`,
+        leadId: row.id,
+      });
+      pushed += result.sent;
+      pruned += result.pruned;
+    } catch (err) {
+      // sendToUser already swallows and logs its own failures, so this is a
+      // belt-and-braces guard against an unexpected throw (a bad payload, a
+      // pool error). One user's dead handset must not abort the loop and
+      // starve every later row in the tick.
+      log.warn({ err, leadId: row.id, userId: row.assigned_user_id }, 'push notification failed');
+    }
+
     // Recorded whether or not the user was reachable. This was previously
     // `if (sent)`, so a row whose owner happened to be offline was never marked
     // seen and was reprocessed on EVERY subsequent tick — the dedupe set only
     // ever suppressed work for users who were already connected. A missed push
     // is recovered from the follow-ups grid on next load, which is the right
     // fallback for a transient notification.
+    //
+    // This applies to push identically, and is what stops a phone buzzing on
+    // every tick: the key is recorded once per lead+schedule per local day, so
+    // both channels fire at most once for it.
     seen.add(key);
     if (sent) notified += 1;
     else offline += 1;
@@ -142,7 +196,7 @@ async function checkFollowUps(): Promise<void> {
   }
 
   log.debug(
-    { rows: rows.length, clients: clientCount, notified, deduped, offline },
+    { rows: rows.length, clients: clientCount, notified, deduped, offline, pushed, pruned },
     'follow-up check complete',
   );
 }
@@ -172,6 +226,24 @@ async function runGuarded(): Promise<void> {
 export function startFollowUpChecker(): void {
   void runGuarded();
   intervalHandle = setInterval(() => void runGuarded(), config.followupCheckIntervalMs);
+}
+
+// ── Test seams ─────────────────────────────────────────────────────────────
+// Exported for src/services/__tests__/followup-checker.test.ts only. The two
+// behaviours worth pinning are that a due follow-up pushes with NO SSE client
+// connected, and that the next tick does not re-notify — neither is reachable
+// through startFollowUpChecker without a timer and a live pool.
+
+/** Run one tick synchronously. */
+export async function checkFollowUpsForTest(): Promise<void> {
+  return checkFollowUps();
+}
+
+/** Forget everything the dedupe sets have seen. */
+export function resetDedupeForTest(): void {
+  notifiedDueKeys.clear();
+  notifiedMissedKeys.clear();
+  lastResetDate = localDateKey();
 }
 
 export function stopFollowUpChecker(): void {

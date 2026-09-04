@@ -6,6 +6,14 @@ name: msq
 x-db-env-lms: &db-env-lms
   DATABASE_URL: postgres://${DB_LMS_SVC_USER}:${DB_LMS_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DATABASE_URL_SERVICE: postgres://${DB_SERVICE_USER}:${DB_SERVICE_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
+  # DATABASE_URL_TENANT is REQUIRED even though no query here is obviously
+  # tenant-scoped: @platform/db asserts all three pools at startup, and a
+  # tenant_admin/super_admin request resolves through the tenant pool. Without
+  # it the value fell through to this repo's own .env, whose standalone value
+  # is `localhost` — inside a container that is the container itself, so
+  # /analytics/dashboard 500'd with `connect ECONNREFUSED ::1:5432` while the
+  # plain lead queries on DATABASE_URL worked fine.
+  DATABASE_URL_TENANT: postgres://${DB_TENANT_SVC_USER}:${DB_TENANT_SVC_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
   DB_PRODUCT_SCOPED_LOGIN: "true"
 
 x-web-public-args: &web-public-args
@@ -18,14 +26,17 @@ x-web-public-args: &web-public-args
   NEXT_PUBLIC_TASK_URL: ${NEXT_PUBLIC_TASK_URL:-http://localhost:3003}
   DB_PRODUCT_SCOPED_LOGIN: "true"
 
-# ── Cross-repo networking (NOT solved here — tracked follow-up) ─────────────
+# ── Cross-repo networking (SOLVED — from the platform root) ─────────────────
 # This repo owns no Postgres container and no api-gateway/identity-service —
-# those live in msq-core. Running these services standalone requires either
-# (a) an external Docker network joining this repo's compose with
-# msq-core's (`docker network create platform-net`; add
-# `networks: { default: { name: platform-net, external: true } }` to both
-# repos' compose files — not yet wired), or (b) pointing DB_CONTAINER_NAME /
-# API_GATEWAY_INTERNAL_URL at msq-core's containers by IP/host in .env.
+# those live in msq-core. The normal way to run it is therefore from the
+# platform root (msq-platforms), whose .env sets COMPOSE_FILE to merge all four
+# repos' compose files. Every file here declares the same project name
+# (`name: msq`), so the merge puts these services on the SAME default network as
+# msq-core's, reachable by container name — no external network to create.
+#
+# Running this repo standalone from its own directory still works, but then
+# DB_CONTAINER_NAME / API_GATEWAY_INTERNAL_URL in its .env must point at
+# msq-core's containers by host/IP, since nothing else supplies them.
 
 services:
   leads-service:
