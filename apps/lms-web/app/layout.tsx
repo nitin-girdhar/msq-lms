@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import { ServiceWorkerRegistrar, pwaViewport, pwaAppleWebApp, pwaIcons, pwaAppleCapableMeta } from '@platform/ui-kit';
+import { ServiceWorkerRegistrar, pwaViewport, pwaAppleWebApp, pwaIcons, pwaAppleCapableMeta, pwaManifest } from '@platform/ui-kit';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   description: 'Internal lead management for FitClass branches',
   appleWebApp: pwaAppleWebApp,
   icons: pwaIcons,
+  manifest: pwaManifest,
   other: pwaAppleCapableMeta,
 };
 

@@ -23,6 +23,7 @@ import { SourceBadge } from '../leads/SourceBadge';
 import { LeadHistoryModal } from '../LeadHistoryModal';
 import { buildFilename, exportRows, type ExportColumn, type ExportRowsFormat as ExportFormat } from '@platform/ui-kit';
 import '@platform/ui-kit/ag-grid.css';
+import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -383,10 +384,9 @@ export default function LeadsHistoryShell({ actor }: Props) {
     },
   ], [statusLabelMap, mayOpenHistory]);
 
-  const defaultColDef = useMemo((): ColDef => ({
-    resizable: true,
-    cellStyle: { fontSize: '13px', color: '#0F172A' },
-  }), []);
+  // Shared across every grid in the platform — case/accent-insensitive column
+  // filtering lives in @platform/ui-kit/grid, not in a per-file literal.
+  const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   return (
     <div className="w-full space-y-4 p-4 sm:p-6">

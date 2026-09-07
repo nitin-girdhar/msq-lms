@@ -10,6 +10,7 @@ import { AgGridReact } from 'ag-grid-react';
 import { AllCommunityModule, ModuleRegistry } from 'ag-grid-community';
 import type { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { type FollowUpItem, formatDate, overdueDuration, timeUntil } from '../../lib/leads/followup-format';
+import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -99,10 +100,9 @@ export default function FollowUpGrid({ items, onEdit, onHistory, type }: Props) 
     },
   ], [isMissed, onEdit, onHistory]);
 
-  const defaultColDef: ColDef = useMemo(() => ({
-    resizable: true,
-    cellStyle: { fontSize: '13px', color: '#0F172A' },
-  }), []);
+  // Shared across every grid in the platform — case/accent-insensitive column
+  // filtering lives in @platform/ui-kit/grid, not in a per-file literal.
+  const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   const getRowClass = useCallback(() => isMissed ? 'bg-red-50/50' : '', [isMissed]);
 

@@ -18,6 +18,7 @@ import { LeadAssigneeBadge } from './leads/LeadAssigneeBadge';
 import { MobileLeadCard } from './leads/MobileLeadCard';
 import { LeadEditModal } from './leads/LeadEditModal';
 import { useAssignableCandidates } from '../hooks/useAssignableCandidates';
+import { GRID_DEFAULT_COL_DEF } from '@platform/ui-kit/grid';
 
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -141,7 +142,13 @@ export default function LeadsTable({
     },
     {
       colId: 'status', headerName: 'Status', width: 165, sortable: true, filter: true, editable: false,
-      valueGetter: (p) => p.data?.stage ?? '',
+      // The label, not the raw stage name: the column filter matches this value,
+      // so filtering on `contacting` while the badge reads "Call Attempted" made
+      // typing what you see return nothing.
+      valueGetter: (p) => {
+        const stage = p.data?.stage ?? '';
+        return statusLabelMap?.[stage] ?? stage;
+      },
       cellRenderer: (p: ICellRendererParams<LeadView>) => (
         <StatusBadge value={p.data?.stage ?? ''} labelMap={statusLabelMap ?? {}} />
       ),
@@ -166,11 +173,9 @@ export default function LeadsTable({
     },
   ], [statusLabelMap, assigneeCellRenderer, actionsCellRenderer]);
 
-  const defaultColDef: ColDef = useMemo(() => ({
-    resizable: true,
-    suppressMovable: false,
-    cellStyle: { fontSize: '13px', color: '#0F172A' },
-  }), []);
+  // Shared across every grid in the platform — case/accent-insensitive column
+  // filtering lives in @platform/ui-kit/grid, not in a per-file literal.
+  const defaultColDef: ColDef = GRID_DEFAULT_COL_DEF;
 
   const gridContext = useMemo(() => ({
     actor,
