@@ -46,6 +46,14 @@ const unsubscribeSchema = z.object({
   endpoint: z.string().url().max(2000),
 });
 
+// Every id below is cast `::uuid` in the INSERT (see @platform/web-push
+// repository.saveSubscription). A header that is present but not a UUID reaches
+// Postgres and comes back as `invalid input syntax for type uuid`, i.e. a 500
+// for what is really a malformed session — the same failure the tenant_id guard
+// inside the route already rejects explicitly. Checked here so all three are
+// handled the same way instead of one of the three.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function pushRoutes(app: FastifyInstance): Promise<void> {
   app.post('/notifications/push/subscribe', async (request, reply) => {
     const ctx = parseAuthContext(request, reply);
@@ -68,6 +76,13 @@ export async function pushRoutes(app: FastifyInstance): Promise<void> {
     // itself is not scoped to a tenant.
     if (!ctx.tenant_id) {
       return reply.status(401).send({ success: false, error: 'Session is not tenant-scoped' });
+    }
+    if (!UUID.test(ctx.tenant_id) || !UUID.test(ctx.org_id) || !UUID.test(ctx.user_id)) {
+      request.log.warn(
+        { userId: ctx.user_id, orgId: ctx.org_id },
+        'push subscribe rejected: non-uuid identity header',
+      );
+      return reply.status(401).send({ success: false, error: 'Session identity is malformed' });
     }
 
     // Every id here is server-derived. Nothing from `request.body` reaches them.

@@ -26,12 +26,21 @@ vi.mock('@platform/web-push', () => ({ saveSubscription, deleteSubscription, vap
 
 import { pushRoutes } from '../push.js';
 
+// Real UUIDs, not readable placeholders: the route rejects a non-uuid identity
+// header before it can reach the `::uuid` casts in saveSubscription, so the
+// old 'user-real' style strings now exercise that guard instead of the
+// server-derived-identity property this file is about. The trailing digit is
+// the mnemonic — ...111 is the user, ...222 the org, ...333 the tenant.
+const USER_REAL = '11111111-1111-4111-8111-111111111111';
+const ORG_REAL = '22222222-2222-4222-8222-222222222222';
+const TENANT_REAL = '33333333-3333-4333-8333-333333333333';
+
 const HEADERS = {
   'x-internal-secret': 'test-secret',
-  'x-org-id': 'org-real',
-  'x-user-id': 'user-real',
+  'x-org-id': ORG_REAL,
+  'x-user-id': USER_REAL,
   'x-platform-role': 'sales_rep',
-  'x-tenant-id': 'tenant-real',
+  'x-tenant-id': TENANT_REAL,
 };
 
 const SUBSCRIPTION = {
@@ -64,7 +73,7 @@ describe('POST /notifications/push/subscribe', () => {
 
     expect(res.statusCode).toBe(201);
     expect(saveSubscription).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 'user-real', orgId: 'org-real', tenantId: 'tenant-real' }),
+      expect.objectContaining({ userId: USER_REAL, orgId: ORG_REAL, tenantId: TENANT_REAL }),
     );
     // Zod strips the unknown keys, so nothing forged survives into the row.
     const [input] = saveSubscription.mock.calls[0] as [{ subscription: Record<string, unknown> }];
@@ -114,6 +123,25 @@ describe('POST /notifications/push/subscribe', () => {
     expect(saveSubscription).not.toHaveBeenCalled();
     await app.close();
   });
+
+  it('rejects a non-uuid identity header instead of 500ing on the ::uuid cast', async () => {
+    // saveSubscription casts all three ids to uuid. Before this guard a
+    // malformed header reached Postgres and came back as
+    // `invalid input syntax for type uuid` — a 500 for what is really an
+    // unusable session, and one more unhandled throw whose message Fastify
+    // would have returned to the browser verbatim.
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/notifications/push/subscribe',
+      headers: { ...HEADERS, 'x-org-id': 'not-a-uuid' },
+      payload: SUBSCRIPTION,
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(saveSubscription).not.toHaveBeenCalled();
+    await app.close();
+  });
 });
 
 describe('DELETE /notifications/push/subscribe', () => {
@@ -128,8 +156,8 @@ describe('DELETE /notifications/push/subscribe', () => {
 
     expect(res.statusCode).toBe(204);
     expect(deleteSubscription).toHaveBeenCalledWith(SUBSCRIPTION.endpoint, {
-      userId: 'user-real',
-      orgId: 'org-real',
+      userId: USER_REAL,
+      orgId: ORG_REAL,
     });
     await app.close();
   });
