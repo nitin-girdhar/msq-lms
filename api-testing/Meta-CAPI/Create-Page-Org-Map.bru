@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/meta/page-org-map
+  url: {{baseUrl}}/meta/page-org-map?tenant_id={{tenantId}}
   body: json
   auth: none
 }
@@ -24,14 +24,32 @@ body:json {
 }
 
 docs {
-  Registers which org a Meta Page+Form combination belongs to — requires
-  tenant_admin rank or higher. Required before any lead from that form can
-  be synced: the webhook resolves org_id by looking up (tenant_id, form_id)
-  here, falling back to (tenant_id, page_id) for brand-new forms on an
-  already-mapped Page.
+  Registers which branch (org) a Meta Page — and optionally one specific lead
+  form — belongs to. Requires super_admin. The row is written under the tenant
+  named by ?tenant_id=, never the caller's own.
 
-  A form belongs to exactly one Page in Meta's data model, but a Page can
-  run many forms across different orgs/campaigns — so form_id is unique
-  per mapping (uq_meta_page_form_org_map on (page_id, form_id)), while an
-  org can own many rows here (multiple pages and/or multiple forms).
+  Required before any lead from that form can be synced: the webhook resolves
+  org_id from (tenant_id, form_id) here, falling back to the page-level row.
+
+  form_id is OPTIONAL and nullable. Omit it to create the PAGE-LEVEL catch-all
+  that routes every form on the page, which is the main thing the admin screen
+  creates and which this API previously made impossible (the schema demanded
+  form_id even though the column is nullable). An exact form_id row always wins
+  over the page-level row for that page.
+
+  Regression checks:
+    * omit form_id entirely        -> 201, and the row has form_id NULL
+    * repeat the same page+form    -> 409 naming the org that holds it
+                                      (constraint uq_meta_page_form_org_map)
+    * second page-level row, same page and both active
+                                   -> 409 saying a page may have at most one
+                                      active page-level row
+                                      (uq_meta_page_form_org_map_page_level)
+    * org_id belonging to ANOTHER tenant
+                                   -> 400; the RLS WITH CHECK refuses it, so the
+                                      row is never written. THIS is the
+                                      cross-tenant leak test — a super admin
+                                      must not be able to point tenant A's page
+                                      at tenant B's branch.
+    * caller below super_admin     -> 403
 }

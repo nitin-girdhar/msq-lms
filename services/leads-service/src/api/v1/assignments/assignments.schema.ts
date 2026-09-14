@@ -33,6 +33,9 @@ export const leadsHistoryQuerySchema = z.object({
   stage_ids:   csvOfUuids.optional(),
   outcome_ids: csvOfUuids.optional(),
   source_ids:  csvOfUuids.optional(),
+  // Which POOL(s) to show. A filter only: which types are visible at all is the
+  // row policy's answer (lms.fn_user_sees_campaign_type), not this parameter's.
+  campaign_type_ids: csvOfUuids.optional(),
   org_ids:     csvOfUuids.optional(),
   assigned_to: csvOfUuidsOrUnassigned.optional(),
   // Not z.coerce.boolean(): Boolean("false") is true in JS, so coercion would

@@ -219,7 +219,18 @@ export async function handleWebhookPost(
           ...(rawLead.adset_id !== undefined ? { adset_id: rawLead.adset_id } : {}),
           ...(rawLead.campaign_id !== undefined ? { campaign_id: rawLead.campaign_id } : {}),
           field_data: rawLead.field_data,
-        }, integration.field_mappings);
+        }, integration.field_mappings, {
+          // syncLeadToDatabase is keyed on ORG and has never taken a tenant, but
+          // every campaign-mapping lookup is tenant-scoped — so the tenant
+          // resolved above (from the integration for a per-tenant app, from the
+          // page/form mapping for the shared one) is handed over explicitly.
+          // The token buys at most ONE Graph call per NEW campaign; a known
+          // campaign costs none.
+          ...(typeof tenantId === 'string' ? { tenantId } : {}),
+          accessToken: integration.access_token,
+          graphApiVersion: integration.graph_api_version,
+          log: request.log,
+        });
 
         request.log.info(
           {

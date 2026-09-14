@@ -12,6 +12,7 @@ export interface LeadsHistoryFilters {
   stage_ids?: string | undefined;
   outcome_ids?: string | undefined;
   source_ids?: string | undefined;
+  campaign_type_ids?: string | undefined;
   org_ids?: string | undefined;
   assigned_to?: string | undefined;
   active_only?: boolean | undefined;

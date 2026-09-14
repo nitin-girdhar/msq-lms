@@ -53,7 +53,21 @@ export class IntakeController {
       orgId = branchId;
     }
 
-    const { org_id: _ignored, branch_id: _ignored2, ...rest } = body;
+    // The Meta campaign fields are the INTERNAL Meta path's to supply (the
+    // webhook resolves them from Meta itself). createWebhookLead spreads the
+    // whole body in, so an API-key caller sending meta_campaign_id could make
+    // resolveCampaignForLead create a marketing.ad_campaigns row in the branch
+    // for any id it liked. campaign_type_id stays accepted: it is validated
+    // against the branch's tenant and refused (400) otherwise.
+    const {
+      org_id: _ignored,
+      branch_id: _ignored2,
+      meta_campaign_id: _ignoredMetaCampaign,
+      meta_campaign_name: _ignoredMetaName,
+      meta_platform: _ignoredMetaPlatform,
+      meta_campaign_status: _ignoredMetaStatus,
+      ...rest
+    } = body;
     const result = await repo.createWebhookLead({ ...rest, org_id: orgId });
     return reply.status(201).send({ success: true, data: result });
   };

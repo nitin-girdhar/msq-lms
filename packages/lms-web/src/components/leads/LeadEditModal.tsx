@@ -358,7 +358,8 @@ export function LeadEditModal({
               <InfoRow label="Lead Source" value={lead.source_label ?? lead.source ?? lead.platform ?? '—'} />
               <InfoRow label="Assigned To" value={lead.assigned_rep_name ?? '—'} />
               <InfoRow label="Follow-up" value={lead.scheduled_at ? new Date(lead.scheduled_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'} />
-              <InfoRow label="Campaign" value={lead.campaign_name ?? '—'} full />
+              <InfoRow label="Campaign" value={lead.campaign_name ?? '—'} />
+              <InfoRow label="Campaign Type" value={lead.campaign_type_label ?? '—'} />
             </div>
           </div>
 

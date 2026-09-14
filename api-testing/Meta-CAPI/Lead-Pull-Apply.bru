@@ -1,0 +1,71 @@
+meta {
+  name: Lead Pull - Apply
+  type: http
+  seq: 21
+}
+
+post {
+  url: {{baseUrl}}/meta/lead-pull/runs/{{leadPullRunId}}/apply?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  QUEUES an Apply of the importable staged rows: verdict IN (new,
+  phone_duplicate, email_duplicate).
+
+  Returns 202 { run_id, status: 'apply_queued' } at once. The Apply runs on the
+  lead-pull poller (it used to run inline and 504'd behind the gateway's 30s
+  proxy timeout). Poll Lead-Pull-Get-Run: apply_queued -> applying -> applied,
+  then read counts.apply { attempted, applied, already_synced, skipped, failed }
+  and apply_summary (per-row applied_status counts — the whole-run truth after
+  a resumed Apply).
+
+  The two duplicate verdicts are importable ON PURPOSE. The canonical write path
+  supersedes on a phone match and returns the existing lead on an email match,
+  and EITHER WAY an ext.meta_leads row is written — which is exactly what stops
+  those leads being re-fetched by every future pull. Dropping them would make
+  each pull re-surface the same leads forever.
+
+  Apply calls syncLeadToDatabase — the SAME function the live webhook calls —
+  once per row, rather than writing leads itself. That is what makes campaign
+  typing and pool routing apply automatically, and what makes this idempotent:
+  the function re-checks ext.meta_leads.meta_lead_id before it does anything and
+  AGAIN inside its transaction, AT APPLY TIME AGAINST LIVE DATA rather than
+  against a staging snapshot that may be hours old.
+
+  Regression checks:
+    * DOUBLE-CLICK IT. The run flips completed -> apply_queued under a FOR UPDATE
+      SKIP LOCKED claim, so the second request gets 409 rather than queueing the
+      same rows twice.
+    * A BIG RUN DOES NOT 504. Apply 500+ rows: this call still returns 202 in
+      milliseconds and the run reaches `applied` on its own.
+    * INTERRUPT IT. Restart meta-conversion-api mid-Apply: the reaper returns the
+      run to `completed` with an "Apply was interrupted" error_text (NOT
+      `failed`), and pressing Apply again finishes only the still-pending rows.
+    * RE-APPLYING inserts nothing: rows already applied are no longer pending,
+      and syncLeadToDatabase's own dedup returns already_synced for any lead the
+      webhook ingested in the meantime.
+    * applying a run that is not `completed`  -> 409 naming the actual status
+    * applying an already-applied run          -> 409
+    * a run id from tenant B, as tenant A      -> 404
+    * caller below super_admin                 -> 403
+    * ONE BAD ROW MUST NOT ABORT THE BATCH. Stage a lead with no phone value
+      (syncLeadToDatabase THROWS on that, and on a non-numeric lead id): it must
+      land applied_status='failed' with the message on the row, while every
+      other lead still applies. Check the failed count, then the rows.
+    * a test lead that somehow reached an importable verdict is still skipped —
+      isMetaTestLead is exported by lead-sync.service.ts but NOT called inside
+      syncLeadToDatabase, and the caller applying it is what stops Lead Ads
+      Testing Tool submissions becoming real leads (20 of them once did).
+    * an unmapped_form row (org_id NULL) is skipped with that reason and NEVER
+      applied.
+    * APPLIED LEADS CARRY ROUTING: check lms.marketing_leads.campaign_type_id
+      and assigned_user_id on a newly applied lead — they must match what the
+      webhook path would have produced, because the write went through the same
+      canonical intake endpoint.
+}

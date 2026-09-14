@@ -38,6 +38,22 @@ export interface LeadView {
   is_deleted: boolean;
   assigned_user_id: string | null;
   campaign_id: string | null;
+  // Which POOL the lead belongs to. Visibility of a given type is decided by
+  // the row policy (lms.fn_user_sees_campaign_type) — this is display data
+  // for a row the caller was already allowed to see, never a filter to
+  // reimplement client-side.
+  campaign_type_id: string | null;
+  campaign_type: string | null;
+  campaign_type_label: string | null;
+}
+
+// The tenant's campaign-type catalog, used for the type filter's dropdown
+// options. Matches GET /campaign-types (leads-service).
+export interface CampaignType {
+  id: string;
+  name: string;
+  label: string;
+  is_active: boolean;
 }
 
 // Raw form submission captured at intake (e.g. Meta lead-gen ads), normalized
@@ -89,6 +105,11 @@ export interface AssignmentView {
   assigned_at: string;
   is_active: boolean;
   superseded_by: string | null;
+  // Only present on the leads-history listing (assignments.repository's
+  // listAssignmentsFiltered) — the plain assignments list does not join it.
+  campaign_type_id: string | null;
+  campaign_type: string | null;
+  campaign_type_label: string | null;
 }
 
 export interface StatsData {

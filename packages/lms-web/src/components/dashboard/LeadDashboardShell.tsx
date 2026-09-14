@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionUser } from '@platform/types';
-import { useNotifications } from '@platform/ui-kit';
+import { useNotifications, MultiSelect } from '@platform/ui-kit';
 import type { PlatformModule } from '@platform/ui-kit/server';
 import { useOrgs, type DynamicOrg } from '../../hooks/useOrgs';
 import { useLeads } from '../../hooks/useLeads';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useLocationFilters } from '../../hooks/useLocationFilters';
 import { useLeadSources } from '../../hooks/useLeadSources';
+import { campaign_types as campaignTypesApi } from '../../lib/api/client';
+import type { CampaignType } from '../../types/leads';
 import StatsCards from '../StatsCards';
 import SourceBreakdownBar from './SourceBreakdownBar';
 import LeadsTable from '../LeadsTable';
@@ -73,6 +75,26 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
   const { sources: leadSources, loading: sourcesLoading } = useLeadSources();
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
 
+  // The tenant's campaign-type catalog, for the type filter's dropdown. Gated
+  // server-side on lms.campaign_types.view (not every rank holds it) — a
+  // failed fetch (403 for a lower-rank actor, or a tenant with none) just
+  // leaves the list empty, which hides the filter below rather than erroring.
+  // This never gates which lead TYPES a row is allowed to show — that stays
+  // the row policy's answer (lms.fn_user_sees_campaign_type); it only decides
+  // whether the filter control itself renders.
+  const [campaignTypes, setCampaignTypes] = useState<CampaignType[]>([]);
+  const [selectedCampaignTypes, setSelectedCampaignTypes] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await campaignTypesApi.list();
+        if (!cancelled) setCampaignTypes((res.data ?? []).filter((t) => t.is_active));
+      } catch { /* ignore — hides the filter below */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const hasLocationFilter = selectedCountries.length > 0 || selectedStates.length > 0 || selectedCities.length > 0;
 
   // When a location filter is active, auto-select all matching orgs so the
@@ -102,6 +124,10 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     () => selectedSources.length > 0 ? selectedSources : undefined,
     [selectedSources],
   );
+  const campaignTypeIds = useMemo(
+    () => selectedCampaignTypes.length > 0 ? selectedCampaignTypes : undefined,
+    [selectedCampaignTypes],
+  );
 
   const primaryOrg = selectedOrgs[0] ?? orgs[0] ?? null;
 
@@ -111,7 +137,7 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     rejectionStatuses, stageOutcomes, stageIdToName,
     updateLead, refetch,
     addLeadById, updateLeadById, removeLeadById,
-  } = useLeads(orgIds, platforms);
+  } = useLeads(orgIds, platforms, campaignTypeIds);
 
   const { addNotification } = useNotifications();
 
@@ -195,9 +221,22 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="shrink-0 text-sm font-semibold text-[#0F172A]">{orgLabel}</span>
           {!loading && (
-            <span className="shrink-0 rounded-full border border-[#E2E8F0] bg-[#F1F5F9] px-2 py-0.5 text-xs font-medium tabular-nums text-[#64748B]">
+            <span
+              className="shrink-0 rounded-full border border-[#E2E8F0] bg-[#F1F5F9] px-2 py-0.5 text-xs font-medium tabular-nums text-[#64748B]"
+              title={selectedCampaignTypes.length > 0 ? 'This total already reflects the campaign type filter below' : undefined}
+            >
               {activeFilter === 'all' ? `${stats.serverTotal} total` : `${exportableCount} of ${stats.serverTotal}`}
+              {selectedCampaignTypes.length > 0 && ' (type-filtered)'}
             </span>
+          )}
+          {campaignTypes.length > 0 && (
+            <MultiSelect
+              label="Type"
+              placeholder="All types"
+              options={campaignTypes.map((t) => ({ id: t.id, label: t.label }))}
+              selected={campaignTypes.filter((t) => selectedCampaignTypes.includes(t.id)).map((t) => ({ id: t.id, label: t.label }))}
+              onChange={(next) => setSelectedCampaignTypes(next.map((o) => String(o.id)))}
+            />
           )}
           {activeFilter !== 'all' && (
             <span className="flex shrink-0 items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-0.5 text-xs font-medium text-[#0b6cbf]">

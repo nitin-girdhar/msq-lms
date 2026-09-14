@@ -1,11 +1,11 @@
 meta {
   name: Delete Page/Form Org Mapping
   type: http
-  seq: 11
+  seq: 12
 }
 
 delete {
-  url: {{baseUrl}}/meta/page-org-map/{{mappingId}}
+  url: {{baseUrl}}/meta/page-org-map/{{mappingId}}?tenant_id={{tenantId}}
   body: none
   auth: none
 }
@@ -15,7 +15,14 @@ headers {
 }
 
 docs {
-  Removes a Page/Form -> org mapping — requires tenant_admin rank or
-  higher. Leads from this form will be logged as "unmapped" and skipped
-  until a new mapping is created.
+  Removes a Page/Form -> org mapping. Requires super_admin. Leads from that
+  form are logged as "unmapped" and skipped until a new mapping exists.
+
+  A real DELETE, not a soft delete: ext.meta_page_form_org_map carries no
+  is_deleted column and no soft_delete_row trigger.
+
+  Regression checks, identical to PATCH:
+    * mappingId belonging to ANOTHER tenant -> 404, NOT 204
+    * mappingId that does not exist         -> 404
+    * caller below super_admin              -> 403
 }

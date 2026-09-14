@@ -1,0 +1,42 @@
+meta {
+  name: Fetch Meta Campaigns
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/meta/campaigns/sync?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  The "Fetch campaigns" button. Walks every ad account in
+  ext.meta_tenant_config.ad_account_ids for the SELECTED tenant, cursor-paged,
+  and upserts ext.meta_campaigns.
+
+  Returns { fetched, inserted, suggested, unmapped, confirmed_untouched, errors }.
+
+  Requires super_admin and an explicit ?tenant_id=: the call spends that
+  tenant's stored Meta credentials. The token needs `ads_read` — without it
+  every account fails with Meta #200 and comes back in `errors` rather than
+  throwing, so a partial run is still reported honestly.
+
+  Regression checks:
+    * run it TWICE. The second run must report inserted: 0 and change nothing.
+    * confirm a campaign (see Confirm-Meta-Campaign.bru), then re-run. Its
+      campaign_type_id, mapping_status and confirmed_by must be untouched while
+      name, effective_status and last_synced_at refresh. This is the phase's
+      core invariant — a confirmed mapping is NEVER overwritten.
+    * add a keyword to a campaign type, re-run: `suggested` and `unmapped` rows
+      re-match; `confirmed` rows do not move.
+    * tenant with no integration, or an inactive one -> 404
+    * tenant with an empty ad_account_ids           -> 404 naming the column
+    * caller below super_admin                      -> 403
+    * a 429 from Meta must back off and retry, not fail the whole run — look for
+      evt: campaign_sync.graph_backoff in the service log.
+}

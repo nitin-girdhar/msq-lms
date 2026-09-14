@@ -264,6 +264,7 @@ export interface LeadsHistoryParams {
   stageIds?: string[];
   outcomeIds?: string[];
   sourceIds?: string[];
+  campaignTypeIds?: string[];
   orgIds?: string[];
   assignedTo?: string[];
   activeOnly: boolean;
@@ -315,6 +316,7 @@ export async function listLeadsHistory(
     stageIds: params.stageIds,
     outcomeIds: params.outcomeIds,
     sourceIds: params.sourceIds,
+    campaignTypeIds: params.campaignTypeIds,
     activeOnly: params.activeOnly,
     sortBy: params.sortBy,
     sortDir: params.sortDir,

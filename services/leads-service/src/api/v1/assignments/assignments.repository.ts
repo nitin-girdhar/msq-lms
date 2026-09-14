@@ -267,6 +267,7 @@ export interface LeadsHistoryFilters {
   stageIds?: string[] | undefined;
   outcomeIds?: string[] | undefined;
   sourceIds?: string[] | undefined;
+  campaignTypeIds?: string[] | undefined;
   activeOnly: boolean;
   sortBy?: LeadsHistorySortKey | undefined;
   sortDir?: SortDirection | undefined;
@@ -342,6 +343,9 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
     if (filters.sourceIds?.length) {
       conditions.push(sql`ml.source_id = ANY(${sqlUuidArr(filters.sourceIds)})`);
     }
+    if (filters.campaignTypeIds?.length) {
+      conditions.push(sql`ml.campaign_type_id = ANY(${sqlUuidArr(filters.campaignTypeIds)})`);
+    }
     if (filters.activeOnly) {
       // IS DISTINCT FROM TRUE, not `= FALSE`: lead_stage is LEFT JOINed because
       // ml.stage_id is nullable, and `NULL = FALSE` is NULL, which would drop
@@ -374,6 +378,9 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
         lso.label           AS lead_stage_outcome_label,
         src.name            AS lead_source,
         src.label           AS lead_source_label,
+        ml.campaign_type_id,
+        ct.name             AS campaign_type,
+        ct.label            AS campaign_type_label,
         ml.created_at       AS lead_created_at,
         ml.updated_at       AS assigned_at,
         ml.is_active, ml.superseded_by,
@@ -385,6 +392,10 @@ export async function listAssignmentsFiltered(ctx: RoleTxContext, filters: Leads
       LEFT JOIN iam.user_roles ur   ON ur.id = u.role_id
       LEFT JOIN lms.lead_stage_outcome lso ON lso.id = ml.outcome_id
       LEFT JOIN lms.lead_sources src ON src.id = ml.source_id
+      -- Tenant-qualified like the other catalog joins: campaign_types is
+      -- tenant-scoped and a lead reaches its tenant only through its org.
+      LEFT JOIN marketing.campaign_types ct
+             ON ct.id = ml.campaign_type_id AND ct.tenant_id = o.tenant_id
       WHERE ${where}
       ORDER BY ${sortExpr} ${sortDir}, ml.created_at DESC, ml.id
       LIMIT ${filters.pageSize} OFFSET ${offset}

@@ -42,5 +42,8 @@ export function assignmentToLeadView(a: AssignmentView): LeadView {
     is_deleted: false,
     assigned_user_id: a.assigned_to,
     campaign_id: null,
+    campaign_type_id: a.campaign_type_id,
+    campaign_type: a.campaign_type,
+    campaign_type_label: a.campaign_type_label,
   };
 }

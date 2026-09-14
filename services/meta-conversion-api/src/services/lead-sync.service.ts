@@ -2,6 +2,15 @@ import { sql } from 'drizzle-orm';
 import { withServiceTx } from '@platform/db';
 import { resolveFieldMappings, type FieldMappingsConfig, type ResolvedFieldMappings } from '../config/meta.config.js';
 import { createIntakeLead } from '../lib/internal-leads-client.js';
+import { fetchCampaign } from './meta-api.service.js';
+import {
+  campaignIsUnknown,
+  resolveFormDefaultType,
+  fetchCampaignMetadataCached,
+  resolveCampaignType,
+  type MetaCampaignMetadata,
+  type ResolvedCampaignType,
+} from './campaign-mapping.service.js';
 
 export interface MetaLeadFieldData {
   name: string;
@@ -165,10 +174,201 @@ function hasAnyValue(payload: Record<string, string | null>): boolean {
   return Object.values(payload).some((v) => v !== null);
 }
 
+// ── Campaign typing on the live lead path ───────────────────────────────────
+
+/**
+ * The pino child logger the webhook controller already holds. Typed structurally
+ * rather than imported so this module keeps no dependency on Fastify — the same
+ * reason it takes an org id instead of a request.
+ */
+export interface LeadSyncLogger {
+  info: (obj: Record<string, unknown>, msg?: string) => void;
+  warn: (obj: Record<string, unknown>, msg?: string) => void;
+}
+
+/**
+ * What `syncLeadToDatabase` needs in order to TYPE a lead, as opposed to merely
+ * store it.
+ *
+ * Every field is optional and the whole argument may be omitted: a caller that
+ * cannot supply a tenant or a token still gets a lead created and routed, just
+ * without a campaign type resolved here. leads-service then falls back to the
+ * tenant default on its side, which is what happened for every Meta lead before
+ * this phase.
+ *
+ * `tenantId` is a separate argument because `syncLeadToDatabase` has never taken
+ * one — it is keyed on org — while every mapping lookup here is tenant-scoped.
+ * The webhook controller already resolves both (from the integration for a
+ * per-tenant app, from the page/form mapping for the shared one).
+ */
+export interface LeadSyncContext {
+  tenantId?: string | undefined;
+  /** Decrypted Graph token, for the one metadata call a NEW campaign costs. */
+  accessToken?: string | undefined;
+  graphApiVersion?: string | undefined;
+  log?: LeadSyncLogger | undefined;
+}
+
+interface CampaignForIntake {
+  resolved: ResolvedCampaignType | null;
+  metadata: MetaCampaignMetadata | null;
+}
+
+const NO_CAMPAIGN: CampaignForIntake = { resolved: null, metadata: null };
+
+/**
+ * The campaign type for an inbound lead, and the metadata leads-service needs to
+ * build the branch's `marketing.ad_campaigns` row.
+ *
+ * THREE THINGS THIS FUNCTION WILL NOT DO, each of them load-bearing:
+ *
+ *   * It will not throw. Every failure path returns nulls and the lead proceeds.
+ *     The caller is mid-way through creating a real customer lead; losing it
+ *     because Meta throttled a metadata lookup is strictly worse than typing it
+ *     wrong for as long as it takes an admin to fix the row.
+ *
+ *   * It will not spend a Graph call on a campaign that already has an
+ *     `ext.meta_campaigns` row. That row IS the cache, and the LRU in
+ *     campaign-mapping.service.ts closes the remaining window — the burst of
+ *     leads that arrives for a brand-new campaign before the first row commits.
+ *     One call per NEW campaign, never per lead.
+ *
+ *   * It will not hold a transaction open across the Graph call. The two short
+ *     transactions below straddle it deliberately.
+ */
+async function resolveCampaignForIntake(
+  lead: RawMetaLead,
+  ctx: LeadSyncContext,
+): Promise<CampaignForIntake> {
+  if (!ctx.tenantId) return NO_CAMPAIGN;
+  const tenantId = ctx.tenantId;
+  const campaignId = lead.campaign_id?.trim();
+
+  try {
+    // No campaign id at all — an organic (non-ad) lead, which Meta does deliver.
+    // The form-level default is then the ONLY typing signal there is, and it
+    // still has to reach leads-service, which cannot read ext.* itself.
+    if (!campaignId) {
+      const formDefault = await withServiceTx((tx) =>
+        resolveFormDefaultType(tx, tenantId, lead.page_id, lead.form_id),
+      );
+      return {
+        resolved: {
+          campaign_type_id: null,
+          mapping_status: 'unmapped',
+          matched_keyword: null,
+          default_campaign_type_id: formDefault,
+          created: false,
+        },
+        metadata: null,
+      };
+    }
+
+    const unknown = await withServiceTx((tx) => campaignIsUnknown(tx, campaignId));
+
+    let metadata: MetaCampaignMetadata | null = null;
+    if (unknown) {
+      if (ctx.accessToken && ctx.graphApiVersion) {
+        const accessToken = ctx.accessToken;
+        const graphApiVersion = ctx.graphApiVersion;
+        metadata = await fetchCampaignMetadataCached(campaignId, async () => {
+          // ONE attempt, short timeout. This runs inside Meta's webhook delivery
+          // for a real lead; graphGet's default budget (retries + backoff) could
+          // hold it for a minute over a name that only labels the admin grid.
+          // A miss leaves the row nameless, and the next lead for this campaign
+          // or the Fetch button fills it in.
+          const campaign = await fetchCampaign(campaignId, accessToken, graphApiVersion, {
+            maxAttempts: 1,
+            timeoutMs: 3_000,
+          });
+          return campaign
+            ? {
+                name: campaign.name,
+                objective: campaign.objective,
+                effective_status: campaign.effective_status,
+              }
+            : null;
+        });
+      }
+
+      if (!metadata?.name) {
+        // Not an error — the lead is fine and is about to be created. It is a
+        // WARNING because the row lands `unmapped` and needs an admin, and
+        // because a run of these means the token has lost ads_read or is being
+        // throttled, which is worth seeing before the grid fills with them.
+        ctx.log?.warn(
+          {
+            evt: 'webhook.campaign_name_fetch_failed',
+            metaCampaignId: campaignId,
+            tenantId,
+            formId: lead.form_id,
+          },
+          'Could not resolve Meta campaign name; lead will be typed from the form/tenant default',
+        );
+      }
+    }
+
+    const resolved = await withServiceTx((tx) =>
+      resolveCampaignType(tx, tenantId, {
+        metaCampaignId: campaignId,
+        metaCampaignName: metadata?.name ?? null,
+        metaCampaignObjective: metadata?.objective ?? null,
+        metaCampaignStatus: metadata?.effective_status ?? null,
+        pageId: lead.page_id,
+        formId: lead.form_id,
+      }),
+    );
+
+    if (resolved.inactive_mapped_type_id) {
+      // The campaign is mapped to a pool an admin has since retired. The lead is
+      // routed on the form/tenant default instead — leads-service would refuse
+      // the retired type and the lead would be lost — but the mapping row still
+      // points at it and needs correcting on /dashboard/meta-campaigns.
+      ctx.log?.warn(
+        {
+          evt: 'webhook.campaign_type_inactive',
+          metaCampaignId: campaignId,
+          tenantId,
+          inactiveCampaignTypeId: resolved.inactive_mapped_type_id,
+          fallbackCampaignTypeId: resolved.campaign_type_id,
+        },
+        'Campaign is mapped to an inactive campaign type; lead typed from the form/tenant default',
+      );
+    }
+
+    if (resolved.created) {
+      ctx.log?.info(
+        {
+          evt: 'webhook.campaign_discovered',
+          metaCampaignId: campaignId,
+          tenantId,
+          mappingStatus: resolved.mapping_status,
+          matchedKeyword: resolved.matched_keyword,
+        },
+        'New Meta campaign typed from an inbound lead',
+      );
+    }
+
+    return { resolved, metadata };
+  } catch (err) {
+    // The outermost guarantee. Anything at all — a dropped connection, a
+    // deleted campaign type, a malformed campaign id — lands here and the lead
+    // still gets created.
+    ctx.log?.warn(
+      { evt: 'webhook.campaign_type_resolution_failed', err, metaCampaignId: campaignId ?? null },
+      'Campaign type resolution failed; lead proceeds untyped',
+    );
+    return NO_CAMPAIGN;
+  }
+}
+
 export async function syncLeadToDatabase(
   orgId: string,
   lead: RawMetaLead,
   orgFieldMappings?: FieldMappingsConfig | null,
+  // Added, not folded into the existing three: every caller that cannot supply a
+  // tenant and a token still behaves exactly as it did before this phase.
+  syncContext: LeadSyncContext = {},
 ): Promise<SyncLeadResult> {
   const mappings = resolveFieldMappings(orgFieldMappings);
   const contact = buildContactPayload(lead.field_data, mappings);
@@ -196,6 +396,12 @@ export async function syncLeadToDatabase(
 
   const leadCreatedAt = lead.created_time ? new Date(lead.created_time * 1000) : new Date();
 
+  // Resolved BEFORE the intake call, because the type is an input to routing:
+  // leads-service picks the assignee from the (branch x type) pool, so a type
+  // arriving afterwards would be a relabel, not a route. Best-effort throughout —
+  // see resolveCampaignForIntake, which cannot throw.
+  const campaign = await resolveCampaignForIntake(lead, syncContext);
+
   // Delegate lms.marketing_leads creation to the leads-service intake endpoint.
   // This is the single canonical path for lead creation — dedup, auto-assign, and
   // lead_links for superseded leads are all handled there.
@@ -215,7 +421,44 @@ export async function syncLeadToDatabase(
     ...(address.city ? { city: address.city } : {}),
     ...(address.streetAddress ? { address_line1: address.streetAddress } : {}),
     ...((address.postalCode ?? address.zipCode) ? { pincode: (address.postalCode ?? address.zipCode)! } : {}),
-    metadata: { meta_lead_id: lead.id, form_id: lead.form_id, platform: PLATFORM_TO_LEAD_SOURCE[lead.platform] },
+    // ── Campaign attribution ──
+    //
+    // THE GAP THIS CLOSES. Until now campaign_id / adset_id / ad_id were written
+    // into ext.meta_leads a few lines below and passed here NOWHERE — not even
+    // inside metadata — so lms.marketing_leads.campaign_id was NULL for every
+    // live Meta lead and the Campaign row on the lead-edit screen always read
+    // "-". The receiving WebhookLeadData has accepted all of this for a while;
+    // IntakeLeadPayload was the missing half.
+    //
+    // meta_campaign_id is what leads-service keys the branch's
+    // marketing.ad_campaigns row on; the name/status are what it names and
+    // statuses that row with; campaign_type_id is the routing decision made
+    // above; default_campaign_type_id is the form-level fallback, forwarded
+    // because leads-service deliberately never reads ext.*.
+    ...(lead.campaign_id ? { meta_campaign_id: lead.campaign_id } : {}),
+    ...(campaign.metadata?.name ? { meta_campaign_name: campaign.metadata.name } : {}),
+    ...(campaign.metadata?.effective_status
+      ? { meta_campaign_status: campaign.metadata.effective_status }
+      : {}),
+    meta_platform: lead.platform,
+    ...(campaign.resolved?.campaign_type_id
+      ? { campaign_type_id: campaign.resolved.campaign_type_id }
+      : {}),
+    ...(campaign.resolved?.default_campaign_type_id
+      ? { default_campaign_type_id: campaign.resolved.default_campaign_type_id }
+      : {}),
+    // ad_id / adset_id have no typed column on a lead — they identify the
+    // creative, not the campaign — but they are the first thing anyone asks for
+    // when a campaign under-performs, so they travel in metadata rather than
+    // being reachable only by joining back to ext.meta_leads.
+    metadata: {
+      meta_lead_id: lead.id,
+      form_id: lead.form_id,
+      platform: PLATFORM_TO_LEAD_SOURCE[lead.platform],
+      ...(lead.campaign_id ? { campaign_id: lead.campaign_id } : {}),
+      ...(lead.adset_id ? { adset_id: lead.adset_id } : {}),
+      ...(lead.ad_id ? { ad_id: lead.ad_id } : {}),
+    },
     raw_webhook_data: { field_data: lead.field_data },
   });
 

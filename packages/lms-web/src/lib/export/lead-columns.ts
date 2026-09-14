@@ -7,6 +7,7 @@ export function buildLeadExportColumns(): ExportColumn<LeadView>[] {
   return [
     { header: 'Date', value: (l) => l.created_at ? new Date(l.created_at).toLocaleDateString() : '' },
     { header: 'Campaign', value: (l) => l.campaign_name ?? '' },
+    { header: 'Campaign Type', value: (l) => l.campaign_type_label ?? l.campaign_type ?? '' },
     { header: 'Name', value: (l) => l.full_name },
     { header: 'Phone', value: (l) => l.phone ?? '' },
     { header: 'Address', value: (l) => l.address_line1 ?? l.city_name ?? l.city ?? '' },

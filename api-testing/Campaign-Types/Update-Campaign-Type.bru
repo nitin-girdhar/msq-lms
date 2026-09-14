@@ -1,0 +1,28 @@
+meta {
+  name: Update Campaign Type
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/campaign-types/{{campaignTypeId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "label": "Partnerships & Tie-ups",
+    "match_keywords": ["partner", "tieup", "corporate", "b2b"]
+  }
+}
+
+docs {
+  Returns 204. Editing match_keywords changes how future inbound leads route,
+  on BOTH the TypeScript and the Python intake paths -- the matcher lives in
+  SQL precisely so the two cannot drift.
+}

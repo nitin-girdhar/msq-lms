@@ -842,6 +842,12 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
           {lead.email}
         </a>
       )}
+      {lead?.campaign_name && (
+        <span className="w-full text-xs text-[#64748B]">
+          Came from <span className="font-medium text-[#0F172A]">{lead.campaign_name}</span>
+          {lead.campaign_type_label && <> ({lead.campaign_type_label})</>}
+        </span>
+      )}
     </div>
   );
 
@@ -886,7 +892,8 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
                   <InfoRow label="Lead Source" value={lead.source_label ?? lead.source ?? lead.platform ?? "—"} />
                   <InfoRow label="Assigned To" value={lead.assigned_rep_name ?? "—"} />
                   <InfoRow label="Follow-up" value={lead.scheduled_at ? formatDate(lead.scheduled_at) : "—"} />
-                  <InfoRow label="Campaign" value={lead.campaign_name ?? "—"} full />
+                  <InfoRow label="Campaign" value={lead.campaign_name ?? "—"} />
+                  <InfoRow label="Campaign Type" value={lead.campaign_type_label ?? "—"} />
                 </div>
               </div>
             )}

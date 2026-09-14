@@ -1,0 +1,21 @@
+meta {
+  name: Delete Campaign Type
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/campaign-types/{{campaignTypeId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Soft delete, and refused (409) while any lead, campaign or assignment weight
+  still points at the type -- the FKs are ON DELETE RESTRICT but a soft delete
+  does not trip them. The tenant's is_default type can never be deleted (400).
+}

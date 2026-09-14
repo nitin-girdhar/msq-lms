@@ -5,6 +5,11 @@ export const listLeadsQuerySchema = z.object({
   assigned_to: z.string().uuid().optional(),
   assigned_user_id: z.string().uuid().optional(),
   campaign_id: z.string().uuid().optional(),
+  // CSV of campaign type uuids; split in the controller, the same shape
+  // `platforms` and `org_ids` already use. A filter only — it narrows what the
+  // caller may ALREADY see, since which types are visible at all is decided in
+  // the database by lms.fn_user_sees_campaign_type() inside the row policy.
+  campaign_type_ids: z.string().optional(),
   search: z.string().max(200).optional(),
   platforms: z.string().optional(),
   page: z.coerce.number().int().positive().default(1),

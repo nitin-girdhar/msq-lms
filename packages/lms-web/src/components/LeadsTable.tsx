@@ -135,6 +135,17 @@ export default function LeadsTable({
       cellStyle: { display: 'flex', alignItems: 'center' } as Record<string, string>,
     },
     {
+      colId: 'campaign_type', headerName: 'Campaign Type', width: 150, minWidth: 130, sortable: true, filter: true, editable: false,
+      valueGetter: (p) => p.data?.campaign_type_label ?? p.data?.campaign_type ?? '',
+      cellRenderer: (p: ICellRendererParams<LeadView>) => {
+        const val = p.data?.campaign_type_label ?? p.data?.campaign_type;
+        return val
+          ? <span style={{ background: '#EEF2FF', color: '#4338CA' }} className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium">{val}</span>
+          : <span className="text-xs text-[#CBD5E1]">—</span>;
+      },
+      cellStyle: { display: 'flex', alignItems: 'center' } as Record<string, string>,
+    },
+    {
       colId: '__assignee', headerName: 'Assigned To', width: 170, minWidth: 130, sortable: true, filter: true, editable: false,
       valueGetter: (p) => p.data?.assigned_rep_name ?? 'Unassigned',
       cellRenderer: assigneeCellRenderer,

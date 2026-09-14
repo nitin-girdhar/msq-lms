@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { leadsRouter } from './leads/leads.router.js';
 import { campaignsRouter } from './campaigns/campaigns.router.js';
+import { campaignTypesRouter } from './campaign-types/campaign-types.router.js';
 import { lookupsRouter } from './lookups/lookups.router.js';
 import { intakeRouter } from './intake/intake.router.js';
 import { activitiesRouter } from './activities/activities.router.js';
@@ -23,10 +24,12 @@ import { leadSourcesRouter } from './lead-sources/lead-sources.router.js';
 import { marketingPlatformsRouter } from './marketing-platforms/marketing-platforms.router.js';
 import { campaignStatusesRouter } from './campaign-statuses/campaign-statuses.router.js';
 import { leadStageCapiEventsRouter } from './lead-stage-capi-events/lead-stage-capi-events.router.js';
+import { leadAssignmentRerunRouter } from './lead-assignment-rerun/lead-assignment-rerun.router.js';
 
 export async function v1Router(app: FastifyInstance) {
   await app.register(leadsRouter);
   await app.register(campaignsRouter);
+  await app.register(campaignTypesRouter);
   await app.register(lookupsRouter);
   await app.register(intakeRouter);
   await app.register(activitiesRouter);
@@ -43,4 +46,5 @@ export async function v1Router(app: FastifyInstance) {
   await app.register(marketingPlatformsRouter);
   await app.register(campaignStatusesRouter);
   await app.register(leadStageCapiEventsRouter);
+  await app.register(leadAssignmentRerunRouter);
 }

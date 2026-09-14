@@ -1,0 +1,49 @@
+meta {
+  name: Rerun Auto-Assignment
+  type: http
+  seq: 90
+}
+
+post {
+  url: {{baseUrl}}/lead-assignment/rerun?tenant_id={{tenantId}}&dry_run=true
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "org_ids": [],
+    "campaign_type_ids": []
+  }
+}
+
+docs {
+  Super-admin console action: re-runs auto-assignment for leads that arrived
+  UNASSIGNED (their pool had nobody eligible) once an admin has fixed the
+  weights or the role's department.
+
+  dry_run defaults to true. Flip to false to actually assign.
+
+  Only fills gaps — never touches a lead that has an owner, any logged
+  interaction, a terminated stage, or is superseded/inactive.
+
+  Returns { dry_run, candidates, assigned, left_unassigned, remaining,
+  next_cursor, by_branch[{ org_name, campaign_type_label, assigned,
+  left_unassigned, reasons: { no_weighted_users, no_department_match,
+  no_capable_users } }] }. At most 500 leads per call: pass next_cursor back as
+  body.cursor to continue.
+
+  Regression checks:
+    * dry_run=true writes nothing (before/after SELECT on lms.marketing_leads)
+    * a branch whose only Hiring-weighted user has a Sales role -> left
+      unassigned, reasons.no_department_match
+    * dry_run=false -> lead_assignment_log rows with action 'initial', the
+      re-run note and "From the <type> pool."
+    * an org_id from another tenant            -> 400
+    * a bogus tenant_id                         -> 404
+    * caller below super_admin                  -> 403 (gateway)
+}

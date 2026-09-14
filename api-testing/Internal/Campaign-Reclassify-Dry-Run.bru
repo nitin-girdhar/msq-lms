@@ -1,0 +1,39 @@
+meta {
+  name: Campaign Reclassify (dry run)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/internal/campaign-reclassify
+  body: json
+  auth: none
+}
+
+headers {
+  x-internal-secret: {{internalServiceSecret}}
+}
+
+body:json {
+  {
+    "meta_campaign_id": "23851234567890123",
+    "campaign_type_id": "{{campaignTypeId}}",
+    "dry_run": true
+  }
+}
+
+docs {
+  Service-to-service only -- call leads-service DIRECTLY (not through the
+  gateway), authenticated by the shared internal secret.
+
+  Returns the impact counts and writes NOTHING. This is what powers the impact
+  preview in the admin's confirm dialog, and it shares its counting queries
+  with the real run so the preview cannot promise something different from what
+  gets confirmed.
+
+  meta_campaign_id is a STRING: Meta campaign ids run to 17 digits, past
+  Number.MAX_SAFE_INTEGER, so a JSON number arrives already corrupted.
+
+  dry_run defaults to TRUE when omitted -- forgetting the flag gives a preview,
+  not an unrequested fan-out across every branch.
+}

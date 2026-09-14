@@ -1,0 +1,46 @@
+meta {
+  name: Campaign Reclassify (confirm)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/internal/campaign-reclassify
+  body: json
+  auth: none
+}
+
+headers {
+  x-internal-secret: {{internalServiceSecret}}
+}
+
+body:json {
+  {
+    "meta_campaign_id": "23851234567890123",
+    "campaign_type_id": "{{campaignTypeId}}",
+    "dry_run": false,
+    "actor_id": "{{userId}}"
+  }
+}
+
+docs {
+  The real fan-out, in one transaction:
+
+  RELABEL is unconditional -- every branch's campaign row and every lead on it
+  gets the corrected type.
+
+  RE-ROUTE is deliberately narrow. A lead only changes hands if it is still
+  auto-assigned and untouched by a person, sits in an open stage, has ZERO
+  interactions, AND its current owner holds no weight for the new type in that
+  branch. Each is re-picked in ITS OWN branch's rotation; an empty target pool
+  leaves it unassigned with a logged reason, never back on the old pool.
+
+  A lead someone has already called keeps its owner and only its label is
+  corrected. That is a product decision, not a heuristic.
+
+  actor_id is optional and stamps lead_assignment_log.assigned_by_id so the
+  move is attributable on the lead timeline.
+
+  Returns { dry_run, campaigns_relabelled, leads_relabelled, leads_reassigned,
+  leads_left_unassigned, by_branch[] }.
+}

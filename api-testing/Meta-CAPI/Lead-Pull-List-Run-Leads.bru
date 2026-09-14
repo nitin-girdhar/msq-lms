@@ -1,0 +1,51 @@
+meta {
+  name: Lead Pull - Staged Leads
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/meta/lead-pull/runs/{{leadPullRunId}}/leads?tenant_id={{tenantId}}&verdict=new&page=1&page_size=50
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  The staged rows behind each summary number. ?verdict= is optional — omit it for
+  every row.
+
+  CONTACT VALUES ARE DELIBERATELY NOT RETURNED. The grid needs a verdict, the
+  Meta ids and the form name to be actionable; it does not need the phone number
+  and email of someone who has not been imported yet, and returning them would
+  put un-consented PII into a screen, a browser cache and every proxy log on the
+  way there.
+
+  Two columns carry the ONE DELIBERATE BEHAVIOUR CHANGE from the Python:
+    is_hiring_form              the form name matches hiring|recruit|vacancy|
+                                career|job application|sales exe
+    suggested_campaign_type_id  what marketing.fn_match_campaign_type matched on
+    (+ suggested_campaign_type_label)
+
+  In meta-sync-scripts/common/reconcile.py `hiring_form` was a SKIP verdict,
+  because a job applicant had nowhere to go. Since campaign types (1.49.0) it
+  does, so it stopped being a verdict: these leads now CLASSIFY AND IMPORT
+  NORMALLY, and the admin is pointed at the real fix — setting
+  ext.meta_page_form_org_map.default_campaign_type_id on that page/form.
+
+  Regression check the unmapped case explicitly (?verdict=unmapped_form):
+    * a lead on a form with no mapping row must appear here with org_id NULL and
+      a reason naming the form id
+    * it must also appear in the run's verdict_summary
+    * Apply must SKIP it with applied_error 'unmapped_form' and must never guess
+      a branch — one Page here is shared by eight branch orgs, so "the page's
+      org" is not a well-defined thing.
+
+  Regression checks:
+    * a run id from tenant B, requested as tenant A -> 404
+    * an unknown verdict value -> 422
+    * caller below super_admin -> 403
+}

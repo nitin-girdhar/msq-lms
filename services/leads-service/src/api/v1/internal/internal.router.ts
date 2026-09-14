@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { validate } from '../../../middleware/validate.middleware.js';
 import { authenticateInternal } from './internal.auth.js';
-import { reassignOrgLeadsSchema, knownContactsSchema } from './internal.schema.js';
+import { reassignOrgLeadsSchema, knownContactsSchema, campaignReclassifySchema } from './internal.schema.js';
 import { InternalController } from './internal.controller.js';
 
 const ctrl = new InternalController();
@@ -23,5 +23,15 @@ export async function internalRouter(app: FastifyInstance) {
     '/internal/leads/known-contacts',
     { preHandler: [authenticateInternal, validate({ body: knownContactsSchema })] },
     ctrl.knownContacts,
+  );
+
+  // Called by meta-conversion-api immediately after an admin confirms a Meta
+  // campaign's type (P-4). It owns ext.meta_campaigns and therefore the mapping;
+  // leads-service owns the leads and the routing rules, so the fan-out is here.
+  // `dry_run: true` powers the impact preview in that confirm dialog.
+  app.post(
+    '/internal/campaign-reclassify',
+    { preHandler: [authenticateInternal, validate({ body: campaignReclassifySchema })] },
+    ctrl.campaignReclassify,
   );
 }

@@ -1,11 +1,18 @@
 import { and, sql } from 'drizzle-orm';
 import { withServiceTx } from '@platform/db';
+import { createLogger } from '@platform/logger';
 import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
+import { resolveCampaignForLead } from '../../../lib/campaign-resolution.js';
 import {
   marketingLeadsTable,
   leadLinksTable,
 } from '@platform/db/schema';
+import { config } from '../../../config/index.js';
 import { BadRequestError } from '../../../lib/errors.js';
+
+// Intake runs gateway-less, so there is no request-scoped logger on this path —
+// same reason lib/meta-capi-trigger.ts carries its own.
+const log = createLogger({ service: 'leads-service', nodeEnv: config.nodeEnv });
 
 export interface WebhookLeadData {
   org_id: string;
@@ -24,6 +31,16 @@ export interface WebhookLeadData {
   source_id?: string;
   source?: string;
   campaign_id?: string;
+  // ── Meta campaign / routing ──
+  // Strings, not numbers: Meta campaign ids run past Number.MAX_SAFE_INTEGER.
+  meta_campaign_id?: string;
+  meta_campaign_name?: string;
+  meta_platform?: string;
+  meta_campaign_status?: string;
+  /** Resolved by meta-conversion-api, which owns the ext.* campaign -> type mapping. */
+  campaign_type_id?: string;
+  /** ext.meta_page_form_org_map.default_campaign_type_id, likewise passed in. */
+  default_campaign_type_id?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
   raw_webhook_data?: Record<string, unknown>;
@@ -126,7 +143,47 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
       `);
     }
 
-    const autoAssignedUserId = await resolveAutoAssignedUser(tx, data.org_id);
+    // Campaign and TYPE before the pick: which rotation this lead belongs to is
+    // an input to who receives it, not a label applied afterwards. May also
+    // create the branch's marketing.ad_campaigns row for a Meta campaign seen
+    // here for the first time.
+    const resolved = await resolveCampaignForLead(tx, data.org_id, {
+      metaCampaignId:        data.meta_campaign_id ?? null,
+      metaCampaignName:      data.meta_campaign_name ?? null,
+      metaPlatform:          data.meta_platform ?? null,
+      metaCampaignStatus:    data.meta_campaign_status ?? null,
+      campaignTypeId:        data.campaign_type_id ?? null,
+      defaultCampaignTypeId: data.default_campaign_type_id ?? null,
+    });
+
+    const assignment = await resolveAutoAssignedUser(tx, data.org_id, resolved.campaign_type_id);
+
+    // The fix for the silent-failure incident: auto-assign used to return a bare
+    // null and the lead simply arrived unassigned, so 10 of 30 branches sat with
+    // no weighted user for a long time with nothing in the logs to show it.
+    // A skipped assignment now always says which pool and why.
+    if (assignment.reason !== 'assigned') {
+      // The pool's NAME, not just its id: "no eligible user in the hiring pool"
+      // is what an operator can act on from a log line. Looked up only on this
+      // (rare) path, so the assigned path pays nothing for it.
+      const typeRows = resolved.campaign_type_id
+        ? (await tx.execute(sql`
+            SELECT name FROM marketing.campaign_types WHERE id = ${resolved.campaign_type_id}::uuid LIMIT 1
+          `)) as Array<{ name: string }>
+        : [];
+      log.warn(
+        {
+          event: 'lead.autoassign_skipped',
+          org_id: data.org_id,
+          campaign_type: typeRows[0]?.name ?? null,
+          campaign_type_id: resolved.campaign_type_id,
+          reason: assignment.reason,
+        },
+        'Lead created unassigned: no eligible user in this pool',
+      );
+    }
+
+    const autoAssignedUserId = assignment.userId;
 
     const [inserted] = await tx
       .insert(marketingLeadsTable)
@@ -145,7 +202,14 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
         countryId:     data.country_id ?? null,
         stageId:       defaultStage.id,
         sourceId,
-        campaignId:    data.campaign_id ?? null,
+        // An explicit campaign_id from the caller still wins; resolveCampaignForLead
+        // only supplies one when the lead carried a Meta campaign id.
+        campaignId:     data.campaign_id ?? resolved.campaign_id,
+        // Written explicitly rather than left to lms.sync_lead_campaign_type():
+        // that trigger only fills a NULL from the campaign, so a lead with a type
+        // but no campaign row (a walk-in, or a Meta campaign whose catalog row
+        // could not be created) would otherwise land untyped and unroutable.
+        campaignTypeId: resolved.campaign_type_id,
         assignedUserId: autoAssignedUserId,
         tags:          Array.isArray(data.tags) ? data.tags.map(String) : [],
         metadata:      (data.metadata ?? {}) as Record<string, unknown>,

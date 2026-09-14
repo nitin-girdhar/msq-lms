@@ -14,13 +14,19 @@ export async function listCampaigns(ctx: RoleTxContext) {
     return (await tx.execute(sql`
       SELECT ac.id, ac.org_id, ac.name, ac.budget, ac.started_at, ac.ended_at, ac.created_at, ac.updated_at,
              mp.name AS platform_name, cs.name AS status_name, cs.id AS status_id, mp.id AS platform_id,
+             ac.campaign_type_id, ct.name AS campaign_type, ct.label AS campaign_type_label,
              COUNT(ml.id) FILTER (WHERE NOT ml.is_deleted) AS lead_count
       FROM marketing.ad_campaigns ac
       JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
       JOIN marketing.campaign_statuses cs ON cs.id = ac.status_id
+      -- Tenant-qualified like every other catalog join: campaign_types is
+      -- tenant-scoped, and the campaign reaches its tenant only through its org.
+      LEFT JOIN marketing.campaign_types ct
+             ON ct.id = ac.campaign_type_id
+            AND ct.tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ac.org_id)
       LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id
       WHERE NOT ac.is_deleted AND ac.org_id = ${ctx.org_id}
-      GROUP BY ac.id, mp.name, cs.name, cs.id, mp.id
+      GROUP BY ac.id, mp.name, cs.name, cs.id, mp.id, ct.name, ct.label
       ORDER BY ac.created_at DESC
     `)) as Array<Record<string, unknown>>;
   });
@@ -31,13 +37,19 @@ export async function getCampaignById(ctx: RoleTxContext, campaignId: string) {
     const rows = (await tx.execute(sql`
       SELECT ac.id, ac.org_id, ac.name, ac.budget, ac.started_at, ac.ended_at, ac.created_at, ac.updated_at,
              mp.name AS platform_name, cs.name AS status_name, cs.id AS status_id, mp.id AS platform_id,
+             ac.campaign_type_id, ct.name AS campaign_type, ct.label AS campaign_type_label,
              COUNT(ml.id) FILTER (WHERE NOT ml.is_deleted) AS lead_count
       FROM marketing.ad_campaigns ac
       JOIN marketing.marketing_platforms mp ON mp.id = ac.platform_id
       JOIN marketing.campaign_statuses cs ON cs.id = ac.status_id
+      -- Tenant-qualified like every other catalog join: campaign_types is
+      -- tenant-scoped, and the campaign reaches its tenant only through its org.
+      LEFT JOIN marketing.campaign_types ct
+             ON ct.id = ac.campaign_type_id
+            AND ct.tenant_id = (SELECT tenant_id FROM entity.organizations WHERE id = ac.org_id)
       LEFT JOIN lms.marketing_leads ml ON ml.campaign_id = ac.id
       WHERE NOT ac.is_deleted AND ac.org_id = ${ctx.org_id} AND ac.id = ${campaignId}
-      GROUP BY ac.id, mp.name, cs.name, cs.id, mp.id
+      GROUP BY ac.id, mp.name, cs.name, cs.id, mp.id, ct.name, ct.label
     `)) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
   });
@@ -63,12 +75,25 @@ async function resolveStatusId(tx: DrizzleTx, name: string) {
   return row.id;
 }
 
+// A campaign type belongs to a TENANT. RLS already fences campaign_types to the
+// caller's tenant on SELECT, so a foreign id simply does not resolve — turn that
+// into an explicit 400 rather than letting it reach the FK as a 500.
+async function assertTypeInTenant(tx: DrizzleTx, ctx: RoleTxContext, typeId: string) {
+  const rows = (await tx.execute(sql`
+    SELECT 1 FROM marketing.campaign_types
+    WHERE id = ${typeId}::uuid AND is_active AND NOT is_deleted
+    LIMIT 1
+  `)) as unknown[];
+  if (rows.length === 0) throw new BadRequestError('Unknown campaign type for this tenant');
+}
+
 export async function createCampaign(ctx: RoleTxContext, data: CreateCampaignBody) {
   return withRoleTx(ctx, async (tx) => {
     const [platformId, statusId] = await Promise.all([
       resolvePlatformId(tx, data.platform_name),
       resolveStatusId(tx, data.status_name),
     ]);
+    if (data.campaign_type_id) await assertTypeInTenant(tx, ctx, data.campaign_type_id);
 
     const [inserted] = await tx
       .insert(adCampaignsTable)
@@ -80,6 +105,7 @@ export async function createCampaign(ctx: RoleTxContext, data: CreateCampaignBod
         budget: data.budget ? String(data.budget) : null,
         startedAt: data.started_at ? new Date(data.started_at) : null,
         endedAt: data.ended_at ? new Date(data.ended_at) : null,
+        campaignTypeId: data.campaign_type_id ?? null,
       })
       .returning({ id: adCampaignsTable.id });
 
@@ -101,6 +127,15 @@ export async function updateCampaign(ctx: RoleTxContext, campaignId: string, dat
     }
     if (data.status_name !== undefined) {
       updateData['statusId'] = await resolveStatusId(tx, data.status_name);
+    }
+    if (data.campaign_type_id !== undefined) {
+      if (data.campaign_type_id) await assertTypeInTenant(tx, ctx, data.campaign_type_id);
+      // Changing the type here relabels the CAMPAIGN only. Existing leads keep
+      // the type they were routed under — lms.sync_lead_campaign_type() fills a
+      // lead's NULL type from its campaign but never overwrites one. Moving the
+      // leads too is the reclassify fan-out's job, and it is deliberately more
+      // conservative than a blanket update.
+      updateData['campaignTypeId'] = data.campaign_type_id;
     }
 
     if (Object.keys(updateData).length === 0) return null;

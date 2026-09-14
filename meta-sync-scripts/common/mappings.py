@@ -70,9 +70,16 @@ def load_form_org_map(
     cur.execute(
         """
         SELECT m.id, m.tenant_id, m.org_id, m.page_id, m.form_id, m.platform, m.last_synced_at,
+               -- A default pointing at a deactivated or deleted type is no default
+               -- at all, exactly as campaign-mapping.service.ts::resolveFormDefaultType
+               -- treats it. Filtered HERE, at the one place every batch script
+               -- reads the mapping, so no caller can forward a retired pool.
+               CASE WHEN ct.is_active AND NOT ct.is_deleted
+                    THEN m.default_campaign_type_id END AS default_campaign_type_id,
                o.name AS org_name
         FROM ext.meta_page_form_org_map m
         JOIN entity.organizations o ON o.id = m.org_id
+        LEFT JOIN marketing.campaign_types ct ON ct.id = m.default_campaign_type_id
         WHERE m.is_active = true
           AND (%(tenant_id)s::uuid IS NULL OR m.tenant_id = %(tenant_id)s::uuid)
           AND (%(org_id)s::uuid IS NULL OR m.org_id = %(org_id)s::uuid)

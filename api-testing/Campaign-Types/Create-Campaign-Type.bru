@@ -1,0 +1,39 @@
+meta {
+  name: Create Campaign Type
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/campaign-types
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "partnerships",
+    "label": "Partnerships",
+    "description": "Corporate tie-up campaigns",
+    "match_keywords": ["partner", "tieup", "corporate"],
+    "match_priority": 60,
+    "sort_order": 30
+  }
+}
+
+docs {
+  Gated on lms.campaign_types.manage. The tenant comes from the verified
+  session, never the body.
+
+  match_keywords are matched case-insensitively ON WORD BOUNDARIES against the
+  Meta campaign name by marketing.fn_match_campaign_type() -- so 'hr' does not
+  match "Gurugram". Lower match_priority wins when two types both match.
+
+  `name` cannot be changed afterwards and `is_default` is not settable here:
+  the name is what weight rows and the Python sync refer to a pool by, and the
+  default type is unconditionally visible to everyone.
+}

@@ -2,7 +2,10 @@ import { sql, and, eq, asc, isNull } from 'drizzle-orm';
 import { withRoleTx, withServiceTx, sqlUuidArr, sqlTextArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import type { ScopeName } from '@platform/rbac';
+import { createLogger } from '@platform/logger';
+import { config } from '../../../config/index.js';
 import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
+import { resolveCampaignForLead } from '../../../lib/campaign-resolution.js';
 import {
   leadStageTable,
   leadStageOutcomeTable,
@@ -18,6 +21,11 @@ import { resolveLeadWriteScope, effectiveInOrgActor } from '../../../lib/lead-wr
 import { insertFollowUpTx } from '../follow-ups/follow-ups.repository.js';
 import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 
+// For the auto-assignment skip reason on the manual-create and transfer paths —
+// the same structured `lead.autoassign_skipped` line intake emits, so "this pool
+// has nobody weighted" is visible whichever door a lead came through.
+const log = createLogger({ service: 'leads-service', nodeEnv: config.nodeEnv });
+
 function coerceTags(val: unknown): string[] {
   if (!val) return [];
   if (Array.isArray(val)) return val.map(String);
@@ -30,6 +38,8 @@ export interface ListLeadsFilters {
   assigned_to?: string;
   assigned_user_id?: string;
   campaign_id?: string;
+  /** Narrows to these pools. Visibility itself is the row policy's answer, not this. */
+  campaign_type_ids?: string[];
   search?: string;
   platforms?: string[];
   page: number;
@@ -102,6 +112,12 @@ export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
       filters.status ? sql`stage = ${filters.status}` : undefined,
       assignedFilter ? sql`assigned_user_id = ${assignedFilter}::uuid` : undefined,
       filters.campaign_id ? sql`campaign_id = ${filters.campaign_id}::uuid` : undefined,
+      // sqlUuidArr, never a bare JS array: Drizzle expands one into a parameter
+      // LIST, so `ANY(${ids}::uuid[])` compiles to `ANY(($1)::uuid[])` and fails
+      // at runtime with "malformed array literal".
+      filters.campaign_type_ids?.length
+        ? sql`campaign_type_id = ANY(${sqlUuidArr(filters.campaign_type_ids)})`
+        : undefined,
       filters.search ? sql`full_name ILIKE ${`%${filters.search}%`}` : undefined,
       filters.platforms?.length ? sql`platform = ANY(${sqlTextArr(filters.platforms)})` : undefined,
     );
@@ -401,7 +417,30 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
       if (existing) duplicateLeadId = existing.id;
     }
 
-    const assignedUserId = data.assigned_user_id ?? await resolveAutoAssignedUser(tx, targetOrgId);
+    // A manually created lead carries no Meta campaign, so it lands in the
+    // tenant's default pool — which is what resolveCampaignForLead returns when
+    // given nothing more specific, and what the 1.49.0 backfill stamped on the
+    // whole existing pipeline.
+    const resolvedCampaign = await resolveCampaignForLead(tx, targetOrgId, {});
+    let assignedUserId: string | null = data.assigned_user_id ?? null;
+    if (!assignedUserId) {
+      const pick = await resolveAutoAssignedUser(tx, targetOrgId, resolvedCampaign.campaign_type_id);
+      assignedUserId = pick.userId;
+      // Same silent-failure guard as intake: a manually created lead that finds
+      // nobody weighted in its pool must say so, not just arrive unassigned.
+      if (pick.reason !== 'assigned') {
+        log.warn(
+          {
+            event: 'lead.autoassign_skipped',
+            path: 'manual_create',
+            org_id: targetOrgId,
+            campaign_type_id: resolvedCampaign.campaign_type_id,
+            reason: pick.reason,
+          },
+          'Lead created unassigned: no eligible user in this pool',
+        );
+      }
+    }
 
     const [inserted] = await tx
       .insert(marketingLeadsTable)
@@ -418,6 +457,11 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
         pincode: data.pincode ?? null,
         sourceId: data.source_id ?? null,
         campaignId: data.campaign_id ?? null,
+        // Stamped explicitly. lms.sync_lead_campaign_type() only fills a NULL
+        // type FROM the campaign, and a manually created lead usually has no
+        // campaign at all — without this it would be born untyped and invisible
+        // to every type-scoped query.
+        campaignTypeId: resolvedCampaign.campaign_type_id,
         stageId: data.stage_id ?? defaultStage.id,
         assignedUserId,
         cityId: data.city_id ?? null,
@@ -771,7 +815,7 @@ export async function transferLead(
     const sourceRows = (await tx.execute(sql`
       SELECT id, org_id, first_name, middle_name, last_name, phone, email,
              address_line1, address_line2, pincode, city, city_id, state_id,
-             country_id, source_id, campaign_id, tags, metadata, raw_webhook_data
+             country_id, source_id, campaign_id, campaign_type_id, tags, metadata, raw_webhook_data
       FROM lms.marketing_leads
       WHERE id = ${sourceLeadId}::uuid
         AND org_id = ${ctx.org_id}::uuid
@@ -813,7 +857,24 @@ export async function transferLead(
       throw new Error('Required lead stages not found for this tenant');
     }
 
-    const autoAssignedUserId = await resolveAutoAssignedUser(tx, targetOrgId);
+    // The lead keeps its TYPE across the branch move — a hiring lead is still a
+    // hiring lead in the receiving branch — so the pick runs against the TARGET
+    // branch's rotation for that same type, never a cross-type fallback.
+    const transferredTypeId = (src['campaign_type_id'] as string | null) ?? null;
+    const transferPick = await resolveAutoAssignedUser(tx, targetOrgId, transferredTypeId);
+    const autoAssignedUserId = transferPick.userId;
+    if (transferPick.reason !== 'assigned') {
+      log.warn(
+        {
+          event: 'lead.autoassign_skipped',
+          path: 'transfer',
+          org_id: targetOrgId,
+          campaign_type_id: transferredTypeId,
+          reason: transferPick.reason,
+        },
+        'Transferred lead arrived unassigned: no eligible user in this pool in the target branch',
+      );
+    }
 
     const [newLead] = await tx
       .insert(marketingLeadsTable)
@@ -833,6 +894,7 @@ export async function transferLead(
         countryId:     src['country_id'] as string | null,
         sourceId:      src['source_id'] as string | null,
         campaignId:    src['campaign_id'] as string | null,
+        campaignTypeId: transferredTypeId,
         stageId:       newStageRow.id,
         assignedUserId: autoAssignedUserId,
         tags:          coerceTags(src['tags']),

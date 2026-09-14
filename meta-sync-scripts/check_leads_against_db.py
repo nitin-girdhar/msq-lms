@@ -68,6 +68,8 @@ def main() -> int:
                     "phone": contact.get("phone"),
                     "email": contact.get("email"),
                     "existing_lead_id": result["existing_lead_id"],
+                    "is_hiring_form": result["is_hiring_form"],
+                    "suggested_campaign_type_id": result["suggested_campaign_type_id"],
                 }
             )
 

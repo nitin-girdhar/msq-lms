@@ -16,7 +16,8 @@ import type { AssignmentView, StageOption, StageOutcome, LeadView } from '../../
 import { useLeadsHistory } from '../../hooks/useLeadsHistory';
 import type { LeadsHistoryFilters } from '../../hooks/useLeadsHistory';
 import { Pagination, DownloadButton, MultiSelect, users as usersApi, auth as authApi } from '@platform/ui-kit';
-import { lead_sources as leadSourcesApi } from '../../lib/api/client';
+import { lead_sources as leadSourcesApi, campaign_types as campaignTypesApi } from '../../lib/api/client';
+import type { CampaignType } from '../../types/leads';
 import AssigneeBadge from '../assignments/AssigneeBadge';
 import { StatusBadge } from '../leads/StatusBadge';
 import { SourceBadge } from '../leads/SourceBadge';
@@ -57,6 +58,7 @@ const EXPORT_COLUMNS: ExportColumn<AssignmentView>[] = [
   { header: 'Lead Source', value: (a) => a.lead_source_label ?? a.lead_source ?? '' },
   { header: 'Stage', value: (a) => a.lead_stage_label ?? a.lead_stage ?? '' },
   { header: 'Outcome', value: (a) => a.lead_stage_outcome_label ?? '' },
+  { header: 'Campaign Type', value: (a) => a.campaign_type_label ?? a.campaign_type ?? '' },
   { header: 'Assigned To', value: (a) => assigneeLabel(a) },
   { header: 'Created', value: (a) => formatDate(a.lead_created_at) },
 ];
@@ -101,6 +103,12 @@ export default function LeadsHistoryShell({ actor }: Props) {
   const [selectedOrgs, setSelectedOrgs] = useState<string[]>([]);
   const [selectedAssignees, setSelectedAssignees] = useState<string[]>([]);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  // Gated server-side on lms.campaign_types.view — a caller without it (a
+  // lower-rank actor) gets an empty list here, which just hides the filter
+  // below. This never decides which lead TYPES a row may show; that stays
+  // the row policy's answer (lms.fn_user_sees_campaign_type).
+  const [campaignTypes, setCampaignTypes] = useState<CampaignType[]>([]);
+  const [selectedCampaignTypes, setSelectedCampaignTypes] = useState<string[]>([]);
   // Sorting is server-side for the columns the API can order by, so that e.g.
   // sorting by assignee clusters all unassigned leads across the whole result
   // set rather than only within the 25 rows currently loaded.
@@ -131,11 +139,12 @@ export default function LeadsHistoryShell({ actor }: Props) {
       org_ids: selectedOrgs.length ? selectedOrgs.join(',') : undefined,
       assigned_to: selectedAssignees.length ? selectedAssignees.join(',') : undefined,
       source_ids: selectedSources.length ? selectedSources.join(',') : undefined,
+      campaign_type_ids: selectedCampaignTypes.length ? selectedCampaignTypes.join(',') : undefined,
       active_only: false,
       sort_by: sort?.by,
       sort_dir: sort?.dir,
     };
-  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, sort]);
+  }, [dateFrom, dateTo, selectedStages, selectedOutcomes, selectedOrgs, selectedAssignees, selectedSources, selectedCampaignTypes, sort]);
 
   // Initial fetch
   const initialFetched = useRef(false);
@@ -189,6 +198,17 @@ export default function LeadsHistoryShell({ actor }: Props) {
         const json = await leadSourcesApi.list();
         if (!cancelled) setSources(Array.isArray(json.data) ? json.data : []);
       } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await campaignTypesApi.list();
+        if (!cancelled) setCampaignTypes((res.data ?? []).filter((t) => t.is_active));
+      } catch { /* ignore — 403 for a lower rank just hides the filter below */ }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -273,6 +293,7 @@ export default function LeadsHistoryShell({ actor }: Props) {
     setSelectedOrgs([]);
     setSelectedAssignees([]);
     setSelectedSources([]);
+    setSelectedCampaignTypes([]);
     setSort(null);
     // Also clear any per-column filter/sort applied directly in the grid, so Reset
     // fully returns to the same state as when this page was first loaded.
@@ -342,6 +363,17 @@ export default function LeadsHistoryShell({ actor }: Props) {
         const val = p.data?.lead_stage_outcome_label;
         return val
           ? <span style={{ background: '#F1F5F9', color: '#475569' }} className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium">{val}</span>
+          : <span className="text-xs text-[#CBD5E1]">—</span>;
+      },
+      cellStyle: { display: 'flex', alignItems: 'center' },
+    },
+    {
+      headerName: 'Campaign Type', colId: 'campaign_type', width: 150, minWidth: 130, filter: true, sortable: true,
+      valueGetter: (p) => p.data?.campaign_type_label ?? p.data?.campaign_type ?? '',
+      cellRenderer: (p: ICellRendererParams<AssignmentView>) => {
+        const val = p.data?.campaign_type_label ?? p.data?.campaign_type;
+        return val
+          ? <span style={{ background: '#EEF2FF', color: '#4338CA' }} className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium">{val}</span>
           : <span className="text-xs text-[#CBD5E1]">—</span>;
       },
       cellStyle: { display: 'flex', alignItems: 'center' },
@@ -436,6 +468,16 @@ export default function LeadsHistoryShell({ actor }: Props) {
             selected={sources.filter((s) => selectedSources.includes(s.id)).map((s) => ({ id: s.id, label: s.label }))}
             onChange={(next) => setSelectedSources(next.map((o) => String(o.id)))}
           />
+
+          {campaignTypes.length > 0 && (
+            <MultiSelect
+              label="Campaign Type"
+              placeholder="All types"
+              options={campaignTypes.map((t) => ({ id: t.id, label: t.label }))}
+              selected={campaignTypes.filter((t) => selectedCampaignTypes.includes(t.id)).map((t) => ({ id: t.id, label: t.label }))}
+              onChange={(next) => setSelectedCampaignTypes(next.map((o) => String(o.id)))}
+            />
+          )}
 
           {showOrgFilter && orgs.length > 1 && (
             <MultiSelect

@@ -43,6 +43,7 @@ export class LeadsController {
         ...(q.campaign_id ? { campaign_id: q.campaign_id } : {}),
         ...(q.search ? { search: q.search } : {}),
         ...(q.platforms ? { platforms: q.platforms.split(',') } : {}),
+        ...(q.campaign_type_ids ? { campaign_type_ids: q.campaign_type_ids.split(',').filter(Boolean) } : {}),
         ...(org_ids ? { org_ids } : {}),
       },
     );

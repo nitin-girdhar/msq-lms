@@ -13,6 +13,9 @@ export interface LeadsListParams {
   assigned_to?: string;
   assigned_user_id?: string;
   campaign_id?: string;
+  // CSV of campaign type uuids — a filter only, narrowing what the caller may
+  // already see (see lms.fn_user_sees_campaign_type in the row policy).
+  campaign_type_ids?: string;
   search?: string;
   platforms?: string;
   org_ids?: string;
@@ -181,6 +184,12 @@ export const campaigns = {
 
   delete: (id: string) =>
     request<void>(`/campaigns/${id}`, { method: 'DELETE' }),
+};
+
+// ── Campaign Types ────────────────────────────────────────────────────────────
+
+export const campaign_types = {
+  list: () => request<{ success: true; data: import('../../types/leads').CampaignType[] }>('/campaign-types'),
 };
 
 // ── Lead Sources ─────────────────────────────────────────────────────────────

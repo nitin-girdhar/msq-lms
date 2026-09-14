@@ -7,6 +7,11 @@ export const createCampaignBodySchema = z.object({
   budget: z.number().optional(),
   started_at: z.string().optional(),
   ended_at: z.string().optional(),
+  // CRM campaigns only. Classifying a META campaign is NOT done here: that
+  // mapping is per Meta campaign and TENANT-WIDE, so it lives in
+  // meta-conversion-api, which owns ext.meta_campaigns. This endpoint edits one
+  // BRANCH's campaign record.
+  campaign_type_id: z.string().uuid().nullable().optional(),
 });
 
 export const updateCampaignBodySchema = z.object({
@@ -16,6 +21,7 @@ export const updateCampaignBodySchema = z.object({
   budget: z.number().optional().nullable(),
   started_at: z.string().optional(),
   ended_at: z.string().optional(),
+  campaign_type_id: z.string().uuid().nullable().optional(),
 });
 
 export type CreateCampaignBody = z.infer<typeof createCampaignBodySchema>;

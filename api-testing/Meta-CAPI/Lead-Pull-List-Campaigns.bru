@@ -1,0 +1,44 @@
+meta {
+  name: Lead Pull - List Campaigns
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/meta/lead-pull/campaigns?tenant_id={{tenantId}}&page_ids=
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  The campaign multiselect for the lead-pull screen, sourced from
+  ext.meta_campaigns.
+
+  ?page_ids= is an optional CSV of numeric Meta Page ids. It narrows the list to
+  campaigns that have ALREADY DELIVERED a lead on one of those pages — an
+  OBSERVED association (ext.meta_leads), not one Meta models. There is no
+  page->campaign edge in the Graph API and ext.meta_campaigns has no page
+  dimension at all.
+
+  The response carries campaign_filter_is_post_fetch: true, and the UI MUST
+  render it. Selecting campaigns narrows the RESULT of a pull, never the work:
+  leads come page -> /{page-id}/leadgen_forms -> /{form-id}/leads and campaign_id
+  is only a FIELD on each lead, so the filter is applied after every lead has
+  already been paid for. Without that message the first thing an admin does is
+  pick one campaign, wait exactly as long as for all of them, and file a bug.
+
+  Requires super_admin and an explicit ?tenant_id= — never the caller's own
+  tenant, since platform staff administer a tenant other than their own.
+
+  Regression checks:
+    * as tenant A, no campaign from tenant B appears. The scoping is
+      ext.meta_campaigns' admin_tenant_config_policy, not a WHERE clause.
+    * page_ids naming a page with no mapping row -> empty list, not every campaign
+    * a bogus tenant_id                          -> 404 "Tenant not found"
+    * missing tenant_id                          -> 422
+    * caller below super_admin                   -> 403
+}
