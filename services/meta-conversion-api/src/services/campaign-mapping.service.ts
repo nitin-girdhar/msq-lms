@@ -6,93 +6,101 @@ import { pgError } from '../lib/errors.js';
 //
 // A tenant runs several kinds of Meta campaign — sales, hiring, more to come —
 // and a hiring lead must reach the branch's HR pool rather than the sales
-// rotation. `ext.meta_campaigns` is the single source of truth for which type a
-// Meta campaign carries, and this module is what puts a row there the first time
-// a campaign is ever seen, whether that is from an inbound lead (here) or from
-// the Fetch button (campaign-sync.service.ts).
+// rotation. This module decides a lead's TYPE, and puts a row in
+// `ext.meta_campaigns` the first time a campaign is ever seen.
 //
-// TWO RULES GOVERN EVERYTHING BELOW.
+// THE PRECEDENCE (product decision 2026-09-26, schema 1.51.0), per LEAD:
 //
-//   1. ROUTING NEVER WAITS FOR A HUMAN. A `suggested` mapping routes exactly
-//      like a `confirmed` one. The admin grid exists so a wrong guess can be
-//      corrected, not so a lead can be held hostage until someone logs in.
+//   1. the campaign's CONFIRMED type          (an admin's decision, never guessed)
+//   2. the first matching ORDERED RULE        (marketing.campaign_type_rules, on the
+//                                              campaign / form / ad set / ad name)
+//   3. the page (or form-override) default    (ext.meta_page_form_org_map)
+//   4. the tenant's default type
 //
-//   2. A GRAPH FAILURE NEVER FAILS A LEAD. Every entry point here is
-//      best-effort: on any error the caller is handed nulls and the lead is
-//      created untyped-but-routable. A real customer lead dropped because a
-//      metadata lookup was rate-limited is strictly worse than a temporarily
-//      mistyped one.
+// Rules are evaluated PER LEAD because three of the four names they can match
+// (form, ad set, ad) belong to the lead, not the campaign. The campaign-name-only
+// result is ALSO stored on the campaign row as `suggested_campaign_type_id`, for
+// the admin grid — but a suggestion is never read back as the campaign's type.
+//
+// THREE RULES GOVERN EVERYTHING BELOW.
+//
+//   1. ROUTING NEVER WAITS FOR A HUMAN. An unconfirmed campaign routes on the
+//      rules immediately; the grid exists so a wrong guess can be corrected.
+//
+//   2. A GUESS NEVER HARDENS. `ext.meta_campaigns.campaign_type_id` is written
+//      ONLY by an admin confirm. Before 1.51.0 the first lead of an unmatched
+//      campaign stored the fallback (usually Sales) there and every later lead
+//      inherited it — a hiring campaign whose name lookup failed stayed Sales.
+//
+//   3. A GRAPH FAILURE NEVER FAILS A LEAD. Every entry point is best-effort.
 
 export type MappingStatus = 'unmapped' | 'suggested' | 'confirmed';
 
-/**
- * WHICH keyword fired, for the admin grid.
- *
- * `marketing.fn_match_campaign_type` decides WHICH TYPE and is the only
- * authority on that — it lives in SQL precisely so the TypeScript and Python
- * paths cannot drift on what "a hiring campaign" means. It returns just the type
- * id, though, and the grid needs to show the admin why a guess was made, so the
- * winning type's keywords are re-tested here with the same predicate the
- * function uses (db_scripts/04_functions_triggers.sql).
- *
- * This is a DISPLAY value only. Nothing routes on it, so the duplicated
- * predicate cannot cause a routing divergence — at worst the grid shows no
- * keyword next to a correct type.
- *
- * The predicate requires a non-alphanumeric character or the string end on both
- * sides rather than using Postgres' \m/\M escapes, which treat `_` as a word
- * character: Meta campaign names are overwhelmingly underscore-separated
- * ('HIR_Gurugram_Trainer_Sep26') and \mtrainer\M would never fire on one.
- */
-const KEYWORD_ESCAPE_REPLACEMENT = '\\\\\\1';
+/** Where a lead's type came from — logged, and surfaced on the lead-pull grid. */
+export type TypeSource = 'confirmed' | 'rule' | 'page_default' | 'tenant_default' | 'none';
 
-export function KEYWORD_MATCH_SQL(nameParam: ReturnType<typeof sql>) {
-  return sql`(
-    SELECT kw
-    FROM unnest(ct.match_keywords) AS kw
-    WHERE kw <> ''
-      AND ${nameParam} ~* ('(^|[^[:alnum:]])'
-            || regexp_replace(kw, '([^[:alnum:]])', ${KEYWORD_ESCAPE_REPLACEMENT}, 'g')
-            || '([^[:alnum:]]|$)')
-    -- LONGEST match first, then alphabetical. Several keywords on one type
-    -- routinely fire on the same name ('hr' and 'trainer' both hit
-    -- 'HR_Gurugram_Trainer_Sep26'), and a bare LIMIT 1 would return whichever
-    -- happens to sit earliest in the match_keywords ARRAY — so the grid's
-    -- explanation would change when an admin merely reordered the column. The
-    -- longest match is also the more informative of the two to show.
-    ORDER BY length(kw) DESC, kw ASC
-    LIMIT 1
-  )`;
+export type RuleMatchField = 'campaign_name' | 'form_name' | 'adset_name' | 'ad_name';
+
+export interface RuleNames {
+  campaignName?: string | null | undefined;
+  formName?: string | null | undefined;
+  adsetName?: string | null | undefined;
+  adName?: string | null | undefined;
+}
+
+export interface RuleMatch {
+  campaign_type_id: string;
+  rule_id: string;
+  match_field: RuleMatchField;
+  pattern: string;
+}
+
+function clean(name: string | null | undefined): string | null {
+  const t = name?.trim();
+  return t ? t : null;
 }
 
 /**
- * The type a NAME implies, plus the keyword that said so. Both null when nothing
- * matched — which is a real answer, not a failure.
+ * The first ordered rule that matches, or null. The matching itself is SQL
+ * (`marketing.fn_match_campaign_type_rules`) so every intake path — webhook,
+ * lead-pull apply, the campaign fetch — agrees on what a rule means.
  */
-export async function matchCampaignType(
+export async function matchCampaignRules(
   tx: DrizzleTx,
   tenantId: string,
-  campaignName: string | null,
-): Promise<{ campaign_type_id: string | null; matched_keyword: string | null }> {
-  if (!campaignName) return { campaign_type_id: null, matched_keyword: null };
-
+  names: RuleNames,
+): Promise<RuleMatch | null> {
   const rows = (await tx.execute(sql`
-    SELECT ct.id AS campaign_type_id,
-           ${KEYWORD_MATCH_SQL(sql`${campaignName}`)} AS matched_keyword
-    FROM marketing.campaign_types ct
-    WHERE ct.id = marketing.fn_match_campaign_type(${tenantId}::uuid, ${campaignName})
-    LIMIT 1
-  `)) as unknown as Array<{ campaign_type_id: string; matched_keyword: string | null }>;
-
-  const row = rows[0];
-  return {
-    campaign_type_id: row?.campaign_type_id ?? null,
-    matched_keyword: row?.matched_keyword ?? null,
-  };
+    SELECT campaign_type_id, rule_id, match_field, pattern
+    FROM marketing.fn_match_campaign_type_rules(
+      ${tenantId}::uuid,
+      ${clean(names.campaignName)}::text,
+      ${clean(names.formName)}::text,
+      ${clean(names.adsetName)}::text,
+      ${clean(names.adName)}::text
+    )
+  `)) as unknown as RuleMatch[];
+  return rows[0] ?? null;
 }
 
 /**
- * The form-level fallback: `ext.meta_page_form_org_map.default_campaign_type_id`.
+ * Which name fields the tenant has at least one live rule on. The lead path
+ * asks this BEFORE spending a Graph call on an ad set or ad name: a tenant with
+ * no ad-name rules must not pay a Graph call per new ad to learn a name nothing
+ * will read.
+ */
+export async function activeRuleFields(tx: DrizzleTx, tenantId: string): Promise<Set<RuleMatchField>> {
+  const rows = (await tx.execute(sql`
+    SELECT DISTINCT r.match_field
+    FROM marketing.campaign_type_rules r
+    JOIN marketing.campaign_types ct ON ct.id = r.campaign_type_id AND ct.is_active AND NOT ct.is_deleted
+    WHERE r.tenant_id = ${tenantId}::uuid AND r.is_active AND NOT r.is_deleted
+  `)) as unknown as Array<{ match_field: RuleMatchField }>;
+  return new Set(rows.map((r) => r.match_field));
+}
+
+/**
+ * The page/form fallback: `ext.meta_page_form_org_map.default_campaign_type_id`.
  *
  * Precedence mirrors page-org-map.service.ts::resolveOrgId exactly — the exact
  * form row wins, the page-level catch-all (form_id IS NULL) is the fallback.
@@ -129,7 +137,7 @@ export async function resolveFormDefaultType(
 }
 
 /** The tenant's catch-all pool. At most one per tenant (uix_campaign_types_one_default). */
-async function tenantDefaultType(tx: DrizzleTx, tenantId: string): Promise<string | null> {
+export async function tenantDefaultType(tx: DrizzleTx, tenantId: string): Promise<string | null> {
   const rows = (await tx.execute(sql`
     SELECT id FROM marketing.campaign_types
     WHERE tenant_id = ${tenantId}::uuid AND is_default AND is_active AND NOT is_deleted
@@ -139,221 +147,240 @@ async function tenantDefaultType(tx: DrizzleTx, tenantId: string): Promise<strin
 }
 
 export interface ResolveCampaignTypeInput {
-  /** Meta's own campaign id, as a STRING — these run past Number.MAX_SAFE_INTEGER. */
-  metaCampaignId: string;
+  /** Meta's own campaign id, as a STRING — these run past Number.MAX_SAFE_INTEGER. Null for an organic lead. */
+  metaCampaignId?: string | null | undefined;
   /** Null when the Graph lookup failed or was skipped; the row still gets created. */
   metaCampaignName?: string | null | undefined;
   metaCampaignObjective?: string | null | undefined;
   metaCampaignStatus?: string | null | undefined;
   pageId?: string | null | undefined;
   formId?: string | null | undefined;
+  /** Per-lead names the ordered rules can match on. */
+  formName?: string | null | undefined;
+  adsetName?: string | null | undefined;
+  adName?: string | null | undefined;
 }
 
 export interface ResolvedCampaignType {
+  /** The type THIS LEAD gets — the outcome of the full precedence ladder. */
   campaign_type_id: string | null;
+  type_source: TypeSource;
+  /** The campaign row's status; 'unmapped' for an organic lead with no campaign. */
   mapping_status: MappingStatus;
-  matched_keyword: string | null;
+  /** The rule that decided the type, when type_source = 'rule'. */
+  matched_rule: RuleMatch | null;
   /**
-   * The form default, returned whether or not it was used. leads-service applies
-   * its own fallback ladder (caller type -> form default -> tenant default) and
-   * cannot read `ext.*` itself, so both ids travel with the lead.
+   * The page/form default, returned whether or not it was used. leads-service
+   * applies its own fallback ladder and cannot read `ext.*` itself, so it travels
+   * with the lead.
    */
   default_campaign_type_id: string | null;
   /** True when this call is what created the ext.meta_campaigns row. */
   created: boolean;
+  /** The campaign row belongs to ANOTHER tenant — flagged on the row, not used. */
+  cross_tenant: boolean;
   /**
-   * Set when the campaign's mapped type has been deactivated or deleted and the
-   * lead was typed from the fallback ladder instead. The caller logs it: the
-   * mapping row now points at a retired pool and needs an admin.
+   * Set when the campaign's CONFIRMED type has been deactivated or deleted and
+   * the lead was typed from the rest of the ladder instead. The caller logs it:
+   * the mapping row points at a retired pool and needs an admin.
    */
   inactive_mapped_type_id?: string | null;
 }
 
+interface CampaignRow {
+  tenant_id: string;
+  name: string | null;
+  campaign_type_id: string | null;
+  type_is_live: boolean;
+  mapping_status: MappingStatus;
+}
+
+async function readCampaignRow(tx: DrizzleTx, metaCampaignId: string): Promise<CampaignRow | null> {
+  // uq_meta_campaigns_campaign_id is GLOBAL (Meta ids are globally unique), so
+  // this asks for THE row; its tenant is checked by the caller.
+  const rows = (await tx.execute(sql`
+    SELECT mc.tenant_id,
+           mc.name,
+           mc.campaign_type_id,
+           (ct.id IS NOT NULL AND ct.is_active AND NOT ct.is_deleted) AS type_is_live,
+           mc.mapping_status
+    FROM ext.meta_campaigns mc
+    LEFT JOIN marketing.campaign_types ct ON ct.id = mc.campaign_type_id
+    WHERE mc.meta_campaign_id = ${metaCampaignId}::bigint
+    LIMIT 1
+  `)) as unknown as CampaignRow[];
+  return rows[0] ?? null;
+}
+
 /**
- * The campaign's type, creating the mapping row when the campaign is new.
+ * Re-derive an UNCONFIRMED campaign's suggestion from its name. Called when a
+ * name first becomes known, so a campaign created nameless (a failed lookup on
+ * its first lead) gets a real suggestion instead of staying 'unmapped' forever.
+ * Never touches a confirmed row.
+ */
+export async function refreshSuggestion(
+  tx: DrizzleTx,
+  tenantId: string,
+  metaCampaignId: string,
+  campaignName: string,
+): Promise<void> {
+  const m = await matchCampaignRules(tx, tenantId, { campaignName });
+  await tx.execute(sql`
+    UPDATE ext.meta_campaigns
+    SET suggested_campaign_type_id = ${m?.campaign_type_id ?? null}::uuid,
+        matched_rule_id            = ${m?.rule_id ?? null}::uuid,
+        matched_keyword            = ${m?.pattern ?? null},
+        mapping_status             = ${m ? 'suggested' : 'unmapped'},
+        updated_at                 = NOW()
+    WHERE meta_campaign_id = ${metaCampaignId}::bigint
+      AND tenant_id = ${tenantId}::uuid
+      AND mapping_status <> 'confirmed'
+  `);
+}
+
+/**
+ * The type for ONE lead, creating/refreshing the campaign row on the way.
  *
- * HIT — the row already exists: return its type, `confirmed` or `suggested`
- * alike. No Graph call, no re-match. The row IS the cache.
- *
- * MISS — insert it, typed by `marketing.fn_match_campaign_type`:
- *   * a keyword matched  -> `suggested`, with `matched_keyword` recording which;
- *   * nothing matched    -> `unmapped`, typed from the form default and then the
- *     tenant default, so the lead still routes somewhere sane while the row sits
- *     in the admin's "needs mapping" grid.
- *
- * Runs inside the CALLER's transaction. On the webhook path that is a
- * `withServiceTx` (BYPASSRLS): an inbound Meta delivery carries no session at
- * all, the same documented system operation the two resolvers in
- * page-org-map.service.ts run under. Because RLS is therefore NOT the fence
- * here, every statement above filters `tenant_id` explicitly.
+ * Runs inside the CALLER's transaction. On the webhook and apply paths that is
+ * a `withServiceTx` (BYPASSRLS): an inbound Meta delivery carries no session at
+ * all. Because RLS is therefore NOT the fence here, every statement filters
+ * `tenant_id` explicitly.
  */
 export async function resolveCampaignType(
   tx: DrizzleTx,
   tenantId: string,
   input: ResolveCampaignTypeInput,
 ): Promise<ResolvedCampaignType> {
-  const formDefault = await resolveFormDefaultType(
-    tx,
-    tenantId,
-    input.pageId ?? null,
-    input.formId ?? null,
-  );
+  const formDefault = await resolveFormDefaultType(tx, tenantId, input.pageId ?? null, input.formId ?? null);
+  const campaignId = clean(input.metaCampaignId);
+  const knownName = clean(input.metaCampaignName);
 
-  // uq_meta_campaigns_campaign_id is GLOBAL, not per-tenant (Meta ids are
-  // globally unique and one row serves every branch), so this lookup does not
-  // filter by tenant — it asks for THE row for this campaign. The tenant of the
-  // row it finds is then checked below, because a row owned by another tenant
-  // must not type this tenant's lead.
-  // The mapped type's liveness travels with the row. A type an admin has since
-  // deactivated or deleted must NOT be handed to leads-service, which refuses it
-  // with a 400 — and an intake failure is a lost lead. Such a row falls through
-  // to the fallback ladder below exactly as an untyped one does.
-  const existing = (await tx.execute(sql`
-    SELECT mc.tenant_id,
-           mc.name,
-           mc.campaign_type_id,
-           (ct.id IS NOT NULL AND ct.is_active AND NOT ct.is_deleted) AS type_is_live,
-           mc.mapping_status,
-           mc.matched_keyword
-    FROM ext.meta_campaigns mc
-    LEFT JOIN marketing.campaign_types ct ON ct.id = mc.campaign_type_id
-    WHERE mc.meta_campaign_id = ${input.metaCampaignId}::bigint
-    LIMIT 1
-  `)) as unknown as Array<{
-    tenant_id: string;
-    name: string | null;
-    campaign_type_id: string | null;
-    type_is_live: boolean;
-    mapping_status: MappingStatus;
-    matched_keyword: string | null;
-  }>;
+  let mappingStatus: MappingStatus = 'unmapped';
+  let created = false;
+  let crossTenant = false;
+  let inactiveMapped: string | null = null;
+  let campaignName = knownName;
 
-  const hit = existing[0];
-  if (hit) {
-    if (hit.tenant_id !== tenantId) {
-      // A shared ad account reaching two tenants. The row belongs to the other
-      // one and must not be read as this tenant's mapping (nor overwritten).
-      // The lead still routes, on the defaults.
-      return {
-        campaign_type_id: formDefault ?? (await tenantDefaultType(tx, tenantId)),
-        mapping_status: 'unmapped',
-        matched_keyword: null,
-        default_campaign_type_id: formDefault,
-        created: false,
-      };
-    }
-    // A row created without a name (a failed lookup on its first lead, or the
-    // back-catalogue seed) gets it now that one is known. Metadata ONLY: the
-    // mapping columns are not touched, so this can never re-type a campaign or
-    // disturb a confirmed one. `name IS NULL` makes concurrent leads harmless.
-    const knownName = input.metaCampaignName?.trim() || null;
-    if (hit.name === null && knownName) {
-      await tx.execute(sql`
-        UPDATE ext.meta_campaigns
-        SET name             = ${knownName},
-            objective        = COALESCE(objective, ${input.metaCampaignObjective ?? null}),
-            effective_status = COALESCE(effective_status, ${input.metaCampaignStatus ?? null}),
-            last_synced_at   = NOW(),
-            updated_at       = NOW()
-        WHERE meta_campaign_id = ${input.metaCampaignId}::bigint
-          AND name IS NULL
-      `);
+  if (campaignId) {
+    let row = await readCampaignRow(tx, campaignId);
+
+    if (!row) {
+      // First sight of this campaign. The row records the SUGGESTION only;
+      // campaign_type_id stays NULL until an admin confirms (rule 2).
+      const suggestion = knownName ? await matchCampaignRules(tx, tenantId, { campaignName: knownName }) : null;
+      let inserted = false;
+      try {
+        // ON CONFLICT DO NOTHING then re-read: two deliveries for a brand-new
+        // campaign race routinely, and the loser still needs the winner's row.
+        const ins = (await tx.execute(sql`
+          INSERT INTO ext.meta_campaigns (
+            tenant_id, meta_campaign_id, name, objective, effective_status,
+            campaign_type_id, suggested_campaign_type_id, matched_rule_id, matched_keyword,
+            mapping_status, first_seen_source, last_synced_at
+          ) VALUES (
+            ${tenantId}::uuid, ${campaignId}::bigint, ${knownName},
+            ${input.metaCampaignObjective ?? null}, ${input.metaCampaignStatus ?? null},
+            NULL, ${suggestion?.campaign_type_id ?? null}::uuid, ${suggestion?.rule_id ?? null}::uuid,
+            ${suggestion?.pattern ?? null},
+            ${suggestion ? 'suggested' : 'unmapped'}, 'lead', NOW()
+          )
+          ON CONFLICT (meta_campaign_id) DO NOTHING
+          RETURNING id
+        `)) as unknown as Array<{ id: string }>;
+        inserted = ins.length > 0;
+      } catch (err) {
+        // 23503 if the suggested type/rule vanished between the match and the
+        // insert. The lead is not the thing to fail.
+        if (pgError(err).code === undefined) throw err;
+      }
+      created = inserted;
+      row = await readCampaignRow(tx, campaignId);
     }
 
-    // Rule 1: a `suggested` type routes exactly like a `confirmed` one.
-    if (hit.campaign_type_id && hit.type_is_live) {
-      return {
-        campaign_type_id: hit.campaign_type_id,
-        mapping_status: hit.mapping_status,
-        matched_keyword: hit.matched_keyword,
-        default_campaign_type_id: formDefault,
-        created: false,
-      };
+    if (row) {
+      if (row.tenant_id !== tenantId) {
+        // A campaign must never span tenants (product decision 2026-09-26). The
+        // row belongs to the other tenant: its type is NOT applied here, and the
+        // row is flagged so the admin grid shows the conflict. This lead is still
+        // typed from its own rules and defaults below.
+        crossTenant = true;
+        await tx.execute(sql`
+          UPDATE ext.meta_campaigns
+          SET conflict_reason = 'Leads for this campaign arrive on pages of more than one tenant.',
+              updated_at = NOW()
+          WHERE meta_campaign_id = ${campaignId}::bigint AND conflict_reason IS NULL
+        `);
+      } else {
+        mappingStatus = row.mapping_status;
+        campaignName = knownName ?? row.name;
+
+        // A row created nameless gets its name now, and — being unconfirmed —
+        // a fresh suggestion from it. Metadata only on a confirmed row.
+        if (row.name === null && knownName) {
+          await tx.execute(sql`
+            UPDATE ext.meta_campaigns
+            SET name             = ${knownName},
+                objective        = COALESCE(objective, ${input.metaCampaignObjective ?? null}),
+                effective_status = COALESCE(effective_status, ${input.metaCampaignStatus ?? null}),
+                last_synced_at   = NOW(),
+                updated_at       = NOW()
+            WHERE meta_campaign_id = ${campaignId}::bigint AND name IS NULL
+          `);
+          if (row.mapping_status !== 'confirmed') {
+            await refreshSuggestion(tx, tenantId, campaignId, knownName);
+          }
+        }
+
+        // Step 1 of the ladder: an admin's confirmed type.
+        if (row.mapping_status === 'confirmed' && row.campaign_type_id) {
+          if (row.type_is_live) {
+            return {
+              campaign_type_id: row.campaign_type_id,
+              type_source: 'confirmed',
+              mapping_status: 'confirmed',
+              matched_rule: null,
+              default_campaign_type_id: formDefault,
+              created,
+              cross_tenant: false,
+            };
+          }
+          inactiveMapped = row.campaign_type_id;
+        }
+      }
     }
-    // Untyped (a back-catalogue row seeded with no type) or typed with a retired
-    // pool: route on the same ladder as an unmatched new campaign. The mapping
-    // row itself is left alone — correcting it is the admin's call, not the
-    // webhook's.
+  }
+
+  // Step 2: ordered rules, per lead.
+  const rule = await matchCampaignRules(tx, tenantId, {
+    campaignName,
+    formName: input.formName,
+    adsetName: input.adsetName,
+    adName: input.adName,
+  });
+  if (rule) {
     return {
-      campaign_type_id: formDefault ?? (await tenantDefaultType(tx, tenantId)),
-      mapping_status: hit.mapping_status,
-      matched_keyword: null,
+      campaign_type_id: rule.campaign_type_id,
+      type_source: 'rule',
+      mapping_status: mappingStatus,
+      matched_rule: rule,
       default_campaign_type_id: formDefault,
-      created: false,
-      inactive_mapped_type_id: hit.campaign_type_id,
+      created,
+      cross_tenant: crossTenant,
+      inactive_mapped_type_id: inactiveMapped,
     };
   }
 
-  const name = input.metaCampaignName?.trim() || null;
-  const matched = await matchCampaignType(tx, tenantId, name);
-  const status: MappingStatus = matched.campaign_type_id ? 'suggested' : 'unmapped';
-  const fallback = matched.campaign_type_id
-    ? null
-    : (formDefault ?? (await tenantDefaultType(tx, tenantId)));
-  const campaignTypeId = matched.campaign_type_id ?? fallback;
-
-  // ON CONFLICT DO NOTHING, then re-select. Two webhook deliveries for the same
-  // brand-new campaign arrive concurrently often enough that the race is
-  // routine, and a bare INSERT would turn the loser into a 23505 that fails an
-  // otherwise perfectly good lead. The loser still needs the winner's answer,
-  // which DO NOTHING does not return — hence the re-select rather than
-  // RETURNING. Same shape as leads-service's ensureBranchCampaign.
-  try {
-    await tx.execute(sql`
-      INSERT INTO ext.meta_campaigns (
-        tenant_id, meta_campaign_id, name, objective, effective_status,
-        campaign_type_id, mapping_status, matched_keyword, first_seen_source, last_synced_at
-      ) VALUES (
-        ${tenantId}::uuid, ${input.metaCampaignId}::bigint, ${name},
-        ${input.metaCampaignObjective ?? null}, ${input.metaCampaignStatus ?? null},
-        ${campaignTypeId}::uuid, ${status}, ${matched.matched_keyword},
-        'lead', NOW()
-      )
-      ON CONFLICT (meta_campaign_id) DO NOTHING
-    `);
-  } catch (err) {
-    // 23505 cannot reach here (DO NOTHING absorbs it); 23503 can, if the
-    // resolved type was deleted between the match and the insert. Either way the
-    // lead is not the thing to fail.
-    if (pgError(err).code === undefined) throw err;
-    return {
-      campaign_type_id: campaignTypeId,
-      mapping_status: status,
-      matched_keyword: matched.matched_keyword,
-      default_campaign_type_id: formDefault,
-      created: false,
-    };
-  }
-
-  const settled = (await tx.execute(sql`
-    SELECT tenant_id, campaign_type_id, mapping_status, matched_keyword
-    FROM ext.meta_campaigns
-    WHERE meta_campaign_id = ${input.metaCampaignId}::bigint
-    LIMIT 1
-  `)) as unknown as Array<{
-    tenant_id: string;
-    campaign_type_id: string | null;
-    mapping_status: MappingStatus;
-    matched_keyword: string | null;
-  }>;
-
-  const row = settled[0];
-  if (!row || row.tenant_id !== tenantId) {
-    return {
-      campaign_type_id: campaignTypeId,
-      mapping_status: status,
-      matched_keyword: matched.matched_keyword,
-      default_campaign_type_id: formDefault,
-      created: false,
-    };
-  }
-
+  // Steps 3 and 4.
+  const tenantDefault = formDefault ? null : await tenantDefaultType(tx, tenantId);
   return {
-    campaign_type_id: row.campaign_type_id,
-    mapping_status: row.mapping_status,
-    matched_keyword: row.matched_keyword,
+    campaign_type_id: formDefault ?? tenantDefault,
+    type_source: formDefault ? 'page_default' : tenantDefault ? 'tenant_default' : 'none',
+    mapping_status: mappingStatus,
+    matched_rule: null,
     default_campaign_type_id: formDefault,
-    created: true,
+    created,
+    cross_tenant: crossTenant,
+    inactive_mapped_type_id: inactiveMapped,
   };
 }
 

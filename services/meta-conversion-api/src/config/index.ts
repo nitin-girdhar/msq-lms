@@ -56,4 +56,10 @@ export const config = {
   // relative to the per-page heartbeat, because a single slow page being
   // backed off must not look like a dead process.
   leadPullStaleRunMinutes: parseInt(process.env['META_LEAD_PULL_STALE_MINUTES'] ?? '15', 10),
+  // 1.51.0: scheduled catch-up pull (workers/pull-poller.ts). Every N hours, one
+  // STAGE-ONLY run per tenant with active page mappings, over the last M days.
+  // 0 disables it. Keep the window longer than the interval so consecutive runs
+  // overlap — dedup (ext.meta_leads.meta_lead_id) makes the overlap free.
+  leadPullCatchupIntervalHours: parseInt(process.env['META_CATCHUP_INTERVAL_HOURS'] ?? '6', 10),
+  leadPullCatchupWindowDays: parseInt(process.env['META_CATCHUP_WINDOW_DAYS'] ?? '3', 10),
 } as const;

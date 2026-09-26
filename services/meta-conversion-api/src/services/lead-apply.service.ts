@@ -4,6 +4,7 @@ import { ConflictError, NotFoundError } from '../lib/errors.js';
 import { assertTenantExists } from '../lib/admin-tenant.js';
 import { getIntegrationByTenantId } from './integration.service.js';
 import { IMPORTABLE_VERDICTS } from './lead-reconcile.service.js';
+import { resolveInboxByMetaLead } from './lead-inbox.service.js';
 import {
   syncLeadToDatabase,
   isMetaTestLead,
@@ -77,6 +78,7 @@ interface StagedRowForApply {
   meta_lead_id: string;
   page_id: string | null;
   form_id: string;
+  form_name: string | null;
   campaign_id: string | null;
   adset_id: string | null;
   ad_id: string | null;
@@ -112,10 +114,21 @@ export async function queueApply(scope: AdminTenantScope, runId: string): Promis
   return withTenantConfigTx(scope, async (tx) => {
     await assertTenantExists(tx, scope.tenantId);
 
+    // 1.51.0: an 'applied' run can be applied AGAIN when it has pending
+    // importable rows — which happens after an admin maps a page inline and
+    // remaps the run's unmapped rows (lead-pull.admin.service.ts::remapRun).
+    // Without that, fixing a mapping meant a full re-pull.
     const claimed = (await tx.execute(sql`
       WITH candidate AS (
-        SELECT id FROM scratch.meta_pull_runs
-        WHERE id = ${runId}::uuid AND status = 'completed'
+        SELECT r.id FROM scratch.meta_pull_runs r
+        WHERE r.id = ${runId}::uuid
+          AND (
+            r.status = 'completed'
+            OR (r.status = 'applied' AND EXISTS (
+                  SELECT 1 FROM scratch.meta_pull_leads l
+                  WHERE l.run_id = r.id AND l.applied_status = 'pending'
+                    AND l.verdict = ANY(${sqlTextArr([...IMPORTABLE_VERDICTS])})))
+          )
         FOR UPDATE SKIP LOCKED
       )
       UPDATE scratch.meta_pull_runs r
@@ -140,7 +153,7 @@ export async function queueApply(scope: AdminTenantScope, runId: string): Promis
 
     if (!existing[0]) throw new NotFoundError('Pull run not found');
     if (existing[0].status === 'applied') {
-      throw new ConflictError('This run has already been applied');
+      throw new ConflictError('This run has already been applied and has nothing left to import');
     }
     throw new ConflictError(
       `A run in status '${existing[0].status}' cannot be applied — only a completed run can`,
@@ -155,6 +168,7 @@ async function loadImportableRows(tx: DrizzleTx, runId: string): Promise<StagedR
            meta_lead_id::text    AS meta_lead_id,
            page_id::text         AS page_id,
            form_id::text         AS form_id,
+           form_name,
            campaign_id::text     AS campaign_id,
            adset_id::text        AS adset_id,
            ad_id::text           AS ad_id,
@@ -284,6 +298,8 @@ export async function applyRun(
         form_id: row.form_id,
         page_id: row.page_id ?? '',
         platform: row.platform ?? 'fb',
+        // The staged form name feeds the form-name rules without a Graph call.
+        form_name: row.form_name,
         field_data: fieldData,
         ...(row.lead_created_at
           // RawMetaLead.created_time is UNIX SECONDS (syncLeadToDatabase does
@@ -309,6 +325,8 @@ export async function applyRun(
         await withTenantConfigTx(scope, (tx) =>
           recordOutcome(tx, row.id, 'applied', synced.marketingLeadId, null),
         );
+        // The same lead may be parked in the webhook's inbox; it has landed now.
+        await resolveInboxByMetaLead(row.meta_lead_id, synced.marketingLeadId, run.applied_by).catch(() => undefined);
         if (synced.isDuplicate) result.already_synced += 1;
         else result.applied += 1;
       } catch (err) {

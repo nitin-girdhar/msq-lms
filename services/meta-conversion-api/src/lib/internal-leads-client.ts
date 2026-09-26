@@ -41,6 +41,10 @@ export interface IntakeLeadResult {
   id: string;
   is_duplicate: boolean;
   existing_lead_id: string | null;
+  /** 1.51.0 -- optional so an older leads-service image still parses. */
+  assigned_user_id?: string | null;
+  campaign_type_id?: string | null;
+  auto_assign_reason?: string | null;
 }
 
 export async function createIntakeLead(payload: IntakeLeadPayload): Promise<IntakeLeadResult> {

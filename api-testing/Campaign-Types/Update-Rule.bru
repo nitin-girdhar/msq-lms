@@ -1,0 +1,21 @@
+meta {
+  name: Update Campaign Type Rule
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/campaign-types/rules/{{ruleId}}?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "is_active": false
+  }
+}

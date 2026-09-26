@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { CAPABILITY, type CapabilityKey } from '@platform/rbac';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { authenticateSuperAdmin } from '../../../middleware/super-admin.middleware.js';
@@ -11,6 +12,12 @@ import {
   createCampaignTypeBodySchema,
   updateCampaignTypeBodySchema,
 } from './campaign-types.schema.js';
+import {
+  createRuleBodySchema,
+  updateRuleBodySchema,
+  reorderRulesBodySchema,
+  testRulesBodySchema,
+} from './campaign-type-rules.schema.js';
 
 const ctrl = new CampaignTypesController();
 
@@ -53,6 +60,19 @@ export async function campaignTypesRouter(app: FastifyInstance) {
   const scope = validate({ query: campaignTypesScopeQuerySchema });
   const view = campaignTypesGate(CAPABILITY.LMS_CAMPAIGN_TYPES_VIEW);
   const manage = campaignTypesGate(CAPABILITY.LMS_CAMPAIGN_TYPES_MANAGE, MANAGE_DENIED);
+
+  // Ordered rules (1.51.0). Registered BEFORE /campaign-types/:id so the static
+  // `rules` segment is never captured as a type id (Fastify prefers static
+  // segments anyway; the order states the intent). Same gates as the types:
+  // VIEW to read and test, MANAGE for every write — a rule decides which pool
+  // inbound leads route to, exactly like editing a type did.
+  const ruleParams = validate({ params: z.object({ ruleId: z.string().uuid() }) });
+  app.get('/campaign-types/rules', { preHandler: [view, scope] }, ctrl.listRules);
+  app.post('/campaign-types/rules/test', { preHandler: [view, scope, validate({ body: testRulesBodySchema })] }, ctrl.testRules);
+  app.post('/campaign-types/rules', { preHandler: [manage, scope, validate({ body: createRuleBodySchema })] }, ctrl.createRule);
+  app.put('/campaign-types/rules/order', { preHandler: [manage, scope, validate({ body: reorderRulesBodySchema })] }, ctrl.reorderRules);
+  app.patch('/campaign-types/rules/:ruleId', { preHandler: [manage, scope, ruleParams, validate({ body: updateRuleBodySchema })] }, ctrl.updateRule);
+  app.delete('/campaign-types/rules/:ruleId', { preHandler: [manage, scope, ruleParams] }, ctrl.deleteRule);
 
   app.get('/campaign-types', { preHandler: [view, scope] }, ctrl.list);
   app.get('/campaign-types/:id', { preHandler: [view, scope] }, ctrl.getById);

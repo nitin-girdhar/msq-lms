@@ -69,6 +69,13 @@ export class IntakeController {
       ...rest
     } = body;
     const result = await repo.createWebhookLead({ ...rest, org_id: orgId });
-    return reply.status(201).send({ success: true, data: result });
+    // The public contract stays exactly what it was. assigned_user_id /
+    // campaign_type_id / auto_assign_reason (1.51.0) are for the INTERNAL Meta
+    // path's realtime event; an API-key caller has no business receiving an
+    // internal user id.
+    return reply.status(201).send({
+      success: true,
+      data: { id: result.id, is_duplicate: result.is_duplicate, existing_lead_id: result.existing_lead_id },
+    });
   };
 }

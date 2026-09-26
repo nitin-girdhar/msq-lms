@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { withServiceTx, sqlUuidArr } from '@platform/db';
-import { resolveAutoAssignedUser, type AutoAssignReason } from '../../../lib/assignment.js';
+import { resolveAutoAssignedUser, storedAutoAssignReason, type AutoAssignReason } from '../../../lib/assignment.js';
 import { BadRequestError, NotFoundError } from '../../../lib/errors.js';
 import type { RerunBody } from './lead-assignment-rerun.schema.js';
 
@@ -19,7 +19,7 @@ export interface RerunScope {
 export interface RerunBranchResult {
   org_id: string;
   org_name: string;
-  campaign_type_id: string;
+  campaign_type_id: string | null;
   campaign_type_label: string;
   assigned: number;
   left_unassigned: number;
@@ -43,8 +43,10 @@ interface CandidateRow {
   id: string;
   org_id: string;
   org_name: string;
-  campaign_type_id: string;
+  /** Null only when the lead is untyped AND the tenant has no default type. */
+  campaign_type_id: string | null;
   campaign_type_label: string;
+  was_untyped: boolean;
   created_at: string;
   total_count: string;
 }
@@ -104,18 +106,27 @@ export async function rerunAutoAssignment(
 
     const [cursorAt, cursorId] = filters.cursor ? filters.cursor.split('|') as [string, string] : [null, null];
 
+    // 1.51.0: an UNTYPED lead is no longer skipped. It was an inner join on
+    // campaign_types, so a lead that landed with no type (a tenant with no
+    // default at the time, or a pre-1.49.0 straggler) could never be assigned by
+    // this tool. It now resolves to the tenant's default type -- the same
+    // fallback intake applies -- and the real run stamps that type on the lead in
+    // the same statement that assigns it.
     const candidates = (await tx.execute(sql`
       SELECT ml.id,
              ml.org_id,
-             o.name                 AS org_name,
-             ml.campaign_type_id,
-             ct.label               AS campaign_type_label,
-             ml.created_at::text    AS created_at,
-             COUNT(*) OVER ()       AS total_count
+             o.name                                  AS org_name,
+             COALESCE(ml.campaign_type_id, dt.id)    AS campaign_type_id,
+             COALESCE(ct.label, dt.label, 'Untyped') AS campaign_type_label,
+             (ml.campaign_type_id IS NULL)           AS was_untyped,
+             ml.created_at::text                     AS created_at,
+             COUNT(*) OVER ()                        AS total_count
       FROM lms.marketing_leads ml
-      JOIN entity.organizations o     ON o.id  = ml.org_id
-      JOIN marketing.campaign_types ct ON ct.id = ml.campaign_type_id
-      LEFT JOIN lms.lead_stage ls     ON ls.id = ml.stage_id
+      JOIN entity.organizations o          ON o.id  = ml.org_id
+      LEFT JOIN marketing.campaign_types ct ON ct.id = ml.campaign_type_id
+      LEFT JOIN marketing.campaign_types dt
+             ON dt.tenant_id = o.tenant_id AND dt.is_default AND dt.is_active AND NOT dt.is_deleted
+      LEFT JOIN lms.lead_stage ls          ON ls.id = ml.stage_id
       WHERE o.tenant_id = ${scope.tenantId}::uuid
         AND ml.assigned_user_id IS NULL
         AND ml.is_active
@@ -128,7 +139,7 @@ export async function rerunAutoAssignment(
           WHERE li.lead_id = ml.id AND NOT li.is_deleted
         )
         ${filters.org_ids.length > 0 ? sql`AND ml.org_id = ANY(${sqlUuidArr(filters.org_ids)})` : sql``}
-        ${filters.campaign_type_ids.length > 0 ? sql`AND ml.campaign_type_id = ANY(${sqlUuidArr(filters.campaign_type_ids)})` : sql``}
+        ${filters.campaign_type_ids.length > 0 ? sql`AND COALESCE(ml.campaign_type_id, dt.id) = ANY(${sqlUuidArr(filters.campaign_type_ids)})` : sql``}
         ${cursorAt ? sql`AND (ml.created_at, ml.id) > (${cursorAt}::timestamptz, ${cursorId}::uuid)` : sql``}
       ORDER BY ml.created_at, ml.id
       LIMIT ${RERUN_BATCH_LIMIT}
@@ -154,7 +165,7 @@ export async function rerunAutoAssignment(
         campaign_type_label: lead.campaign_type_label,
         assigned: 0,
         left_unassigned: 0,
-        reasons: { no_weighted_users: 0, no_department_match: 0, no_capable_users: 0 },
+        reasons: { no_campaign_type: 0, no_weighted_users: 0, no_department_match: 0, no_capable_users: 0 },
       };
       byKey.set(key, bucket);
 
@@ -165,6 +176,17 @@ export async function rerunAutoAssignment(
         leftUnassigned += 1;
         bucket.left_unassigned += 1;
         if (pick.reason !== 'assigned') bucket.reasons[pick.reason] += 1;
+        // Record WHY it is still unowned, and type an untyped lead, so the next
+        // look at it does not start from nothing.
+        if (!dryRun) {
+          await tx.execute(sql`
+            UPDATE lms.marketing_leads
+            SET auto_assign_reason = ${storedAutoAssignReason(pick.reason)},
+                campaign_type_id   = COALESCE(campaign_type_id, ${lead.campaign_type_id}::uuid),
+                updated_at         = NOW()
+            WHERE id = ${lead.id}::uuid AND assigned_user_id IS NULL
+          `);
+        }
         continue;
       }
 
@@ -178,7 +200,9 @@ export async function rerunAutoAssignment(
       // it was selected; their claim wins.
       const updated = (await tx.execute(sql`
         UPDATE lms.marketing_leads
-        SET assigned_user_id = ${pick.userId}::uuid, updated_at = NOW()
+        SET assigned_user_id = ${pick.userId}::uuid,
+            campaign_type_id = COALESCE(campaign_type_id, ${lead.campaign_type_id}::uuid),
+            updated_at = NOW()
         WHERE id = ${lead.id}::uuid AND assigned_user_id IS NULL
         RETURNING id
       `)) as Array<{ id: string }>;

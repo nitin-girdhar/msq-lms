@@ -1,0 +1,27 @@
+meta {
+  name: Create Lead Pull Run (campaign mode)
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{baseUrl}}/meta/lead-pull/runs?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "mode": "campaign",
+    "campaign_ids": ["{{metaCampaignId}}"],
+    "since": "2026-09-01"
+  }
+}
+
+docs {
+  1.51.0: walks only the selected campaigns' ads (GET /{campaign}/ads -> /{ad}/leads). 1-20 campaigns.
+}

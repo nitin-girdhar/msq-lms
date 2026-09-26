@@ -498,6 +498,113 @@ export async function fetchFormLeadsPage(
   };
 }
 
+// ── Per-lead names for the ordered rules (1.51.0) ───────────────────────────
+//
+// A rule can match the lead FORM, AD SET or AD name, none of which the lead
+// object carries — only their ids. These fetch one object's name, once per NEW
+// id (the ext.meta_forms / meta_adsets / meta_ads rows are the cache), and like
+// fetchCampaign they return null on any failure: a lead is never lost over a
+// name that only feeds a routing rule.
+
+export interface MetaFormMeta {
+  form_id: string;
+  name: string | null;
+  status: string | null;
+  page_id: string | null;
+}
+
+export interface MetaAdsetMeta {
+  adset_id: string;
+  name: string | null;
+  campaign_id: string | null;
+  promoted_page_id: string | null;
+  effective_status: string | null;
+}
+
+export interface MetaAdMeta {
+  ad_id: string;
+  name: string | null;
+  adset_id: string | null;
+  campaign_id: string | null;
+  effective_status: string | null;
+}
+
+export async function fetchFormMeta(
+  formId: string,
+  accessToken: string,
+  graphApiVersion: string,
+  options: GraphRequestOptions = {},
+): Promise<MetaFormMeta | null> {
+  try {
+    const data = await graphGet<{ id?: string; name?: string; status?: string; page?: { id?: string } }>(
+      `${metaConfig.graph_api.base_url}/${graphApiVersion}/${formId}`,
+      { fields: 'id,name,status,page{id}', access_token: accessToken },
+      options,
+    );
+    return {
+      form_id: String(data.id ?? formId),
+      name: data.name ?? null,
+      status: data.status ?? null,
+      page_id: data.page?.id ? String(data.page.id) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAdsetMeta(
+  adsetId: string,
+  accessToken: string,
+  graphApiVersion: string,
+  options: GraphRequestOptions = {},
+): Promise<MetaAdsetMeta | null> {
+  try {
+    const data = await graphGet<{
+      id?: string; name?: string; campaign_id?: string; effective_status?: string;
+      promoted_object?: { page_id?: string };
+    }>(
+      `${metaConfig.graph_api.base_url}/${graphApiVersion}/${adsetId}`,
+      { fields: 'id,name,campaign_id,effective_status,promoted_object', access_token: accessToken },
+      options,
+    );
+    return {
+      adset_id: String(data.id ?? adsetId),
+      name: data.name ?? null,
+      campaign_id: data.campaign_id ? String(data.campaign_id) : null,
+      promoted_page_id: data.promoted_object?.page_id ? String(data.promoted_object.page_id) : null,
+      effective_status: data.effective_status ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAdMeta(
+  adId: string,
+  accessToken: string,
+  graphApiVersion: string,
+  options: GraphRequestOptions = {},
+): Promise<MetaAdMeta | null> {
+  try {
+    const data = await graphGet<{
+      id?: string; name?: string; adset_id?: string; campaign_id?: string; effective_status?: string;
+    }>(
+      `${metaConfig.graph_api.base_url}/${graphApiVersion}/${adId}`,
+      { fields: 'id,name,adset_id,campaign_id,effective_status', access_token: accessToken },
+      options,
+    );
+    return {
+      ad_id: String(data.id ?? adId),
+      name: data.name ?? null,
+      adset_id: data.adset_id ? String(data.adset_id) : null,
+      campaign_id: data.campaign_id ? String(data.campaign_id) : null,
+      effective_status: data.effective_status ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface MetaCampaign {
   meta_campaign_id: string;
   name: string | null;
@@ -612,4 +719,239 @@ export async function listAccountCampaigns(
   }
 
   return campaigns;
+}
+
+// ── Shared-app discovery: ad accounts and campaigns WITH their pages (1.51.0) ──
+
+export interface MetaAdAccount {
+  ad_account_id: string;
+  name: string | null;
+  business_name: string | null;
+  account_status: number | null;
+}
+
+/**
+ * Every ad account the token can see (`GET /me/adaccounts`). Cursor-paged and
+ * capped like the other list calls. Requires `ads_read`.
+ */
+export async function listAdAccounts(
+  accessToken: string,
+  graphApiVersion: string,
+  options: GraphRequestOptions = {},
+): Promise<MetaAdAccount[]> {
+  const MAX_PAGES_OF_RESULTS = 20;
+  const accounts: MetaAdAccount[] = [];
+  let after: string | undefined;
+
+  for (let i = 0; i < MAX_PAGES_OF_RESULTS; i += 1) {
+    const data = await graphGet<{
+      data?: Array<{ id?: string; account_id?: string; name?: string; account_status?: number; business?: { name?: string } }>;
+      paging?: { next?: string; cursors?: { after?: string } };
+    }>(
+      `${metaConfig.graph_api.base_url}/${graphApiVersion}/me/adaccounts`,
+      {
+        fields: 'id,account_id,name,account_status,business{name}',
+        limit: 100,
+        access_token: accessToken,
+        ...(after ? { after } : {}),
+      },
+      options,
+    );
+
+    for (const a of data.data ?? []) {
+      const raw = a.id ?? (a.account_id ? `act_${a.account_id}` : null);
+      if (!raw) continue;
+      const id = raw.startsWith('act_') ? raw : `act_${raw}`;
+      if (!/^act_\d+$/.test(id)) continue;
+      accounts.push({
+        ad_account_id: id,
+        name: a.name ?? null,
+        business_name: a.business?.name ?? null,
+        account_status: typeof a.account_status === 'number' ? a.account_status : null,
+      });
+    }
+
+    after = data.paging?.cursors?.after;
+    if (!after || !data.paging?.next) break;
+  }
+  return accounts;
+}
+
+export interface MetaAdsetSummary {
+  adset_id: string;
+  name: string | null;
+  effective_status: string | null;
+  promoted_page_id: string | null;
+}
+
+export interface MetaAdSummary {
+  ad_id: string;
+  adset_id: string | null;
+  name: string | null;
+  effective_status: string | null;
+}
+
+export interface MetaCampaignDetailed extends MetaCampaign {
+  adsets: MetaAdsetSummary[];
+  ads: MetaAdSummary[];
+  /** Distinct promoted_object.page_id across the ad sets — how a campaign is attributed to a tenant. */
+  page_ids: string[];
+}
+
+/**
+ * Every campaign in one ad account, each WITH its ad sets (promoted page) and
+ * ads, in one paged walk — nested field expansion rather than a call per
+ * campaign, which is what keeps a large account inside the rate limit.
+ *
+ * The nested edges are capped per campaign (100 ad sets, 200 ads). A campaign
+ * with more is still attributed correctly as long as one listed ad set promotes
+ * the page; only the name caches miss the overflow, and the lead path fills
+ * those in on first sight.
+ */
+export async function listAccountCampaignsDetailed(
+  adAccountId: string,
+  accessToken: string,
+  graphApiVersion: string,
+  options: GraphRequestOptions = {},
+): Promise<MetaCampaignDetailed[]> {
+  const MAX_PAGES_OF_RESULTS = 50;
+  const account = adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`;
+  const out: MetaCampaignDetailed[] = [];
+  let after: string | undefined;
+
+  for (let i = 0; i < MAX_PAGES_OF_RESULTS; i += 1) {
+    const data = await graphGet<{
+      data?: Array<{
+        id?: string; name?: string; objective?: string; effective_status?: string; created_time?: string;
+        adsets?: { data?: Array<{ id?: string; name?: string; effective_status?: string; promoted_object?: { page_id?: string } }> };
+        ads?: { data?: Array<{ id?: string; name?: string; adset_id?: string; effective_status?: string }> };
+      }>;
+      paging?: { next?: string; cursors?: { after?: string } };
+    }>(
+      `${metaConfig.graph_api.base_url}/${graphApiVersion}/${account}/campaigns`,
+      {
+        fields: `${CAMPAIGN_FIELDS},adsets.limit(100){id,name,effective_status,promoted_object},ads.limit(200){id,name,adset_id,effective_status}`,
+        limit: 50,
+        access_token: accessToken,
+        ...(after ? { after } : {}),
+      },
+      options,
+    );
+
+    for (const c of data.data ?? []) {
+      if (!c.id) continue;
+      const adsets: MetaAdsetSummary[] = (c.adsets?.data ?? [])
+        .filter((s) => s.id)
+        .map((s) => ({
+          adset_id: String(s.id),
+          name: s.name ?? null,
+          effective_status: s.effective_status ?? null,
+          promoted_page_id: s.promoted_object?.page_id ? String(s.promoted_object.page_id) : null,
+        }));
+      const ads: MetaAdSummary[] = (c.ads?.data ?? [])
+        .filter((a) => a.id)
+        .map((a) => ({
+          ad_id: String(a.id),
+          adset_id: a.adset_id ? String(a.adset_id) : null,
+          name: a.name ?? null,
+          effective_status: a.effective_status ?? null,
+        }));
+      out.push({
+        meta_campaign_id: String(c.id),
+        name: c.name ?? null,
+        objective: c.objective ?? null,
+        effective_status: c.effective_status ?? null,
+        created_time: c.created_time ?? null,
+        adsets,
+        ads,
+        page_ids: [...new Set(adsets.map((s) => s.promoted_page_id).filter((p): p is string => !!p))],
+      });
+    }
+
+    after = data.paging?.cursors?.after;
+    if (!after || !data.paging?.next) break;
+  }
+  return out;
+}
+
+/**
+ * The ads of ONE campaign (`GET /{campaign-id}/ads`), each with the page its
+ * ad set promotes — the lead pull's campaign mode. Requires `ads_read` on the
+ * SYSTEM token.
+ */
+export async function listCampaignAds(
+  campaignId: string,
+  accessToken: string,
+  graphApiVersion: string,
+  options: GraphRequestOptions = {},
+): Promise<Array<MetaAdSummary & { promoted_page_id: string | null }>> {
+  const MAX_PAGES_OF_RESULTS = 50;
+  const out: Array<MetaAdSummary & { promoted_page_id: string | null }> = [];
+  let after: string | undefined;
+
+  for (let i = 0; i < MAX_PAGES_OF_RESULTS; i += 1) {
+    const data = await graphGet<{
+      data?: Array<{ id?: string; name?: string; adset_id?: string; effective_status?: string;
+                     adset?: { promoted_object?: { page_id?: string } } }>;
+      paging?: { next?: string; cursors?: { after?: string } };
+    }>(
+      `${metaConfig.graph_api.base_url}/${graphApiVersion}/${campaignId}/ads`,
+      {
+        fields: 'id,name,adset_id,effective_status,adset{promoted_object}',
+        limit: 100,
+        access_token: accessToken,
+        ...(after ? { after } : {}),
+      },
+      options,
+    );
+    for (const a of data.data ?? []) {
+      if (!a.id) continue;
+      out.push({
+        ad_id: String(a.id),
+        adset_id: a.adset_id ? String(a.adset_id) : null,
+        name: a.name ?? null,
+        effective_status: a.effective_status ?? null,
+        promoted_page_id: a.adset?.promoted_object?.page_id ? String(a.adset.promoted_object.page_id) : null,
+      });
+    }
+    after = data.paging?.cursors?.after;
+    if (!after || !data.paging?.next) break;
+  }
+  return out;
+}
+
+/**
+ * ONE page of `/{ad-id}/leads` — the campaign-scoped path the lead pull's
+ * campaign mode walks, ad by ad. Same `filtering` caveat as fetchFormLeadsPage:
+ * an optimisation only, the caller re-filters locally. Requires a PAGE access
+ * token for the page the ad promotes.
+ */
+export async function fetchAdLeadsPage(
+  adId: string,
+  pageAccessToken: string,
+  graphApiVersion: string,
+  window: { after?: string | undefined; since?: Date | undefined; until?: Date | undefined; limit?: number },
+  options: GraphRequestOptions = {},
+): Promise<LeadsPageResult> {
+  const filters: Array<{ field: string; operator: string; value: number }> = [];
+  if (window.since) {
+    filters.push({ field: 'time_created', operator: 'GREATER_THAN', value: Math.floor(window.since.getTime() / 1000) });
+  }
+  if (window.until) {
+    filters.push({ field: 'time_created', operator: 'LESS_THAN', value: Math.floor(window.until.getTime() / 1000) });
+  }
+
+  const data = await graphGet<{ data?: RawGraphLead[]; paging?: { next?: string; cursors?: { after?: string } } }>(
+    `${metaConfig.graph_api.base_url}/${graphApiVersion}/${adId}/leads`,
+    {
+      fields: metaConfig.graph_api.lead_fields.join(','),
+      limit: window.limit ?? 100,
+      access_token: pageAccessToken,
+      ...(window.after ? { after: window.after } : {}),
+      ...(filters.length ? { filtering: JSON.stringify(filters) } : {}),
+    },
+    options,
+  );
+  const cursor = data.paging?.cursors?.after;
+  return { leads: data.data ?? [], nextCursor: cursor && data.paging?.next ? cursor : null };
 }

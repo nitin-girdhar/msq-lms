@@ -4,7 +4,7 @@ import type { RoleTxContext } from '@platform/db';
 import type { ScopeName } from '@platform/rbac';
 import { createLogger } from '@platform/logger';
 import { config } from '../../../config/index.js';
-import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
+import { resolveAutoAssignedUser, storedAutoAssignReason } from '../../../lib/assignment.js';
 import { resolveCampaignForLead } from '../../../lib/campaign-resolution.js';
 import {
   leadStageTable,
@@ -423,9 +423,11 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
     // whole existing pipeline.
     const resolvedCampaign = await resolveCampaignForLead(tx, targetOrgId, {});
     let assignedUserId: string | null = data.assigned_user_id ?? null;
+    let autoAssignReason: ReturnType<typeof storedAutoAssignReason> = null;
     if (!assignedUserId) {
       const pick = await resolveAutoAssignedUser(tx, targetOrgId, resolvedCampaign.campaign_type_id);
       assignedUserId = pick.userId;
+      autoAssignReason = storedAutoAssignReason(pick.reason);
       // Same silent-failure guard as intake: a manually created lead that finds
       // nobody weighted in its pool must say so, not just arrive unassigned.
       if (pick.reason !== 'assigned') {
@@ -464,6 +466,7 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
         campaignTypeId: resolvedCampaign.campaign_type_id,
         stageId: data.stage_id ?? defaultStage.id,
         assignedUserId,
+        autoAssignReason,
         cityId: data.city_id ?? null,
         stateId: data.state_id ?? null,
         countryId: data.country_id ?? null,
@@ -897,6 +900,7 @@ export async function transferLead(
         campaignTypeId: transferredTypeId,
         stageId:       newStageRow.id,
         assignedUserId: autoAssignedUserId,
+        autoAssignReason: storedAutoAssignReason(transferPick.reason),
         tags:          coerceTags(src['tags']),
         metadata:      { ...(src['metadata'] as Record<string, unknown> ?? {}), transferred_from: sourceLeadId },
         rawWebhookData: (src['raw_webhook_data'] as Record<string, unknown> ?? {}),

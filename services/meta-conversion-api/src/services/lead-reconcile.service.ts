@@ -114,7 +114,14 @@ export async function classifyRunLeads(run: PullRunRow): Promise<Record<string, 
           l.id,
           l.org_id,
           l.meta_lead_id,
-          l.form_name,
+          -- Campaign-mode pulls stage no form name (the ad edge does not carry
+          -- it); fall back to the ext.meta_forms cache the form picker fills.
+          COALESCE(l.form_name, (SELECT f.name FROM ext.meta_forms f WHERE f.form_id = l.form_id)) AS form_name,
+          l.page_id,
+          l.form_id,
+          l.campaign_id,
+          l.adset_id,
+          l.ad_id,
           -- extractByKeys: the first candidate key with a non-empty first
           -- value wins, in the configured order. array_position reproduces
           -- that ordering; a plain ANY() would return whichever key the JSONB
@@ -162,7 +169,42 @@ export async function classifyRunLeads(run: PullRunRow): Promise<Record<string, 
                dup_phone.id AS phone_lead_id,
                dup_email.id AS email_lead_id,
                (k.form_name ~* ${HIRING_FORM_PATTERN}) AS is_hiring_form,
-               marketing.fn_match_campaign_type(${run.tenant_id}::uuid, k.form_name) AS suggested_type
+               -- 1.51.0: the PREDICTED type, by the same ladder the live path
+               -- applies (campaign-mapping.service.ts::resolveCampaignType):
+               -- confirmed campaign type -> ordered rules on the campaign /
+               -- form / ad set / ad name -> page (form-override) default ->
+               -- tenant default. So the grid says which department each lead
+               -- will land in BEFORE Apply, and Apply's answer matches it
+               -- unless a mapping or rule is edited in between.
+               COALESCE(
+                 (SELECT mc.campaign_type_id
+                    FROM ext.meta_campaigns mc
+                    JOIN marketing.campaign_types ct
+                      ON ct.id = mc.campaign_type_id AND ct.is_active AND NOT ct.is_deleted
+                   WHERE mc.meta_campaign_id = k.campaign_id
+                     AND mc.tenant_id = ${run.tenant_id}::uuid
+                     AND mc.mapping_status = 'confirmed'),
+                 (SELECT m.campaign_type_id
+                    FROM marketing.fn_match_campaign_type_rules(
+                      ${run.tenant_id}::uuid,
+                      (SELECT mc.name FROM ext.meta_campaigns mc
+                        WHERE mc.meta_campaign_id = k.campaign_id AND mc.tenant_id = ${run.tenant_id}::uuid),
+                      k.form_name,
+                      (SELECT s.name FROM ext.meta_adsets s WHERE s.meta_adset_id = k.adset_id),
+                      (SELECT a.name FROM ext.meta_ads a WHERE a.meta_ad_id = k.ad_id)
+                    ) m),
+                 (SELECT pm.default_campaign_type_id
+                    FROM ext.meta_page_form_org_map pm
+                    JOIN marketing.campaign_types ct
+                      ON ct.id = pm.default_campaign_type_id AND ct.is_active AND NOT ct.is_deleted
+                   WHERE pm.tenant_id = ${run.tenant_id}::uuid AND pm.is_active
+                     AND (pm.form_id = k.form_id OR (pm.form_id IS NULL AND pm.page_id = k.page_id))
+                   ORDER BY (pm.form_id IS NULL) ASC, pm.created_at DESC
+                   LIMIT 1),
+                 (SELECT ct.id FROM marketing.campaign_types ct
+                   WHERE ct.tenant_id = ${run.tenant_id}::uuid AND ct.is_default AND ct.is_active AND NOT ct.is_deleted
+                   LIMIT 1)
+               ) AS suggested_type
         FROM keyed k
         LEFT JOIN LATERAL (
           SELECT ml.id FROM lms.marketing_leads ml

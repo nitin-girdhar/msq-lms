@@ -3,6 +3,8 @@ import type { RoleTxContext } from '@platform/db';
 import { RANKS } from '@platform/authz';
 import { ForbiddenError } from '../../../lib/errors.js';
 import * as service from './campaign-types.service.js';
+import * as rules from './campaign-type-rules.service.js';
+import type { CreateRuleBody, UpdateRuleBody, ReorderRulesBody, TestRulesBody } from './campaign-type-rules.schema.js';
 import type {
   CampaignTypesScopeQuery,
   CreateCampaignTypeBody,
@@ -61,5 +63,40 @@ export class CampaignTypesController {
     const { id } = request.params as { id: string };
     await service.deleteCampaignType(scopeCtx(request), id);
     return reply.status(204).send();
+  };
+
+  // ── Ordered rules (1.51.0) — same tenant scoping as the types above ──
+
+  listRules = async (request: FastifyRequest, reply: FastifyReply) => {
+    const data = await rules.listRules(scopeCtx(request));
+    return reply.send({ success: true, data });
+  };
+
+  createRule = async (request: FastifyRequest, reply: FastifyReply) => {
+    const result = await rules.createRule(scopeCtx(request), request.body as CreateRuleBody);
+    return reply.status(201).send({ success: true, data: { id: result.id } });
+  };
+
+  updateRule = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { ruleId } = request.params as { ruleId: string };
+    await rules.updateRule(scopeCtx(request), ruleId, request.body as UpdateRuleBody);
+    return reply.status(204).send();
+  };
+
+  deleteRule = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { ruleId } = request.params as { ruleId: string };
+    await rules.deleteRule(scopeCtx(request), ruleId);
+    return reply.status(204).send();
+  };
+
+  reorderRules = async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as ReorderRulesBody;
+    await rules.reorderRules(scopeCtx(request), body.rule_ids);
+    return reply.status(204).send();
+  };
+
+  testRules = async (request: FastifyRequest, reply: FastifyReply) => {
+    const data = await rules.testRules(scopeCtx(request), request.body as TestRulesBody);
+    return reply.send({ success: true, data });
   };
 }

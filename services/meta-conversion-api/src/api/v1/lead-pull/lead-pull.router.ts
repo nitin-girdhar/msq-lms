@@ -6,6 +6,7 @@ import {
   getLatestRun,
   listRunLeads,
   applyPullRun,
+  remapPullRun,
 } from './lead-pull.controller.js';
 
 // GET /meta/pages already exists (pages.router.ts) and serves the page picker
@@ -19,4 +20,6 @@ export async function leadPullRouter(app: FastifyInstance) {
   app.get('/lead-pull/runs/:runId', getRun);
   app.get('/lead-pull/runs/:runId/leads', listRunLeads);
   app.post('/lead-pull/runs/:runId/apply', applyPullRun);
+  // 1.51.0: after mapping a page/form inline, re-resolve the run's unmapped rows.
+  app.post('/lead-pull/runs/:runId/remap', remapPullRun);
 }

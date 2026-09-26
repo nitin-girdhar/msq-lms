@@ -39,12 +39,13 @@ export interface PageFormOrgMapping {
   // comment in db_scripts/02_tables_core.sql and resolveOrgId's precedence.
   form_id: string | null;
   platform: MetaLeadPlatform;
+  /** 1.51.0: the page/form fallback type (see page-org-map.schema.ts). */
+  default_campaign_type_id: string | null;
+  default_campaign_type_label: string | null;
   is_active: boolean;
-  // Stamped by sync_leads.py after each pull run against the row. Surfaced on
-  // the admin grid as the only signal that a mapping is actually receiving
-  // leads: a row created months ago with a null last_synced_at is mapped to a
-  // page Meta never delivers for, which is otherwise indistinguishable from a
-  // healthy one. Read-only here — nothing in this module writes it.
+  // When a lead last arrived through this row (1.51.0: stamped by the webhook
+  // and the lead-pull Apply; it used to be written only by the retired Python
+  // sync). The admin grid's only signal that a mapping actually receives leads.
   last_synced_at: string | null;
 }
 
@@ -63,10 +64,12 @@ export async function listPageFormOrgMappings(
     // whether or not the policy is doing its job, which is the whole failure
     // mode this phase exists to remove.
     const rows = await tx.execute(
-      sql`SELECT id, tenant_id, org_id, page_id::text AS page_id, form_id::text AS form_id,
-                 platform, is_active, last_synced_at
-          FROM ext.meta_page_form_org_map
-          ORDER BY created_at DESC`,
+      sql`SELECT m.id, m.tenant_id, m.org_id, m.page_id::text AS page_id, m.form_id::text AS form_id,
+                 m.platform, m.default_campaign_type_id, ct.label AS default_campaign_type_label,
+                 m.is_active, m.last_synced_at
+          FROM ext.meta_page_form_org_map m
+          LEFT JOIN marketing.campaign_types ct ON ct.id = m.default_campaign_type_id
+          ORDER BY m.created_at DESC`,
     );
     return rows as unknown as PageFormOrgMapping[];
   });
@@ -79,6 +82,26 @@ export interface CreatePageFormOrgMappingInput {
   // always been nullable; only the request schema forbade it.
   form_id?: string | null | undefined;
   platform: MetaLeadPlatform;
+  default_campaign_type_id?: string | null | undefined;
+}
+
+/**
+ * A default type must be a LIVE type of the administered tenant. Checked under
+ * the admin transaction, where marketing.campaign_types' policy shows only that
+ * tenant's rows — so another tenant's type id reads as "unknown", which is the
+ * right answer. The FK alone would accept any tenant's type.
+ */
+async function assertDefaultTypeUsable(
+  tx: Parameters<Parameters<typeof withTenantConfigTx>[1]>[0],
+  campaignTypeId: string | null | undefined,
+): Promise<void> {
+  if (!campaignTypeId) return;
+  const rows = (await tx.execute(sql`
+    SELECT 1 FROM marketing.campaign_types
+    WHERE id = ${campaignTypeId}::uuid AND is_active AND NOT is_deleted
+    LIMIT 1
+  `)) as unknown as unknown[];
+  if (rows.length === 0) throw new BadRequestError('Unknown or inactive campaign type for this tenant');
 }
 
 /**
@@ -171,10 +194,11 @@ export async function createPageFormOrgMapping(
   try {
     return await withTenantConfigTx({ actorUserId: scope.actorUserId, tenantId: scope.tenantId }, async (tx) => {
       await assertTenantExists(tx, scope.tenantId);
+      await assertDefaultTypeUsable(tx, data.default_campaign_type_id);
       const rows = await tx.execute(
-        sql`INSERT INTO ext.meta_page_form_org_map (tenant_id, org_id, page_id, form_id, platform)
+        sql`INSERT INTO ext.meta_page_form_org_map (tenant_id, org_id, page_id, form_id, platform, default_campaign_type_id)
             VALUES (${scope.tenantId}::uuid, ${data.org_id}::uuid, ${data.page_id}::bigint,
-                    ${data.form_id ?? null}::bigint, ${data.platform})
+                    ${data.form_id ?? null}::bigint, ${data.platform}, ${data.default_campaign_type_id ?? null}::uuid)
             RETURNING id`,
       );
       return (rows as unknown as Array<{ id: string }>)[0]!;
@@ -199,6 +223,9 @@ export async function createPageFormOrgMapping(
 export interface UpdatePageFormOrgMappingInput {
   org_id?: string | undefined;
   is_active?: boolean | undefined;
+  platform?: MetaLeadPlatform | undefined;
+  /** null clears the default; undefined leaves it as is. */
+  default_campaign_type_id?: string | null | undefined;
 }
 
 export async function updatePageFormOrgMapping(
@@ -206,26 +233,51 @@ export async function updatePageFormOrgMapping(
   mappingId: string,
   data: UpdatePageFormOrgMappingInput,
 ): Promise<void> {
-  await withTenantConfigTx<void>({ actorUserId: scope.actorUserId, tenantId: scope.tenantId }, async (tx) => {
-    await assertTenantExists(tx, scope.tenantId);
-    // RETURNING id, and an empty result is a 404. Without it this statement
-    // reported success for a mapping belonging to another tenant: RLS filtered
-    // the row out, the UPDATE matched nothing, and the controller replied 204 as
-    // though the edit had been applied. A nonexistent id gets the same answer on
-    // purpose — distinguishing the two would confirm the existence of another
-    // tenant's row.
-    const rows = await tx.execute(
-      sql`UPDATE ext.meta_page_form_org_map
-          SET updated_at = NOW(),
-              org_id    = COALESCE(${data.org_id ?? null}::uuid, org_id),
-              is_active = COALESCE(${data.is_active ?? null}, is_active)
-          WHERE id = ${mappingId}::uuid
-          RETURNING id`,
-    );
-    if ((rows as unknown as Array<{ id: string }>).length === 0) {
-      throw new NotFoundError('Page/form org mapping not found');
+  try {
+    await withTenantConfigTx<void>({ actorUserId: scope.actorUserId, tenantId: scope.tenantId }, async (tx) => {
+      await assertTenantExists(tx, scope.tenantId);
+      await assertDefaultTypeUsable(tx, data.default_campaign_type_id);
+      // RETURNING id, and an empty result is a 404. Without it this statement
+      // reported success for a mapping belonging to another tenant: RLS filtered
+      // the row out, the UPDATE matched nothing, and the controller replied 204 as
+      // though the edit had been applied. A nonexistent id gets the same answer on
+      // purpose — distinguishing the two would confirm the existence of another
+      // tenant's row.
+      const rows = await tx.execute(
+        sql`UPDATE ext.meta_page_form_org_map
+            SET updated_at = NOW(),
+                org_id    = COALESCE(${data.org_id ?? null}::uuid, org_id),
+                is_active = COALESCE(${data.is_active ?? null}, is_active),
+                platform  = COALESCE(${data.platform ?? null}, platform),
+                default_campaign_type_id = CASE
+                  WHEN ${data.default_campaign_type_id !== undefined} THEN ${data.default_campaign_type_id ?? null}::uuid
+                  ELSE default_campaign_type_id
+                END
+            WHERE id = ${mappingId}::uuid
+            RETURNING id`,
+      );
+      if ((rows as unknown as Array<{ id: string }>).length === 0) {
+        throw new NotFoundError('Page/form org mapping not found');
+      }
+    });
+  } catch (err) {
+    // 1.51.0: the same translation create has always done. Re-activating a
+    // page-level row while another active one exists (23505), or pointing a row
+    // at a branch outside the tenant (42501), used to surface as a raw 500.
+    const { code, constraint } = pgError(err);
+    if (code === '23505') {
+      throw new ConflictError(
+        constraint === 'uq_meta_page_form_org_map_page_level'
+          ? 'This page already has another active page-level mapping. Deactivate that one first.'
+          : 'This page/form is already mapped by another row.',
+        { constraint: constraint ?? null },
+      );
     }
-  });
+    if (code === '42501') {
+      throw new BadRequestError('org_id does not belong to the selected tenant');
+    }
+    throw err;
+  }
 }
 
 export async function deletePageFormOrgMapping(

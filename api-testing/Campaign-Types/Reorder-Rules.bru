@@ -1,0 +1,25 @@
+meta {
+  name: Reorder Campaign Type Rules
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/campaign-types/rules/order?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "rule_ids": ["{{ruleId}}", "{{ruleId2}}"]
+  }
+}
+
+docs {
+  The WHOLE live list in its new order; a partial list is refused (400). Positions become 10, 20, 30...
+}

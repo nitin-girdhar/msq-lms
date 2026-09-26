@@ -34,7 +34,22 @@ interface OpenLeadCount {
  * for a long time before anyone noticed. Every caller must now log a
  * non-'assigned' reason — see intake.repository.ts's `lead.autoassign_skipped`.
  */
-export type AutoAssignReason = 'assigned' | 'no_weighted_users' | 'no_department_match' | 'no_capable_users';
+export type AutoAssignReason =
+  | 'assigned'
+  | 'no_campaign_type'
+  | 'no_weighted_users'
+  | 'no_department_match'
+  | 'no_capable_users';
+
+/**
+ * The value stored in lms.marketing_leads.auto_assign_reason (1.51.0): NULL when
+ * the pick found someone, otherwise the reason. Every writer of
+ * `assigned_user_id` from a pick stamps this too, so an unassigned lead always
+ * says why.
+ */
+export function storedAutoAssignReason(reason: AutoAssignReason): Exclude<AutoAssignReason, 'assigned'> | null {
+  return reason === 'assigned' ? null : reason;
+}
 
 export interface AutoAssignResult {
   userId: string | null;
@@ -53,16 +68,17 @@ export interface AutoAssignResult {
  * lib/campaign-resolution.ts::resolveCampaignForLead, never a guess.
  *
  * A null campaignTypeId cannot match any weight row (the column is NOT NULL), so
- * it resolves to no pool at all and returns 'no_weighted_users'. That is the
- * honest answer: the alternative — falling back to an untyped, cross-pool
- * rotation — is the behaviour this change exists to remove.
+ * it resolves to no pool at all and returns 'no_campaign_type' (1.51.0; it was
+ * reported as 'no_weighted_users', which sent operators to fix weights when the
+ * real gap was a tenant with no default type). Falling back to an untyped,
+ * cross-pool rotation is the behaviour this change exists to remove.
  */
 export async function resolveAutoAssignedUser(
   tx: DrizzleTx,
   orgId: string,
   campaignTypeId: string | null,
 ): Promise<AutoAssignResult> {
-  if (!campaignTypeId) return { userId: null, reason: 'no_weighted_users' };
+  if (!campaignTypeId) return { userId: null, reason: 'no_campaign_type' };
 
   const rows = (await tx.execute(sql`
     SELECT uom.user_id, w.weight, ur.name AS role_name, o.tenant_id,

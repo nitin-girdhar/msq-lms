@@ -93,6 +93,28 @@ export async function resolveTenantAndOrg(
   });
 }
 
+/**
+ * Stamps last_synced_at on the mapping row(s) a lead just arrived through
+ * (1.51.0): the exact form row when there is one, the page-level row otherwise.
+ * The admin grid reads it as "last lead received" -- the only signal that a
+ * mapping is live. Best-effort on the webhook path; a failure costs a stale
+ * timestamp, never a lead. withServiceTx for the same reason as the resolvers.
+ */
+export async function touchMappingLastLead(pageId: string, formId: string | null | undefined): Promise<void> {
+  await withServiceTx((tx) => tx.execute(sql`
+    UPDATE ext.meta_page_form_org_map
+    SET last_synced_at = NOW()
+    WHERE is_active
+      AND page_id = ${pageId}::bigint
+      AND (
+        (${formId ?? null}::text IS NOT NULL AND form_id = ${formId ?? null}::bigint)
+        OR (form_id IS NULL AND NOT EXISTS (
+              SELECT 1 FROM ext.meta_page_form_org_map f
+              WHERE f.is_active AND f.page_id = ${pageId}::bigint AND f.form_id = ${formId ?? null}::bigint))
+      )
+  `));
+}
+
 // The admin CRUD that used to live below moved to page-org-map.admin.service.ts.
 // The two resolvers above are the webhook path: an inbound Meta delivery carries
 // no session, so they run on withServiceTx (BYPASSRLS) as a documented system

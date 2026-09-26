@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withTenantConfigTx, type DrizzleTx } from '@platform/db';
+import { withServiceTx, withTenantConfigTx, type DrizzleTx } from '@platform/db';
 import { config } from '../config/index.js';
 import { NotFoundError } from '../lib/errors.js';
 import { getIntegrationByTenantId } from './integration.service.js';
@@ -7,6 +7,9 @@ import {
   getManagedPageTokens,
   listLeadGenForms,
   fetchFormLeadsPage,
+  fetchAdLeadsPage,
+  listCampaignAds,
+  type LeadsPageResult,
   type RawGraphLead,
 } from './meta-api.service.js';
 import { classifyRunLeads } from './lead-reconcile.service.js';
@@ -53,14 +56,28 @@ export interface PullFilters {
   since: string;
   /** Optional upper bound; null = now. */
   until: string | null;
+  /**
+   * 1.51.0. 'pages' (default, and what every pre-1.51.0 run implicitly is):
+   * walk every form of the pages in scope. 'campaign': walk only the selected
+   * campaigns' ads (GET /{campaign}/ads -> /{ad}/leads).
+   */
+  mode?: 'pages' | 'campaign' | undefined;
 }
 
 export interface PullRunRow {
   id: string;
   tenant_id: string;
-  created_by: string;
+  /** NULL for a scheduled catch-up run (1.51.0). */
+  created_by: string | null;
   filters: PullFilters;
 }
+
+/**
+ * app.current_user_id for a run no person started (a scheduled catch-up run).
+ * The GUC only feeds audit triggers — scratch.* has none — but set_config needs
+ * a uuid-shaped string.
+ */
+export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 
 export interface PullPageError {
   page_id: string;
@@ -96,6 +113,10 @@ export interface PullCounts {
   campaign_filter_applied: boolean;
   /** Per-verdict tallies, filled in by the reconcile pass. */
   verdicts: Record<string, number>;
+  /** Campaign mode: ads walked (1.51.0). */
+  ads_walked?: number | undefined;
+  /** Pages skipped because another tenant maps them (1.51.0) — never staged. */
+  foreign_pages_skipped?: number | undefined;
 }
 
 export interface PullOptions {
@@ -288,21 +309,39 @@ async function fetchFormLeads(
   until: Date | null,
   options: PullOptions,
 ): Promise<FormLeadsResult> {
+  return fetchEdgeLeads('form', formId, pageAccessToken, graphApiVersion, since, until, options);
+}
+
+/**
+ * The walk shared by both edges that carry leads: /{form-id}/leads (pages mode)
+ * and /{ad-id}/leads (campaign mode, 1.51.0). Same newest-first early stop, same
+ * page cap, same local window filter.
+ */
+async function fetchEdgeLeads(
+  edge: 'form' | 'ad',
+  objectId: string,
+  pageAccessToken: string,
+  graphApiVersion: string,
+  since: Date,
+  until: Date | null,
+  options: PullOptions,
+): Promise<FormLeadsResult> {
   const maxPages = config.leadPullMaxGraphPagesPerForm;
   const collected: RawGraphLead[] = [];
   let after: string | undefined;
   let returned = 0;
+  const fetchPage = edge === 'form' ? fetchFormLeadsPage : fetchAdLeadsPage;
 
   for (let page = 0; page < maxPages; page += 1) {
-    const result = await fetchFormLeadsPage(
-      formId,
+    const result: LeadsPageResult = await fetchPage(
+      objectId,
       pageAccessToken,
       graphApiVersion,
       { ...(after ? { after } : {}), since, ...(until ? { until } : {}), limit: 100 },
       {
         onBackoff: (info) => {
           options.log?.warn(
-            { evt: 'lead_pull.graph_backoff', formId, attempt: info.attempt, delayMs: info.delay_ms, reason: info.reason },
+            { evt: 'lead_pull.graph_backoff', edge, objectId, attempt: info.attempt, delayMs: info.delay_ms, reason: info.reason },
             'Backing off a Meta Graph call',
           );
         },
@@ -346,9 +385,13 @@ export async function runPull(run: PullRunRow, options: PullOptions = {}): Promi
   const until = filters.until ? new Date(filters.until) : null;
   const campaignFilter = new Set(filters.campaign_ids);
 
-  const scope = { actorUserId: run.created_by, tenantId: run.tenant_id };
+  const scope = { actorUserId: run.created_by ?? SYSTEM_ACTOR_ID, tenantId: run.tenant_id };
 
   const mappings = await withTenantConfigTx(scope, (tx) => loadMappings(tx, filters));
+  // Pages another tenant maps are NEVER walked (1.51.0): the shared token can
+  // reach them, and staging their leads here would put another tenant's PII
+  // under this one.
+  const foreign = await foreignPages(run.tenant_id);
 
   const counts: PullCounts = {
     pages_in_scope: 0,
@@ -373,16 +416,21 @@ export async function runPull(run: PullRunRow, options: PullOptions = {}): Promi
   // orgs (all orgs when none selected) — mappings is no longer org-narrowed, so
   // the selection is applied here.
   const selectedOrgs = new Set(filters.org_ids);
-  const pageIds = filters.page_ids.length
+  const requestedPages = filters.page_ids.length
     ? [...new Set(filters.page_ids)]
     : [...new Set(
       mappings
         .filter((m) => selectedOrgs.size === 0 || selectedOrgs.has(m.org_id))
         .map((m) => m.page_id),
     )];
+  const pageIds = requestedPages.filter((p) => !foreign.has(p));
+  counts.foreign_pages_skipped = requestedPages.length - pageIds.length;
+  for (const p of requestedPages) {
+    if (foreign.has(p)) counts.page_errors.push({ page_id: p, reason: 'Mapped to another tenant — not pulled' });
+  }
   counts.pages_in_scope = pageIds.length;
 
-  if (pageIds.length === 0) return counts;
+  if (filters.mode !== 'campaign' && pageIds.length === 0) return counts;
 
   const integration = await getIntegrationByTenantId(run.tenant_id);
   if (!integration || !integration.is_active) {
@@ -405,6 +453,17 @@ export async function runPull(run: PullRunRow, options: PullOptions = {}): Promi
       },
     },
   );
+
+  if (filters.mode === 'campaign') {
+    await runCampaignWalk(run, {
+      filters, since, until, selectedOrgs, mappings, foreign, pageTokens,
+      graphApiVersion: integration.graph_api_version,
+      systemToken: integration.access_token,
+      scope, counts, options,
+    });
+    counts.verdicts = await classifyRunLeads(run);
+    return counts;
+  }
 
   for (const pageId of pageIds) {
     const pageToken = pageTokens.get(pageId);
@@ -529,4 +588,140 @@ export async function runPull(run: PullRunRow, options: PullOptions = {}): Promi
   counts.verdicts = await classifyRunLeads(run);
 
   return counts;
+}
+
+/**
+ * Pages mapped (actively) to a tenant OTHER than this one. withServiceTx, a
+ * documented system read of page ids only: "does another tenant own this page"
+ * is a cross-tenant question no single tenant's policy can answer.
+ */
+async function foreignPages(tenantId: string): Promise<Set<string>> {
+  const rows = (await withServiceTx((tx) => tx.execute(sql`
+    SELECT DISTINCT page_id::text AS page_id FROM ext.meta_page_form_org_map
+    WHERE is_active AND tenant_id <> ${tenantId}::uuid
+      AND page_id NOT IN (SELECT page_id FROM ext.meta_page_form_org_map
+                          WHERE is_active AND tenant_id = ${tenantId}::uuid)
+  `))) as unknown as Array<{ page_id: string }>;
+  return new Set(rows.map((r) => r.page_id));
+}
+
+interface CampaignWalkContext {
+  filters: PullFilters;
+  since: Date;
+  until: Date | null;
+  selectedOrgs: Set<string>;
+  mappings: MappingRow[];
+  foreign: Set<string>;
+  pageTokens: Map<string, string>;
+  graphApiVersion: string;
+  systemToken: string;
+  scope: { actorUserId: string; tenantId: string };
+  counts: PullCounts;
+  options: PullOptions;
+}
+
+/**
+ * CAMPAIGN MODE (1.51.0): GET /{campaign}/ads on the system token, then
+ * /{ad}/leads on the PAGE token of the page each ad's ad set promotes. Only the
+ * selected campaigns' leads are fetched — the work shrinks with the selection,
+ * which pages mode cannot do — and leads on forms nobody mapped still surface
+ * (staged as unmapped_form, for the admin to map and remap).
+ *
+ * Branch resolution, the org selection and staging are identical to pages mode.
+ * An ad promoting a page another tenant maps is skipped, never staged.
+ */
+async function runCampaignWalk(run: PullRunRow, c: CampaignWalkContext): Promise<void> {
+  const { counts, options } = c;
+  counts.ads_walked = 0;
+  const pagesSeen = new Set<string>();
+
+  for (const campaignId of [...new Set(c.filters.campaign_ids)]) {
+    let ads;
+    try {
+      ads = await listCampaignAds(campaignId, c.systemToken, c.graphApiVersion, {
+        onBackoff: (info) => {
+          options.log?.warn(
+            { evt: 'lead_pull.graph_backoff', edge: 'campaign/ads', campaignId, attempt: info.attempt, delayMs: info.delay_ms },
+            'Backing off a Meta Graph call',
+          );
+        },
+      });
+    } catch (err) {
+      counts.page_errors.push({ page_id: `campaign ${campaignId}`, reason: `Could not list ads: ${errorMessage(err)}` });
+      continue;
+    }
+
+    for (const ad of ads) {
+      const pageId = ad.promoted_page_id;
+      if (!pageId) {
+        counts.page_errors.push({ page_id: `ad ${ad.ad_id}`, reason: 'Ad set promotes no page — its leads cannot be routed' });
+        continue;
+      }
+      if (c.foreign.has(pageId)) {
+        if (!pagesSeen.has(pageId)) counts.page_errors.push({ page_id: pageId, reason: 'Mapped to another tenant — not pulled' });
+        pagesSeen.add(pageId);
+        continue;
+      }
+      const pageToken = c.pageTokens.get(pageId);
+      if (!pageToken) {
+        if (!pagesSeen.has(pageId)) {
+          counts.page_errors.push({
+            page_id: pageId,
+            reason: "Not among the token's managed Pages (/me/accounts) — its leads cannot be read",
+          });
+        }
+        pagesSeen.add(pageId);
+        continue;
+      }
+      pagesSeen.add(pageId);
+      counts.ads_walked += 1;
+
+      let fetched: FormLeadsResult;
+      try {
+        fetched = await fetchEdgeLeads('ad', ad.ad_id, pageToken, c.graphApiVersion, c.since, c.until, options);
+      } catch (err) {
+        counts.page_errors.push({ page_id: pageId, reason: `Ad ${ad.ad_id}: ${errorMessage(err)}` });
+        continue;
+      }
+      counts.leads_returned += fetched.returned;
+      if (fetched.truncated) {
+        counts.truncated = true;
+        counts.truncated_forms.push(`ad:${ad.ad_id}`);
+      }
+
+      const staged: StagedLead[] = [];
+      for (const lead of fetched.leads) {
+        const metaLeadId = digitsOrNull(lead.id);
+        const formId = digitsOrNull(lead.form_id);
+        if (!metaLeadId || !formId) continue;
+        const mapping = resolveMapping(c.mappings, pageId, formId);
+        if (mapping !== null && c.selectedOrgs.size > 0 && !c.selectedOrgs.has(mapping.org_id)) {
+          counts.out_of_scope += 1;
+          continue;
+        }
+        const createdAt = parseMetaCreatedTime(lead.created_time);
+        staged.push({
+          orgId: mapping?.org_id ?? null,
+          pageId,
+          formId,
+          formName: null,
+          metaLeadId,
+          campaignId: digitsOrNull(lead.campaign_id) ?? campaignId,
+          adsetId: digitsOrNull(lead.adset_id) ?? ad.adset_id,
+          adId: digitsOrNull(lead.ad_id) ?? ad.ad_id,
+          platform:
+            lead.platform === 'fb' || lead.platform === 'ig' || lead.platform === 'wa'
+              ? lead.platform
+              : mapping?.platform ?? null,
+          leadCreatedAt: createdAt ? createdAt.toISOString() : null,
+          fieldData: lead.field_data ?? [],
+        });
+      }
+      if (staged.length > 0) {
+        counts.leads_staged += await withTenantConfigTx(c.scope, (tx) => stageLeads(tx, run.id, run.tenant_id, staged));
+      }
+      await options.onPageComplete?.();
+    }
+  }
+  counts.pages_walked = [...pagesSeen].filter((p) => !c.foreign.has(p) && c.pageTokens.has(p)).length;
 }

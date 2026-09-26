@@ -38,7 +38,17 @@ export interface MetaCampaignRow {
   campaign_type_label: string | null;
   mapping_status: MappingStatus;
   matched_keyword: string | null;
+  /** 1.51.0: the rule engine's guess — never the campaign's type until confirmed. */
+  suggested_campaign_type_id: string | null;
+  suggested_campaign_type_label: string | null;
+  matched_rule_id: string | null;
+  /** Pages this campaign's ad sets promote (as strings — 16+ digit ids). */
+  page_ids: string[];
+  /** Set when the campaign's pages map to more than one tenant. */
+  conflict_reason: string | null;
   confirmed_by: string | null;
+  /** Display name of confirmed_by; null when that user is not resolvable. */
+  confirmed_by_name: string | null;
   confirmed_at: string | null;
   first_seen_source: string | null;
   last_synced_at: string | null;
@@ -48,6 +58,8 @@ export interface MetaCampaignRow {
 
 export interface ListCampaignsFilters {
   mapping_status?: MappingStatus | undefined;
+  /** Only campaigns promoting this page. */
+  page_id?: string | undefined;
 }
 
 /**
@@ -95,22 +107,55 @@ export async function listCampaigns(
                ct.label AS campaign_type_label,
                mc.mapping_status,
                mc.matched_keyword,
+               mc.suggested_campaign_type_id,
+               st.label AS suggested_campaign_type_label,
+               mc.matched_rule_id,
+               ARRAY(SELECT p::text FROM unnest(mc.page_ids) p) AS page_ids,
+               mc.conflict_reason,
                mc.confirmed_by,
                mc.confirmed_at,
                mc.first_seen_source,
                mc.last_synced_at
         FROM ext.meta_campaigns mc
         LEFT JOIN marketing.campaign_types ct ON ct.id = mc.campaign_type_id
-        ${filters.mapping_status ? sql`WHERE mc.mapping_status = ${filters.mapping_status}` : sql``}
+        LEFT JOIN marketing.campaign_types st ON st.id = mc.suggested_campaign_type_id
+        WHERE TRUE
+        ${filters.mapping_status ? sql`AND mc.mapping_status = ${filters.mapping_status}` : sql``}
+        ${filters.page_id ? sql`AND ${filters.page_id}::bigint = ANY(mc.page_ids)` : sql``}
         ORDER BY mc.last_synced_at DESC NULLS LAST, mc.created_at DESC
       `);
-      return rows as unknown as Array<Omit<MetaCampaignRow, 'lead_count'>>;
+      return rows as unknown as Array<Omit<MetaCampaignRow, 'lead_count' | 'confirmed_by_name'>>;
     },
   );
 
   if (campaigns.length === 0) return [];
   const counts = await leadCountsByCampaign(scope.tenantId);
-  return campaigns.map((c) => ({ ...c, lead_count: counts.get(c.meta_campaign_id) ?? 0 }));
+  const names = await userNames([...new Set(campaigns.map((c) => c.confirmed_by).filter((u): u is string => !!u))]);
+  return campaigns.map((c) => ({
+    ...c,
+    confirmed_by_name: c.confirmed_by ? names.get(c.confirmed_by) ?? null : null,
+    lead_count: counts.get(c.meta_campaign_id) ?? 0,
+  }));
+}
+
+/**
+ * Display names for the "Confirmed by" column.
+ *
+ * withServiceTx, documented: confirmed_by is a platform super_admin, who holds no
+ * membership in the administered tenant, so iam.users' membership-keyed policy
+ * hides them from the admin transaction and the column showed a raw UUID. Only
+ * ids already stored on THIS tenant's campaign rows are looked up, and only
+ * full_name leaves the function.
+ */
+async function userNames(ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  return withServiceTx(async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT id, full_name FROM iam.users
+      WHERE id = ANY(ARRAY[${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)}])
+    `)) as unknown as Array<{ id: string; full_name: string | null }>;
+    return new Map(rows.filter((r) => r.full_name).map((r) => [r.id, r.full_name as string]));
+  });
 }
 
 /**
@@ -141,13 +186,19 @@ async function leadCountsByCampaign(tenantId: string): Promise<Map<string, numbe
   });
 }
 
+export type RuleField = 'campaign_name' | 'form_name' | 'adset_name' | 'ad_name';
+
 export interface ConfirmCampaignInput {
   campaign_type_id: string;
   /**
-   * Teach the type a keyword taken from THIS campaign's name, so the next
-   * similarly-named campaign auto-matches instead of landing unmapped again.
+   * 1.51.0: optionally ADD AN ORDERED RULE for this type in the same action, so
+   * the next similarly-named campaign is suggested correctly. The pattern is
+   * typed by the admin — the old "learn keyword" guessed a token from the name
+   * ('HIR_Gurugram_Trainer_Sep26' offered 'gurugram') and was retired with
+   * match_keywords. Appended at the END of the rule list; reorder on the
+   * Campaign Types screen.
    */
-  learn_keyword?: boolean | undefined;
+  add_rule?: { pattern: string; match_field: RuleField } | undefined;
   dry_run: boolean;
 }
 
@@ -155,8 +206,8 @@ export interface ConfirmCampaignResult {
   dry_run: boolean;
   meta_campaign_id: string;
   campaign_type_id: string;
-  /** The token added to match_keywords, or null when nothing was learned. */
-  learned_keyword: string | null;
+  /** The rule added (or, on a dry run, that would be added); null when none. */
+  added_rule: { pattern: string; match_field: RuleField } | null;
   /** True once the confirmed mapping is committed — always false on a dry run. */
   mapping_saved: boolean;
   /**
@@ -171,31 +222,6 @@ export interface ConfirmCampaignResult {
    * old label and owner until Confirm is pressed again, which is safe to repeat.
    */
   reclassification_error: string | null;
-}
-
-/**
- * The longest token in a campaign name that is not already a keyword anywhere in
- * the tenant, lower-cased.
- *
- * 'HIR_Gurugram_Trainer_Sep26' splits on the separators Meta names actually use
- * and yields 'gurugram' — which is the WRONG keyword for a hiring campaign and
- * is exactly why this returns a CANDIDATE for the admin to accept rather than
- * learning silently on every confirm. `learn_keyword` is opt-in per request for
- * that reason.
- *
- * Tokens shorter than four characters are skipped: a two-letter fragment matches
- * far too much, and `marketing.fn_match_campaign_type` matches on word
- * boundaries, not prefixes, so a short token is all risk and no reach.
- */
-function keywordCandidate(name: string | null, existing: string[]): string | null {
-  if (!name) return null;
-  const taken = new Set(existing.map((k) => k.toLowerCase()));
-  const tokens = name
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t.length >= 4 && !/^\d+$/.test(t) && !taken.has(t));
-  if (tokens.length === 0) return null;
-  return tokens.reduce((longest, t) => (t.length > longest.length ? t : longest));
 }
 
 interface CampaignRowForConfirm {
@@ -261,23 +287,11 @@ export async function confirmCampaignMapping(
       const campaign = await loadCampaignForConfirm(tx, metaCampaignId);
       await assertTypeUsable(tx, input.campaign_type_id);
 
-      let learnedKeyword: string | null = null;
-      if (input.learn_keyword) {
-        const typeRows = (await tx.execute(sql`
-          SELECT COALESCE(
-                   (SELECT array_agg(kw)
-                      FROM marketing.campaign_types t2, unnest(t2.match_keywords) AS kw
-                     WHERE t2.tenant_id = ct.tenant_id),
-                   '{}'
-                 ) AS tenant_keywords
-          FROM marketing.campaign_types ct
-          WHERE ct.id = ${input.campaign_type_id}::uuid
-          LIMIT 1
-        `)) as unknown as Array<{ tenant_keywords: string[] }>;
-        learnedKeyword = keywordCandidate(campaign.name, typeRows[0]?.tenant_keywords ?? []);
-      }
+      const addRule = input.add_rule && input.add_rule.pattern.trim()
+        ? { pattern: input.add_rule.pattern.trim(), match_field: input.add_rule.match_field }
+        : null;
 
-      if (input.dry_run) return { campaign, learnedKeyword };
+      if (input.dry_run) return { campaign, addRule };
 
       await tx.execute(sql`
         UPDATE ext.meta_campaigns
@@ -289,21 +303,20 @@ export async function confirmCampaignMapping(
         WHERE meta_campaign_id = ${metaCampaignId}::bigint
       `);
 
-      if (learnedKeyword) {
-        // array_append, not a rewrite of the whole array: two admins confirming
-        // different campaigns onto the same type at the same time would
-        // otherwise each write back the array they read and one keyword would
-        // vanish. The NOT-already-present guard keeps it idempotent.
+      if (addRule) {
+        // Appended after the tenant's last live rule, under this tenant's RLS;
+        // trg_campaign_type_rules_tenant_match refuses a foreign type anyway.
         await tx.execute(sql`
-          UPDATE marketing.campaign_types
-          SET match_keywords = array_append(match_keywords, ${learnedKeyword}),
-              updated_at     = NOW()
-          WHERE id = ${input.campaign_type_id}::uuid
-            AND NOT (${learnedKeyword} = ANY(match_keywords))
+          INSERT INTO marketing.campaign_type_rules (tenant_id, rule_order, match_field, pattern, campaign_type_id, created_by)
+          SELECT ${scope.tenantId}::uuid,
+                 COALESCE(MAX(rule_order), 0) + 10,
+                 ${addRule.match_field}, ${addRule.pattern}, ${input.campaign_type_id}::uuid, ${scope.actorUserId}::uuid
+          FROM marketing.campaign_type_rules
+          WHERE NOT is_deleted
         `);
       }
 
-      return { campaign, learnedKeyword };
+      return { campaign, addRule };
     },
   );
 
@@ -317,7 +330,7 @@ export async function confirmCampaignMapping(
     dry_run: input.dry_run,
     meta_campaign_id: prepared.campaign.meta_campaign_id,
     campaign_type_id: input.campaign_type_id,
-    learned_keyword: prepared.learnedKeyword,
+    added_rule: prepared.addRule,
   };
 
   // A preview that cannot be computed is simply an error — nothing was written,

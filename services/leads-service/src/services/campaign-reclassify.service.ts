@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { withServiceTx, sqlUuidArr } from '@platform/db';
 import type { DrizzleTx } from '@platform/db';
-import { resolveAutoAssignedUser } from '../lib/assignment.js';
+import { resolveAutoAssignedUser, storedAutoAssignReason } from '../lib/assignment.js';
 import { BadRequestError, NotFoundError } from '../lib/errors.js';
 
 /**
@@ -16,11 +16,14 @@ import { BadRequestError, NotFoundError } from '../lib/errors.js';
  *   RELABEL — every lead on that campaign, in every branch, gets the corrected
  *   campaign_type_id. Unconditional. A wrong label on a lead is just wrong.
  *
- *   RE-ROUTE — a much narrower set actually changes hands. A lead someone has
- *   already spoken to stays with them and only its label is corrected, because
- *   pulling a lead out from under a rep mid-conversation is worse than a wrong
- *   label. These conditions are a product decision agreed with the product
- *   owner, not a heuristic to tune: do not widen them.
+ *   RE-ROUTE — every OPEN lead of the campaign moves to the new type's pool in
+ *   its own branch, unless its current owner already works that pool. Product
+ *   decision 2026-09-26 (1.51.0), superseding the 1.49.0 rule that only moved
+ *   auto-assigned, never-contacted leads: a lead of the wrong type sits with a
+ *   team that cannot act on it (RLS hides a hiring lead from a sales rep), so
+ *   leaving it there to protect a conversation left it with nobody who could
+ *   finish that conversation. Unassigned open leads are picked into the new
+ *   pool too.
  *
  * The DB work runs in one withServiceTx (BYPASSRLS). Justified: this is a
  * cross-BRANCH system operation invoked service-to-service with no user session,
@@ -73,20 +76,34 @@ interface AffectedLeadRow {
 }
 
 /**
- * Leads that may CHANGE HANDS. All four conditions must hold:
+ * The leads of one Meta campaign inside one tenant. A lead belongs to the
+ * campaign through its branch's marketing.ad_campaigns row, OR -- when that row
+ * could not be created at intake (no catalogue status for the platform) and the
+ * lead has no campaign_id -- through the Meta campaign id intake stamped into
+ * metadata. Without the second arm those leads were never relabelled at all.
+ * leads-service never reads ext.*, which is why metadata and not ext.meta_leads.
+ */
+function campaignLeadsPredicate(metaCampaignId: string, tenantId: string) {
+  return sql`
+    o.tenant_id = ${tenantId}::uuid
+    AND NOT ml.is_deleted
+    AND (
+      EXISTS (SELECT 1 FROM marketing.ad_campaigns ac
+              WHERE ac.id = ml.campaign_id AND ac.meta_campaign_id = ${metaCampaignId}::bigint)
+      OR (ml.campaign_id IS NULL AND ml.metadata->>'campaign_id' = ${metaCampaignId})
+    )`;
+}
+
+/**
+ * Leads that CHANGE HANDS (1.51.0). All must hold:
  *
- *   1. auto-assigned and never manually touched — there is an 'initial' log row
- *      and no human reassignment after it;
- *   2. still open (non-terminated stage);
- *   3. zero interactions — nobody has called, messaged or met them;
- *   4. the current assignee is not in the NEW type's pool for that branch, so
- *      leaving the lead put would mean leaving it with someone who does not work
- *      this kind of lead at all.
+ *   1. active, not superseded, still open (non-terminated stage);
+ *   2. either unassigned, or the current owner is not in the NEW type's pool for
+ *      that branch -- an owner weighted for both pools simply keeps the lead.
  *
- * Condition 4 is what keeps the fan-out quiet in the common case: a rep weighted
- * for both pools simply keeps their lead.
+ * Interactions and manual assignment no longer protect a lead: see the header.
  *
- * Shared verbatim by the dry run and the real run — the preview would otherwise
+ * Shared verbatim by the dry run and the real run -- the preview would otherwise
  * promise an impact different from the one the admin confirms.
  */
 async function selectReroutableLeads(
@@ -98,60 +115,36 @@ async function selectReroutableLeads(
   return (await tx.execute(sql`
     SELECT ml.id, ml.org_id, o.name AS org_name
     FROM lms.marketing_leads ml
-    JOIN marketing.ad_campaigns ac ON ac.id = ml.campaign_id
     JOIN entity.organizations   o  ON o.id  = ml.org_id
     LEFT JOIN lms.lead_stage    ls ON ls.id = ml.stage_id
-    WHERE ac.meta_campaign_id = ${metaCampaignId}::bigint
-      AND o.tenant_id = ${tenantId}::uuid
+    WHERE ${campaignLeadsPredicate(metaCampaignId, tenantId)}
       AND ml.is_active
-      AND NOT ml.is_deleted
       AND ml.superseded_by IS NULL
-      AND ml.assigned_user_id IS NOT NULL
-      -- (2) still open. IS DISTINCT FROM TRUE, not = FALSE: stage_id is nullable
+      -- still open. IS DISTINCT FROM TRUE, not = FALSE: stage_id is nullable
       -- and the join is LEFT, so NULL = FALSE is NULL, which would drop every
       -- stageless lead right back out again.
       AND ls.is_terminated IS DISTINCT FROM TRUE
-      -- (3) nobody has worked it yet
-      AND NOT EXISTS (
-        SELECT 1 FROM lms.lead_interactions li
-        WHERE li.lead_id = ml.id AND NOT li.is_deleted
-      )
-      -- (1) auto-assigned...
-      AND EXISTS (
-        SELECT 1 FROM lms.lead_assignment_log lal
-        WHERE lal.lead_id = ml.id AND lal.action = 'initial'
-      )
-      -- ...and untouched by a person since. 'unassigned' is not listed: an
-      -- unassign followed by nothing is not somebody claiming the lead.
-      AND NOT EXISTS (
-        SELECT 1 FROM lms.lead_assignment_log later
-        WHERE later.lead_id = ml.id
-          AND later.action IN ('reassigned', 'bulk_assigned', 'self_assigned', 'reclassified')
-          AND later.assigned_at > (
-            SELECT MIN(first.assigned_at) FROM lms.lead_assignment_log first
-            WHERE first.lead_id = ml.id AND first.action = 'initial'
-          )
-      )
-      -- (4) the current owner is not in the new pool for THIS lead's branch.
-      -- lms.lead_assignment_weights has no org_id — the branch resolves through
-      -- iam.user_org_mapping, never a direct column.
-      -- Same department rule the picker applies: a weight row only counts when
-      -- the owner's role department matches the new type's department. A
-      -- mismatched row is kept on disk but routes nothing, so an owner holding
-      -- only that row is NOT in the new pool and the lead is re-routed.
-      AND NOT EXISTS (
-        SELECT 1
-        FROM lms.lead_assignment_weights w
-        JOIN iam.user_org_mapping uom ON uom.id = w.user_org_mapping_id
-        JOIN iam.user_roles ur        ON ur.id  = uom.role_id
-        JOIN marketing.campaign_types nct ON nct.id = w.campaign_type_id
-        WHERE uom.user_id = ml.assigned_user_id
-          AND uom.org_id  = ml.org_id
-          AND uom.is_active
-          AND w.campaign_type_id = ${newTypeId}::uuid
-          AND w.weight > 0
-          AND ur.department_id IS NOT NULL
-          AND nct.department_id IS NOT DISTINCT FROM ur.department_id
+      -- unassigned, or the current owner is not in the new pool for THIS lead's
+      -- branch. lms.lead_assignment_weights has no org_id -- the branch resolves
+      -- through iam.user_org_mapping. Same department rule the picker applies: a
+      -- weight row only counts when the owner's role department matches the new
+      -- type's department.
+      AND (
+        ml.assigned_user_id IS NULL
+        OR NOT EXISTS (
+          SELECT 1
+          FROM lms.lead_assignment_weights w
+          JOIN iam.user_org_mapping uom ON uom.id = w.user_org_mapping_id
+          JOIN iam.user_roles ur        ON ur.id  = uom.role_id
+          JOIN marketing.campaign_types nct ON nct.id = w.campaign_type_id
+          WHERE uom.user_id = ml.assigned_user_id
+            AND uom.org_id  = ml.org_id
+            AND uom.is_active
+            AND w.campaign_type_id = ${newTypeId}::uuid
+            AND w.weight > 0
+            AND ur.department_id IS NOT NULL
+            AND nct.department_id IS NOT DISTINCT FROM ur.department_id
+        )
       )
     ORDER BY ml.org_id, ml.id
   `)) as unknown as CandidateLead[];
@@ -166,11 +159,8 @@ async function countAffectedLeads(
   return (await tx.execute(sql`
     SELECT ml.org_id, o.name AS org_name, COUNT(*) AS lead_count
     FROM lms.marketing_leads ml
-    JOIN marketing.ad_campaigns ac ON ac.id = ml.campaign_id
     JOIN entity.organizations   o  ON o.id  = ml.org_id
-    WHERE ac.meta_campaign_id = ${metaCampaignId}::bigint
-      AND o.tenant_id = ${tenantId}::uuid
-      AND NOT ml.is_deleted
+    WHERE ${campaignLeadsPredicate(metaCampaignId, tenantId)}
     GROUP BY ml.org_id, o.name
     ORDER BY o.name
   `)) as unknown as AffectedLeadRow[];
@@ -254,12 +244,9 @@ export async function reclassifyCampaign(params: ReclassifyParams): Promise<Recl
       await tx.execute(sql`
         UPDATE lms.marketing_leads ml
         SET campaign_type_id = ${campaignTypeId}::uuid, updated_at = NOW()
-        FROM marketing.ad_campaigns ac, entity.organizations o
-        WHERE ac.id = ml.campaign_id
-          AND o.id  = ml.org_id
-          AND ac.meta_campaign_id = ${metaCampaignId}::bigint
-          AND o.tenant_id = ${tenantId}::uuid
-          AND NOT ml.is_deleted
+        FROM entity.organizations o
+        WHERE o.id = ml.org_id
+          AND ${campaignLeadsPredicate(metaCampaignId, tenantId)}
           AND ml.campaign_type_id IS DISTINCT FROM ${campaignTypeId}::uuid
           ${excluded.length ? sql`AND ml.id <> ALL(${sqlUuidArr(excluded)})` : sql``}
       `);
@@ -311,6 +298,7 @@ export async function reclassifyCampaign(params: ReclassifyParams): Promise<Recl
       await tx.execute(sql`
         UPDATE lms.marketing_leads
         SET assigned_user_id = ${pick.userId ? sql`${pick.userId}::uuid` : sql`NULL`},
+            auto_assign_reason = ${storedAutoAssignReason(pick.reason)},
             campaign_type_id = ${campaignTypeId}::uuid,
             updated_at = NOW()
         WHERE id = ${lead.id}::uuid

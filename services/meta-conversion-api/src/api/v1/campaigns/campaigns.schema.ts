@@ -17,9 +17,14 @@ export const mappingStatusSchema = z.enum(['unmapped', 'suggested', 'confirmed']
 export const listCampaignsQuerySchema = tenantScopedQuerySchema.extend({
   // Omitted = every campaign. The three admin grids each pass one value.
   mapping_status: mappingStatusSchema.optional(),
+  // 1.51.0: only campaigns promoting this page (the grid's Page filter).
+  page_id: z.string().regex(/^\d+$/).optional(),
 });
 
-export const syncCampaignsQuerySchema = tenantScopedQuerySchema;
+// 1.51.0: optional -- see campaigns.controller.ts::syncCampaigns.
+export const syncCampaignsQuerySchema = z.object({
+  tenant_id: z.string().uuid().optional(),
+});
 
 /**
  * `?dry_run=true` / `?dry_run=false`, parsed HONESTLY.
@@ -44,13 +49,20 @@ export const confirmCampaignQuerySchema = tenantScopedQuerySchema.extend({
   dry_run: booleanQueryParam.default(false),
 });
 
+export const ruleMatchFieldSchema = z.enum(['campaign_name', 'form_name', 'adset_name', 'ad_name']);
+
 export const confirmCampaignBodySchema = z.object({
   campaign_type_id: z.string().uuid(),
-  // Opt-in: the token this would learn is a guess taken from the campaign name
-  // ('HIR_Gurugram_Trainer_Sep26' offers 'gurugram' as readily as 'trainer'),
-  // and a wrong keyword silently mistypes every future campaign that contains
-  // it. The admin says yes; the server never decides on its own.
-  learn_keyword: z.boolean().default(false),
+  // 1.51.0: optionally add an ORDERED RULE for the confirmed type in the same
+  // action. The pattern is TYPED by the admin -- never guessed from the name the
+  // way the retired learn_keyword did ('HIR_Gurugram_Trainer_Sep26' offered
+  // 'gurugram'). Appended at the end of the tenant's rule list.
+  add_rule: z
+    .object({
+      pattern: z.string().trim().min(2).max(100),
+      match_field: ruleMatchFieldSchema.default('campaign_name'),
+    })
+    .optional(),
 });
 
 export const campaignParamsSchema = z.object({

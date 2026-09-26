@@ -11,6 +11,7 @@ import {
   runParamsSchema,
   listRunLeadsQuerySchema,
   tenantScopedQuerySchema,
+  latestRunQuerySchema,
 } from './lead-pull.schema.js';
 
 // The Meta lead PULL: a super admin backfilling leads the live webhook missed.
@@ -67,6 +68,7 @@ export async function createRun(request: FastifyRequest, reply: FastifyReply): P
     campaign_ids: body.campaign_ids,
     since: body.since,
     until: body.until ?? null,
+    mode: body.mode,
   });
 
   request.log.info(
@@ -103,12 +105,13 @@ export async function getLatestRun(request: FastifyRequest, reply: FastifyReply)
   const ctx = parseAuthContext(request, reply);
   if (!ctx) return;
 
-  const { tenant_id } = tenantScopedQuerySchema.parse(request.query);
+  const { tenant_id, trigger_kind } = latestRunQuerySchema.parse(request.query);
   const scope = adminScope(tenant_id, ctx);
 
   // 200 with data: null when the tenant has no run — "nothing to reopen" is an
-  // answer, not a missing resource.
-  const latest = await leadPull.getLatestPullRun(scope);
+  // answer, not a missing resource. ?trigger_kind=scheduled reopens the latest
+  // scheduled catch-up run instead of the admin's own (1.51.0).
+  const latest = await leadPull.getLatestPullRun(scope, trigger_kind);
   return reply.send({ success: true, data: latest });
 }
 
@@ -157,4 +160,26 @@ export async function applyPullRun(request: FastifyRequest, reply: FastifyReply)
   );
 
   return reply.status(202).send({ success: true, data: result });
+}
+
+/**
+ * Re-resolves the branch of a run's UNMAPPED rows after the admin mapped their
+ * page/form inline, and re-classifies the run (1.51.0). The rows become
+ * importable without a second Graph walk; Apply then takes them even on a run
+ * that was already applied.
+ */
+export async function remapPullRun(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const ctx = parseAuthContext(request, reply);
+  if (!ctx) return;
+
+  const { tenant_id } = tenantScopedQuerySchema.parse(request.query);
+  const scope = adminScope(tenant_id, ctx);
+  const { runId } = runParamsSchema.parse(request.params);
+
+  const result = await leadPull.remapRun(scope, runId);
+  request.log.info(
+    { evt: 'lead_pull.remapped', runId, tenantId: tenant_id, remapped: result.remapped, stillUnmapped: result.still_unmapped },
+    'Meta lead pull remapped',
+  );
+  return reply.send({ success: true, data: result });
 }

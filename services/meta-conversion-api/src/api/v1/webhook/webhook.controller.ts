@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { getIntegrationById, getGlobalIntegration, type MetaIntegration } from '../../../services/integration.service.js';
 import { fetchLeadFromMeta } from '../../../services/meta-api.service.js';
 import { syncLeadToDatabase, resolveLeadPlatform, isMetaTestLead } from '../../../services/lead-sync.service.js';
-import { resolveOrgId, resolveTenantAndOrg } from '../../../services/page-org-map.service.js';
+import { resolveOrgId, resolveTenantAndOrg, touchMappingLastLead } from '../../../services/page-org-map.service.js';
 import { verifyHmacSignature } from '../../../lib/hmac.js';
+import { recordInbox, resolveInboxByMetaLead } from '../../../services/lead-inbox.service.js';
 import { pgNotify } from '@platform/db';
 import { config } from '../../../config/index.js';
 
@@ -123,6 +124,9 @@ export async function handleWebhookPost(
       let diagFormId: string | undefined;
       let diagOrgId: string | undefined;
       let diagTenantId: string | undefined;
+      // The lead as Meta returned it, kept so a failure can be parked in the
+      // inbox with its data (1.51.0) — undefined only when the fetch itself failed.
+      let fetchedLead: Awaited<ReturnType<typeof fetchLeadFromMeta>> | undefined;
 
       try {
         const rawLead = await fetchLeadFromMeta(
@@ -132,6 +136,7 @@ export async function handleWebhookPost(
         );
 
         rawLead.field_data = rawLead.field_data ?? [];
+        fetchedLead = rawLead;
 
         // form_id is the routing key, but the webhook event doesn't
         // guarantee it — the Graph API lead-detail fetch above is the
@@ -156,8 +161,26 @@ export async function handleWebhookPost(
               formId: formId ?? null,
               integrationId: integration.id,
             },
-            'No org mapping for Meta lead — skipping',
+            'No org mapping for Meta lead — parked in the lead inbox',
           );
+          // 1.51.0: parked, not dropped. A super admin maps the page and presses
+          // Retry on the Meta Lead Inbox screen. Test leads are not parked.
+          if (!isMetaTestLead(rawLead.field_data)) {
+            await recordInbox({
+              meta_lead_id: leadId,
+              tenant_id: integration.tenant_id,
+              integration_id: integration.id,
+              page_id: change.value.page_id,
+              form_id: formId,
+              campaign_id: rawLead.campaign_id,
+              adset_id: rawLead.adset_id,
+              ad_id: rawLead.ad_id ?? change.value.ad_id,
+              lead_created_at: rawLead.created_time ?? null,
+              raw_field_data: rawLead.field_data,
+              reason: 'unmapped',
+              error_text: 'No active branch mapping for this page/form',
+            }).catch((err: unknown) => request.log.error({ evt: 'webhook.inbox_write_failed', err, metaLeadId: leadId }, 'Could not park lead in inbox'));
+          }
           results.push({ leadId, status: 'unmapped' });
           continue;
         }
@@ -243,13 +266,20 @@ export async function handleWebhookPost(
           'Lead synced',
         );
 
+        touchMappingLastLead(change.value.page_id, formId).catch(() => undefined);
+        // A redelivery or retry of a lead that was parked earlier closes its row.
+        resolveInboxByMetaLead(leadId, syncResult.marketingLeadId).catch(() => undefined);
+
         if (!syncResult.isDuplicate) {
           pgNotify('crm_events', {
             type: 'lead:created',
             lead_id: syncResult.marketingLeadId,
             org_id: mapping.orgId,
             tenant_id: tenantId,
-            assigned_user_id: null,
+            // The real assignee (1.51.0). Hard-coded null before, so the rep who
+            // received the lead got no live event unless their role could see
+            // unassigned leads.
+            assigned_user_id: syncResult.assignedUserId,
             actor_id: 'system',
             ts: Date.now(),
           }).catch((err: unknown) => {
@@ -284,6 +314,25 @@ export async function handleWebhookPost(
           },
           'Failed to sync Meta lead',
         );
+        // 1.51.0: parked with the reason, so it can be fixed and retried rather
+        // than lost. The message is our own (missing phone) or a sanitised
+        // upstream summary — never the lead's field values.
+        const message = leadError instanceof Error ? leadError.message : 'Unknown error';
+        await recordInbox({
+          meta_lead_id: leadId,
+          tenant_id: diagTenantId ?? integration.tenant_id,
+          org_id: diagOrgId ?? null,
+          integration_id: integration.id,
+          page_id: change.value.page_id,
+          form_id: diagFormId,
+          campaign_id: fetchedLead?.campaign_id,
+          adset_id: fetchedLead?.adset_id,
+          ad_id: fetchedLead?.ad_id ?? change.value.ad_id,
+          lead_created_at: fetchedLead?.created_time ?? null,
+          raw_field_data: fetchedLead?.field_data ?? null,
+          reason: /missing a required phone/i.test(message) ? 'missing_contact' : 'sync_failed',
+          error_text: message,
+        }).catch((err: unknown) => request.log.error({ evt: 'webhook.inbox_write_failed', err, metaLeadId: leadId }, 'Could not park lead in inbox'));
         results.push({ leadId, status: 'error' });
       }
     }

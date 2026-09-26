@@ -1,0 +1,19 @@
+meta {
+  name: Sync Meta Ad Accounts
+  type: http
+  seq: 31
+}
+
+post {
+  url: {{baseUrl}}/meta/ad-accounts/sync
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  GET /me/adaccounts on the shared token. New accounts arrive disabled. Needs ads_read.
+}

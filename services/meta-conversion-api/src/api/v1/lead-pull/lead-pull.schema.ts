@@ -81,11 +81,29 @@ export const createRunBodySchema = z
     since: isoInstant,
     /** Optional upper bound; omitted = now. Also applied post-fetch. */
     until: isoInstant.nullable().optional(),
+    /**
+     * 1.51.0. 'pages' (default): walk every form of the pages in scope and keep
+     * the selected campaigns post-fetch. 'campaign': walk ONLY the selected
+     * campaigns' ads (GET /{campaign}/ads -> /{ad}/leads) — much less Graph work
+     * for one campaign, and it finds leads on forms nobody mapped. Needs
+     * `ads_read` on the shared token.
+     */
+    mode: z.enum(['pages', 'campaign']).default('pages'),
   })
   .refine((d) => !d.until || Date.parse(d.until) > Date.parse(d.since), {
     message: '`until` must be after `since`',
     path: ['until'],
+  })
+  .refine((d) => d.mode !== 'campaign' || (d.campaign_ids.length >= 1 && d.campaign_ids.length <= 20), {
+    message: 'campaign mode needs between 1 and 20 campaign_ids',
+    path: ['campaign_ids'],
   });
+
+// 1.51.0: which run the screen reopens — the admin's own, or the latest
+// scheduled catch-up run.
+export const latestRunQuerySchema = tenantScopedQuerySchema.extend({
+  trigger_kind: z.enum(['manual', 'scheduled']).default('manual'),
+});
 
 export const runParamsSchema = z.object({
   runId: z.string().uuid(),

@@ -1,0 +1,19 @@
+meta {
+  name: Latest Scheduled Lead Pull Run
+  type: http
+  seq: 38
+}
+
+get {
+  url: {{baseUrl}}/meta/lead-pull/runs/latest?tenant_id={{tenantId}}&trigger_kind=scheduled
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  The latest scheduled catch-up run (staged only, never auto-applied).
+}

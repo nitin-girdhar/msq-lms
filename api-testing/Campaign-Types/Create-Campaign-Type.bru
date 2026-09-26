@@ -29,9 +29,9 @@ docs {
   Gated on lms.campaign_types.manage. The tenant comes from the verified
   session, never the body.
 
-  match_keywords are matched case-insensitively ON WORD BOUNDARIES against the
-  Meta campaign name by marketing.fn_match_campaign_type() -- so 'hr' does not
-  match "Gurugram". Lower match_priority wins when two types both match.
+  1.51.0: match_keywords / match_priority are DEPRECATED and no longer read.
+  Typing is done by the ordered rules (Create-Rule.bru); the type only needs a
+  department_id, which decides whose pool its leads route to.
 
   `name` cannot be changed afterwards and `is_default` is not settable here:
   the name is what weight rows and the Python sync refer to a pool by, and the

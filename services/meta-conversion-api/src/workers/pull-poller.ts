@@ -1,7 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { withServiceTx, withTenantConfigTx } from '@platform/db';
 import { config } from '../config/index.js';
-import { runPull, type PullRunRow, type PullCounts } from '../services/lead-pull.service.js';
+import { runPull, SYSTEM_ACTOR_ID, type PullRunRow, type PullCounts } from '../services/lead-pull.service.js';
+import { createPullRun } from '../services/lead-pull.admin.service.js';
 import { applyRun, type ClaimedApplyRun } from '../services/lead-apply.service.js';
 import type { LeadSyncLogger } from '../services/lead-sync.service.js';
 
@@ -160,7 +161,7 @@ async function reapStaleRuns(): Promise<number> {
 }
 
 async function writeHeartbeat(run: PullRunRow): Promise<void> {
-  await withTenantConfigTx({ actorUserId: run.created_by, tenantId: run.tenant_id }, (tx) =>
+  await withTenantConfigTx({ actorUserId: run.created_by ?? SYSTEM_ACTOR_ID, tenantId: run.tenant_id }, (tx) =>
     tx.execute(sql`
       UPDATE scratch.meta_pull_runs
       SET heartbeat_at = NOW(), updated_at = NOW()
@@ -170,7 +171,7 @@ async function writeHeartbeat(run: PullRunRow): Promise<void> {
 }
 
 async function finishRun(run: PullRunRow, counts: PullCounts): Promise<void> {
-  await withTenantConfigTx({ actorUserId: run.created_by, tenantId: run.tenant_id }, (tx) =>
+  await withTenantConfigTx({ actorUserId: run.created_by ?? SYSTEM_ACTOR_ID, tenantId: run.tenant_id }, (tx) =>
     tx.execute(sql`
       UPDATE scratch.meta_pull_runs
       SET status       = 'completed',
@@ -187,7 +188,7 @@ async function finishRun(run: PullRunRow, counts: PullCounts): Promise<void> {
 }
 
 async function failRun(run: PullRunRow, message: string): Promise<void> {
-  await withTenantConfigTx({ actorUserId: run.created_by, tenantId: run.tenant_id }, (tx) =>
+  await withTenantConfigTx({ actorUserId: run.created_by ?? SYSTEM_ACTOR_ID, tenantId: run.tenant_id }, (tx) =>
     tx.execute(sql`
       UPDATE scratch.meta_pull_runs
       SET status      = 'failed',
@@ -237,7 +238,64 @@ async function runQueuedApply(): Promise<boolean> {
   return true;
 }
 
+// ── Scheduled catch-up (1.51.0) ─────────────────────────────────────────────
+//
+// The webhook is the primary path and answers 200 even for a lead it could not
+// land (see lead-inbox.service.ts), so Meta never redelivers it. This is the
+// safety net: every META_CATCHUP_INTERVAL_HOURS, one 'scheduled' run per tenant
+// that has active page mappings, over the last META_CATCHUP_WINDOW_DAYS. It
+// STAGES AND CLASSIFIES ONLY — a person reviews it on the Lead Pull screen and
+// presses Apply (product decision 2026-09-26). It lives in its own run slot
+// (trigger_kind), so it never deletes or blocks an admin's own pull.
+//
+// Checked at most once a minute, not every tick, and enqueued through the same
+// createPullRun the API uses — same advisory lock, same 409 guard, same policy.
+
+let lastCatchupCheck = 0;
+const CATCHUP_CHECK_EVERY_MS = 60_000;
+
+async function enqueueScheduledCatchups(): Promise<void> {
+  const intervalHours = config.leadPullCatchupIntervalHours;
+  if (intervalHours <= 0) return;
+  if (Date.now() - lastCatchupCheck < CATCHUP_CHECK_EVERY_MS) return;
+  lastCatchupCheck = Date.now();
+
+  // Cross-tenant by nature, like the claim: WHICH tenants are due is the
+  // question. Reads tenant ids and timestamps only; every run it leads to is
+  // created under withTenantConfigTx pinned to that tenant.
+  const due = (await withServiceTx((tx) => tx.execute(sql`
+    SELECT DISTINCT m.tenant_id
+    FROM ext.meta_page_form_org_map m
+    WHERE m.is_active
+      AND NOT EXISTS (
+        SELECT 1 FROM scratch.meta_pull_runs r
+        WHERE r.tenant_id = m.tenant_id
+          AND r.trigger_kind = 'scheduled'
+          AND r.created_at > NOW() - make_interval(hours => ${intervalHours}::int)
+      )
+  `))) as unknown as Array<{ tenant_id: string }>;
+
+  const since = new Date(Date.now() - config.leadPullCatchupWindowDays * 86_400_000).toISOString();
+  for (const { tenant_id } of due) {
+    try {
+      const { run_id } = await createPullRun(
+        { actorUserId: SYSTEM_ACTOR_ID, tenantId: tenant_id },
+        { org_ids: [], page_ids: [], campaign_ids: [], since, until: null, mode: 'pages' },
+        'scheduled',
+      );
+      log.info({ evt: 'lead_pull.catchup_enqueued', runId: run_id, tenantId: tenant_id }, 'Scheduled catch-up pull enqueued');
+    } catch (err) {
+      // A scheduled run still live for this tenant (409) is the common case and
+      // needs nothing; anything else is logged and retried next interval.
+      log.warn({ evt: 'lead_pull.catchup_enqueue_skipped', err, tenantId: tenant_id }, 'Scheduled catch-up not enqueued');
+    }
+  }
+}
+
 async function tick(): Promise<void> {
+  await enqueueScheduledCatchups().catch((err: unknown) =>
+    log.error({ evt: 'lead_pull.catchup_failed', err }, 'Scheduled catch-up check failed'));
+
   const reaped = await reapStaleRuns();
   if (reaped > 0) {
     log.warn({ evt: 'lead_pull.runs_reaped', count: reaped }, 'Failed pull runs with a stale heartbeat');

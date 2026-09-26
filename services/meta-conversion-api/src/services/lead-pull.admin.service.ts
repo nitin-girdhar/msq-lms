@@ -4,7 +4,7 @@ import { ConflictError, NotFoundError } from '../lib/errors.js';
 import { assertTenantExists } from '../lib/admin-tenant.js';
 import type { AdminTenantScope } from './page-org-map.admin.service.js';
 import type { PullFilters } from './lead-pull.service.js';
-import { IMPORTABLE_VERDICTS } from './lead-reconcile.service.js';
+import { IMPORTABLE_VERDICTS, classifyRunLeads } from './lead-reconcile.service.js';
 
 // ── The request-side half of the lead-pull feature ──────────────────────────
 //
@@ -46,9 +46,17 @@ export interface CreateRunResult {
  * minutes and is done by the poller, so nothing here rides on the gateway
  * timeout.
  */
+export type TriggerKind = 'manual' | 'scheduled';
+
+export { SYSTEM_ACTOR_ID } from './lead-pull.service.js';
+
 export async function createPullRun(
   scope: AdminTenantScope,
   filters: PullFilters,
+  // 1.51.0: a tenant holds at most ONE run of each kind. The admin's run and
+  // the scheduled catch-up run live side by side, so the catch-up never deletes
+  // a pull someone is reviewing, and a busy catch-up never blocks a person.
+  triggerKind: TriggerKind = 'manual',
 ): Promise<CreateRunResult> {
   return withTenantConfigTx(scope, async (tx) => {
     await assertTenantExists(tx, scope.tenantId);
@@ -67,6 +75,7 @@ export async function createPullRun(
     const live = (await tx.execute(sql`
       SELECT id, status FROM scratch.meta_pull_runs
       WHERE status = ANY(${sqlTextArr(LIVE_STATUSES)})
+        AND trigger_kind = ${triggerKind}
       LIMIT 1
     `)) as unknown as Array<{ id: string; status: string }>;
 
@@ -89,12 +98,14 @@ export async function createPullRun(
     // on the policy alone is not worth the blast radius if it were ever
     // mis-applied.
     await tx.execute(sql`
-      DELETE FROM scratch.meta_pull_runs WHERE tenant_id = ${scope.tenantId}::uuid
+      DELETE FROM scratch.meta_pull_runs
+      WHERE tenant_id = ${scope.tenantId}::uuid AND trigger_kind = ${triggerKind}
     `);
 
+    const createdBy = triggerKind === 'scheduled' ? null : scope.actorUserId;
     const inserted = (await tx.execute(sql`
-      INSERT INTO scratch.meta_pull_runs (tenant_id, created_by, status, filters)
-      VALUES (${scope.tenantId}::uuid, ${scope.actorUserId}::uuid, 'queued', ${JSON.stringify(filters)}::jsonb)
+      INSERT INTO scratch.meta_pull_runs (tenant_id, created_by, status, filters, trigger_kind)
+      VALUES (${scope.tenantId}::uuid, ${createdBy}::uuid, 'queued', ${JSON.stringify(filters)}::jsonb, ${triggerKind})
       RETURNING id
     `)) as unknown as Array<{ id: string }>;
 
@@ -105,6 +116,7 @@ export async function createPullRun(
 export interface PullRunStatus {
   id: string;
   status: string;
+  trigger_kind: TriggerKind;
   filters: PullFilters;
   counts: Record<string, unknown>;
   heartbeat_at: string | null;
@@ -143,7 +155,7 @@ export async function getPullRun(scope: AdminTenantScope, runId: string): Promis
     // tenant is invisible and reaches here as "not found", which is the right
     // answer — distinguishing the two would confirm its existence.
     const rows = (await tx.execute(sql`
-      SELECT r.id, r.status, r.filters, r.counts, r.heartbeat_at, r.started_at,
+      SELECT r.id, r.status, r.trigger_kind, r.filters, r.counts, r.heartbeat_at, r.started_at,
              r.finished_at, r.applied_at, r.error_text, r.created_at,
              COALESCE((
                SELECT jsonb_object_agg(v.verdict, v.n)
@@ -177,7 +189,9 @@ export async function getPullRun(scope: AdminTenantScope, runId: string): Promis
 
     return {
       ...run,
-      campaign_filter_is_post_fetch: (run.filters?.campaign_ids?.length ?? 0) > 0,
+      // Campaign MODE walks the campaigns' own ads, so its filter is not post-fetch.
+      campaign_filter_is_post_fetch:
+        (run.filters?.campaign_ids?.length ?? 0) > 0 && run.filters?.mode !== 'campaign',
     };
   });
 }
@@ -196,7 +210,10 @@ export interface LatestPullRun {
  * before inserting the next, so there is normally exactly one; ORDER BY + LIMIT
  * is belt-and-braces.
  */
-export async function getLatestPullRun(scope: AdminTenantScope): Promise<LatestPullRun | null> {
+export async function getLatestPullRun(
+  scope: AdminTenantScope,
+  triggerKind: TriggerKind = 'manual',
+): Promise<LatestPullRun | null> {
   return withTenantConfigTx(scope, async (tx) => {
     await assertTenantExists(tx, scope.tenantId);
 
@@ -204,6 +221,7 @@ export async function getLatestPullRun(scope: AdminTenantScope): Promise<LatestP
     const rows = (await tx.execute(sql`
       SELECT id AS run_id, status
       FROM scratch.meta_pull_runs
+      WHERE trigger_kind = ${triggerKind}
       ORDER BY created_at DESC
       LIMIT 1
     `)) as unknown as LatestPullRun[];
@@ -281,7 +299,9 @@ export interface PullCampaignOption {
   meta_campaign_id: string;
   name: string | null;
   effective_status: string | null;
+  /** The confirmed type, else the suggestion. */
   campaign_type_label: string | null;
+  mapping_status: string;
 }
 
 /**
@@ -301,13 +321,20 @@ export async function listPullCampaigns(
   pageIds: string[],
 ): Promise<PullCampaignOption[]> {
   const observed = pageIds.length ? await observedCampaignIds(scope, pageIds) : null;
-  if (observed !== null && observed.length === 0) return [];
 
   return withTenantConfigTx(scope, async (tx) => {
     await assertTenantExists(tx, scope.tenantId);
 
+    // 1.51.0: a campaign belongs to the selected pages when it has DELIVERED a
+    // lead on one of them (observed) OR its ad sets PROMOTE one of them (the
+    // page_ids the campaign fetch now records) — so a campaign with no leads yet
+    // is pullable too.
+    const pageArr = pageIds.length
+      ? sql`ARRAY[${sql.join(pageIds.map((p) => sql`${p}::bigint`), sql`, `)}]::bigint[]`
+      : sql`'{}'::bigint[]`;
     const idFilter = observed
-      ? sql`AND mc.meta_campaign_id = ANY(ARRAY[${sql.join(observed.map((c) => sql`${c}::bigint`), sql`, `)}])`
+      ? sql`AND (mc.page_ids && ${pageArr}
+                 ${observed.length ? sql`OR mc.meta_campaign_id = ANY(ARRAY[${sql.join(observed.map((c) => sql`${c}::bigint`), sql`, `)}])` : sql``})`
       : sql``;
 
     // No tenant filter: admin_tenant_config_policy on ext.meta_campaigns is the
@@ -316,9 +343,11 @@ export async function listPullCampaigns(
       SELECT mc.meta_campaign_id::text AS meta_campaign_id,
              mc.name,
              mc.effective_status,
-             ct.label AS campaign_type_label
+             COALESCE(ct.label, st.label) AS campaign_type_label,
+             mc.mapping_status
       FROM ext.meta_campaigns mc
       LEFT JOIN marketing.campaign_types ct ON ct.id = mc.campaign_type_id
+      LEFT JOIN marketing.campaign_types st ON st.id = mc.suggested_campaign_type_id
       WHERE TRUE
       ${idFilter}
       ORDER BY mc.name NULLS LAST, mc.meta_campaign_id
@@ -362,4 +391,70 @@ async function observedCampaignIds(scope: AdminTenantScope, pageIds: string[]): 
     `)) as unknown as Array<{ campaign_id: string }>;
     return rows.map((r) => r.campaign_id);
   });
+}
+
+export interface RemapResult {
+  /** Staged rows that now resolve to a branch. */
+  remapped: number;
+  /** Rows still on a page/form with no mapping. */
+  still_unmapped: number;
+  verdicts: Record<string, number>;
+}
+
+/**
+ * Re-resolves the branch of every UNMAPPED staged row against the mappings as
+ * they stand NOW, then re-classifies the run (1.51.0). This is the "map the page
+ * inline, then apply those rows" flow: the admin creates the mapping from the
+ * lead-pull screen and presses Remap, and the rows become importable without a
+ * second Graph walk. Rows Apply had already skipped as unmapped go back to
+ * pending, and queueApply accepts an 'applied' run again while it has pending
+ * importable rows.
+ *
+ * Precedence is the one routing uses everywhere: exact form row, then the
+ * page-level row. Under withTenantConfigTx, so both the staged rows and the
+ * mappings are fenced to the administered tenant by their policies, and the
+ * staged row's WITH CHECK re-proves the org belongs to that tenant.
+ */
+export async function remapRun(scope: AdminTenantScope, runId: string): Promise<RemapResult> {
+  const run = await withTenantConfigTx(scope, async (tx) => {
+    await assertTenantExists(tx, scope.tenantId);
+    const rows = (await tx.execute(sql`
+      SELECT id, tenant_id, created_by, filters, status FROM scratch.meta_pull_runs
+      WHERE id = ${runId}::uuid LIMIT 1
+    `)) as unknown as Array<{ id: string; tenant_id: string; created_by: string | null; filters: PullFilters; status: string }>;
+    const found = rows[0];
+    if (!found) throw new NotFoundError('Pull run not found');
+    if (!['completed', 'applied'].includes(found.status)) {
+      throw new ConflictError(`A run in status '${found.status}' cannot be remapped — wait for it to finish`);
+    }
+
+    const updated = (await tx.execute(sql`
+      UPDATE scratch.meta_pull_leads l
+      SET org_id = m.org_id,
+          applied_status = CASE WHEN l.applied_status = 'skipped' THEN 'pending' ELSE l.applied_status END,
+          applied_error  = CASE WHEN l.applied_status = 'skipped' THEN NULL ELSE l.applied_error END
+      FROM LATERAL (
+        SELECT pm.org_id
+        FROM ext.meta_page_form_org_map pm
+        WHERE pm.is_active
+          AND (pm.form_id = l.form_id OR (pm.form_id IS NULL AND pm.page_id = l.page_id))
+        ORDER BY (pm.form_id IS NULL) ASC, pm.created_at DESC
+        LIMIT 1
+      ) m
+      WHERE l.run_id = ${runId}::uuid
+        AND l.org_id IS NULL
+        AND l.applied_status IN ('pending', 'skipped')
+      RETURNING l.id
+    `)) as unknown as Array<{ id: string }>;
+    return { ...found, remapped: updated.length };
+  });
+
+  const verdicts = await classifyRunLeads({
+    id: run.id,
+    tenant_id: run.tenant_id,
+    created_by: run.created_by,
+    filters: run.filters,
+  });
+
+  return { remapped: run.remapped, still_unmapped: verdicts['unmapped_form'] ?? 0, verdicts };
 }

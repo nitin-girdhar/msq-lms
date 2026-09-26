@@ -1,7 +1,7 @@
 import { and, sql } from 'drizzle-orm';
 import { withServiceTx } from '@platform/db';
 import { createLogger } from '@platform/logger';
-import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
+import { resolveAutoAssignedUser, storedAutoAssignReason } from '../../../lib/assignment.js';
 import { resolveCampaignForLead } from '../../../lib/campaign-resolution.js';
 import {
   marketingLeadsTable,
@@ -51,6 +51,18 @@ export interface WebhookLeadResult {
   id: string;
   is_duplicate: boolean;
   existing_lead_id: string | null;
+  /**
+   * Who the lead went to (1.51.0) — null when unassigned, and for an email
+   * duplicate (the existing lead is returned untouched). The webhook's realtime
+   * `lead:created` event used to hard-code null here, so the rep who actually
+   * received a lead got no live notification unless their role could see
+   * unassigned leads.
+   */
+  assigned_user_id: string | null;
+  /** The pool the lead was typed into; null for an email duplicate. */
+  campaign_type_id: string | null;
+  /** Why the pick left it unowned; null when assigned (lms.marketing_leads.auto_assign_reason). */
+  auto_assign_reason: string | null;
 }
 
 // Confirms a branch (org) belongs to the given tenant — used to validate a
@@ -129,7 +141,14 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
 
       // Email match: this is an update/re-submission, not a new lead — return early
       if (rows[0]) {
-        return { id: rows[0].id, is_duplicate: true, existing_lead_id: rows[0].id };
+        return {
+          id: rows[0].id,
+          is_duplicate: true,
+          existing_lead_id: rows[0].id,
+          assigned_user_id: null,
+          campaign_type_id: null,
+          auto_assign_reason: null,
+        };
       }
     }
 
@@ -211,6 +230,7 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
         // could not be created) would otherwise land untyped and unroutable.
         campaignTypeId: resolved.campaign_type_id,
         assignedUserId: autoAssignedUserId,
+        autoAssignReason: storedAutoAssignReason(assignment.reason),
         tags:          Array.isArray(data.tags) ? data.tags.map(String) : [],
         metadata:      (data.metadata ?? {}) as Record<string, unknown>,
         rawWebhookData: (data.raw_webhook_data ?? {}) as Record<string, unknown>,
@@ -240,6 +260,13 @@ export async function createWebhookLead(data: WebhookLeadData): Promise<WebhookL
       `);
     }
 
-    return { id: newLeadId, is_duplicate: false, existing_lead_id: existingLeadId };
+    return {
+      id: newLeadId,
+      is_duplicate: false,
+      existing_lead_id: existingLeadId,
+      assigned_user_id: autoAssignedUserId,
+      campaign_type_id: resolved.campaign_type_id,
+      auto_assign_reason: storedAutoAssignReason(assignment.reason),
+    };
   });
 }
