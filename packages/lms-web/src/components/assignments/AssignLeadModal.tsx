@@ -6,7 +6,7 @@ import type { SessionUser } from "@platform/types";
 import type { AssignmentView } from '../../types/leads';
 import { assignments as assignmentsApi, leads as leadsApi, lead_sources as leadSourcesApi } from '../../lib/api/client';
 import { useOrgs } from '../../hooks/useOrgs';
-import { Modal, users as usersApi } from "@platform/ui-kit";
+import { Modal, users as usersApi, SpeechInputButton, appendDictation } from "@platform/ui-kit";
 import AssignmentSelector from "./AssignmentSelector";
 import { toAssignableUsers } from "../../lib/users/assignable";
 
@@ -469,12 +469,18 @@ export default function AssignLeadModal({
         )}
 
         <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="wl-notes"
-            className="text-xs font-semibold text-[#0F172A]"
-          >
-            Notes <span className="font-normal text-red-500">*</span>
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label
+              htmlFor="wl-notes"
+              className="text-xs font-semibold text-[#0F172A]"
+            >
+              Notes <span className="font-normal text-red-500">*</span>
+            </label>
+            <SpeechInputButton
+              onText={(t) => setNotes((p) => appendDictation(p, t))}
+              disabled={pending}
+            />
+          </div>
           <textarea
             id="wl-notes"
             value={notes}

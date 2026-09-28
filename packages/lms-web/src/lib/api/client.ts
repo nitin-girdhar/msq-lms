@@ -277,7 +277,9 @@ export const activities = {
 // ── Follow-Ups ───────────────────────────────────────────────────────────────
 
 export const followUps = {
-  list: (params: { assignedRepId?: string; overdueOnly?: string } = {}) => {
+  // org_ids / campaign_type_ids: CSV, same contract as leads.list — the server
+  // honours org_ids only for a tenant/all lms.leads.view scope.
+  list: (params: { assignedRepId?: string; overdueOnly?: string; org_ids?: string; campaign_type_ids?: string } = {}) => {
     const qs = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params)

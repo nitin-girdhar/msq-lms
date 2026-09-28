@@ -11,5 +11,7 @@ export { default as AssignmentsClient } from './components/assignments/Assignmen
 export { default as BulkAssignClient } from './components/bulk-assign/BulkAssignClient';
 export { default as AnalyticsClient } from './components/analytics/AnalyticsClient';
 export { LeadHistoryModal } from './components/LeadHistoryModal';
+// Chrome, not a page: apps/lms-web's layout mounts it in AppNavbar's filterSlot.
+export { default as LeadTypeFilter } from './components/dashboard/LeadTypeFilter';
 
 export type { AssignmentView, StageOption, StageOutcome, UpdatePayload } from './types/leads';

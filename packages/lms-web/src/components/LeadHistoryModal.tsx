@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Modal } from "@platform/ui-kit";
+import { Modal, SpeechInputButton, appendDictation } from "@platform/ui-kit";
 import type { LeadView } from "../types/leads";
 import { leads as leadsApi } from '../lib/api/client';
 import { LeadFormDataPanel } from "./leads/LeadFormDataPanel";
@@ -740,20 +740,26 @@ function FollowUpActionModal({
           )}
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-[#475569]">
-              {action === "add_note" ? (
-                <>
-                  <>Note</> <span className="text-red-500">*</span>
-                </>
-              ) : (
-                <>
-                  <>Notes</>{" "}
-                  <span className="text-xs font-normal text-[#94A3B8]">
-                    (optional)
-                  </span>
-                </>
-              )}
-            </label>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="block text-xs font-semibold text-[#475569]">
+                {action === "add_note" ? (
+                  <>
+                    <>Note</> <span className="text-red-500">*</span>
+                  </>
+                ) : (
+                  <>
+                    <>Notes</>{" "}
+                    <span className="text-xs font-normal text-[#94A3B8]">
+                      (optional)
+                    </span>
+                  </>
+                )}
+              </label>
+              <SpeechInputButton
+                onText={(t) => setNotes((p) => appendDictation(p, t))}
+                disabled={loading}
+              />
+            </div>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}

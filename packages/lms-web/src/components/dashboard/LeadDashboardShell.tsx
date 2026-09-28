@@ -1,16 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { SessionUser } from '@platform/types';
-import { useNotifications, MultiSelect } from '@platform/ui-kit';
+import { useNotifications } from '@platform/ui-kit';
 import type { PlatformModule } from '@platform/ui-kit/server';
-import { useOrgs, type DynamicOrg } from '../../hooks/useOrgs';
 import { useLeads } from '../../hooks/useLeads';
+import { useFollowUps } from '../../hooks/useFollowUps';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
-import { useLocationFilters } from '../../hooks/useLocationFilters';
 import { useLeadSources } from '../../hooks/useLeadSources';
-import { campaign_types as campaignTypesApi } from '../../lib/api/client';
-import type { CampaignType } from '../../types/leads';
+import { LEAD_TYPES_PARAM, canFilterLeadTypes, parseLeadTypesParam } from '../../lib/leads/type-filter';
 import StatsCards from '../StatsCards';
 import SourceBreakdownBar from './SourceBreakdownBar';
 import LeadsTable from '../LeadsTable';
@@ -19,6 +18,7 @@ import { DownloadButton } from '@platform/ui-kit';
 import { getRulesForTenant, canSeeUnassignedCard } from '@lms/authz';
 import { applyLeadFilter } from '../../lib/leads/filter';
 import { buildStatGroups } from '../../lib/leads/stats';
+import { sessionBranchFilter, sessionBranchLabel } from '../../lib/leads/branch-scope';
 import { buildLeadExportColumns } from '../../lib/export/lead-columns';
 import { buildFilename, exportRows, type ExportRowsFormat as ExportFormat } from '@platform/ui-kit';
 
@@ -29,7 +29,8 @@ export type CardFilter =
   | 'unqualified'
   | 'visitScheduled'
   | 'converted'
-  | 'followUp'
+  | 'followUpDue'
+  | 'followUpOverdue'
   | 'unassigned';
 
 const FILTER_LABELS: Record<CardFilter, string> = {
@@ -39,7 +40,8 @@ const FILTER_LABELS: Record<CardFilter, string> = {
   unqualified:    'Unqualified Leads',
   visitScheduled: 'Visit Scheduled',
   converted:      'Converted',
-  followUp:       'Follow-up Required',
+  followUpDue:     'Follow-up Due',
+  followUpOverdue: 'Follow-up Overdue',
   unassigned:     'Unassigned Leads',
 };
 
@@ -53,73 +55,32 @@ interface Props {
 // that server helper stopped assuming.
 export default function LeadDashboardShell({ actor, enabledModules = [] }: Props) {
   const [activeFilter, setActiveFilter] = useState<CardFilter>('all');
+  const isFollowUpView = activeFilter === 'followUpDue' || activeFilter === 'followUpOverdue';
 
-  const {
-    countries, states, cities,
-    selectedCountries, selectedStates, selectedCities,
-    setSelectedCountries, setSelectedStates, setSelectedCities,
-    loadingCountries, loadingStates, loadingCities,
-  } = useLocationFilters();
+  // Branch context comes from the navbar branch switcher (the session): "All
+  // branches" sends no org filter, a picked branch narrows every grid, tile and
+  // export on this page to it. The server still decides what may be read.
+  const orgIdsKey = sessionBranchFilter(actor)?.join(',') ?? '';
+  const orgIds = useMemo(() => (orgIdsKey ? orgIdsKey.split(',') : undefined), [orgIdsKey]);
+  const branchLabel = sessionBranchLabel(actor);
 
-  const locationFilter = useMemo(() => {
-    const f: { cityIds: string[]; stateIds?: string[]; countryIds?: string[] } = {
-      cityIds: selectedCities.map(c => c.id),
-    };
-    if (selectedCities.length === 0) f.stateIds = selectedStates.map(s => s.id);
-    if (selectedStates.length === 0 && selectedCities.length === 0) f.countryIds = selectedCountries.map(c => c.id);
-    return f;
-  }, [selectedCountries, selectedStates, selectedCities]);
-
-  const { orgs, loading: orgsLoading, error: orgsError } = useOrgs(locationFilter);
-  const [selectedOrgs, setSelectedOrgs] = useState<DynamicOrg[]>([]);
   const { sources: leadSources, loading: sourcesLoading } = useLeadSources();
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
 
-  // The tenant's campaign-type catalog, for the type filter's dropdown. Gated
-  // server-side on lms.campaign_types.view (not every rank holds it) — a
-  // failed fetch (403 for a lower-rank actor, or a tenant with none) just
-  // leaves the list empty, which hides the filter below rather than erroring.
-  // This never gates which lead TYPES a row is allowed to show — that stays
-  // the row policy's answer (lms.fn_user_sees_campaign_type); it only decides
-  // whether the filter control itself renders.
-  const [campaignTypes, setCampaignTypes] = useState<CampaignType[]>([]);
-  const [selectedCampaignTypes, setSelectedCampaignTypes] = useState<string[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await campaignTypesApi.list();
-        if (!cancelled) setCampaignTypes((res.data ?? []).filter((t) => t.is_active));
-      } catch { /* ignore — hides the filter below */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const hasLocationFilter = selectedCountries.length > 0 || selectedStates.length > 0 || selectedCities.length > 0;
-
-  // When a location filter is active, auto-select all matching orgs so the
-  // grid filters immediately without requiring a separate org pick.
-  // When location is cleared, clear org selection too.
-  useEffect(() => {
-    if (orgsLoading) return;
-    if (hasLocationFilter) {
-      setSelectedOrgs(orgs);
-    } else {
-      setSelectedOrgs([]);
-    }
-  }, [orgs, hasLocationFilter, orgsLoading]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // undefined  = no location/org filter → fetch all leads for session org
-  // []         = location filter active but no matching orgs → show nothing
-  // ['uuid..'] = specific orgs selected → filter by those org IDs
-  const orgIds = useMemo(
-    () => hasLocationFilter
-      ? selectedOrgs.map(o => o.id)
-      : selectedOrgs.length > 0
-        ? selectedOrgs.map(o => o.id)
-        : undefined,
-    [selectedOrgs, hasLocationFilter],
+  // Campaign-type ("Type") filter. The control lives in the LMS navbar
+  // (LeadTypeFilter, beside the branch pill) and hands the selection over as
+  // ?types=. Read only for a holder of lms.leads.view.all_types, so a
+  // hand-typed URL does nothing for anyone else — leads-service ignores their
+  // campaign_type_ids too. Which types a row may show at all stays the row
+  // policy's answer (lms.fn_user_sees_campaign_type).
+  const searchParams = useSearchParams();
+  const typesParam = searchParams.get(LEAD_TYPES_PARAM);
+  const canFilterTypes = canFilterLeadTypes(actor);
+  const selectedCampaignTypes = useMemo(
+    () => (canFilterTypes ? parseLeadTypesParam(typesParam) : []),
+    [canFilterTypes, typesParam],
   );
+
   const platforms = useMemo(
     () => selectedSources.length > 0 ? selectedSources : undefined,
     [selectedSources],
@@ -129,8 +90,6 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     [selectedCampaignTypes],
   );
 
-  const primaryOrg = selectedOrgs[0] ?? orgs[0] ?? null;
-
   const {
     leads, stats, loading, error,
     statusOptions, statusLabelMap, requiresFollowupStatuses,
@@ -139,12 +98,20 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
     addLeadById, updateLeadById, removeLeadById,
   } = useLeads(orgIds, platforms, campaignTypeIds);
 
+  // Fetched once here (not inside the embedded Follow-ups view) so the Due /
+  // Overdue tiles count exactly the rows that view renders when clicked.
+  const followUpPipeline = useFollowUps(actor, orgIds, campaignTypeIds);
+  const refetchFollowUps = followUpPipeline.refetch;
+  const refetchAll = useCallback(async () => {
+    await Promise.all([refetch(), refetchFollowUps()]);
+  }, [refetch, refetchFollowUps]);
+
   const { addNotification } = useNotifications();
 
   useRealtimeEvents(actor.id, {
-    onLeadCreated: useCallback((leadId: string) => { addLeadById(leadId); }, [addLeadById]),
-    onLeadUpdated: useCallback((leadId: string) => { updateLeadById(leadId); }, [updateLeadById]),
-    onLeadDeleted: useCallback((leadId: string) => { removeLeadById(leadId); }, [removeLeadById]),
+    onLeadCreated: useCallback((leadId: string) => { addLeadById(leadId); void refetchFollowUps(); }, [addLeadById, refetchFollowUps]),
+    onLeadUpdated: useCallback((leadId: string) => { updateLeadById(leadId); void refetchFollowUps(); }, [updateLeadById, refetchFollowUps]),
+    onLeadDeleted: useCallback((leadId: string) => { removeLeadById(leadId); void refetchFollowUps(); }, [removeLeadById, refetchFollowUps]),
     onFollowUpDue: useCallback((data) => {
       addNotification({
         id: `${data.lead_id}:${data.scheduled_at}:due`,
@@ -169,7 +136,10 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
   // (never a role-name allowlist, which tenant-defined roles never match) living
   // inside the hook alongside it.
 
-  const statGroups = useMemo(() => buildStatGroups(leads, actor), [leads, actor]);
+  const statGroups = useMemo(
+    () => buildStatGroups(leads, { upcoming: followUpPipeline.upcoming, missed: followUpPipeline.missed }),
+    [leads, followUpPipeline.upcoming, followUpPipeline.missed],
+  );
 
   const handleFilterChange = (filter: CardFilter) => {
     setActiveFilter(prev => (prev === filter ? 'all' : filter));
@@ -178,25 +148,14 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
   const exportLeads = (format: ExportFormat) => {
     const rows     = applyLeadFilter(leads, activeFilter);
     const columns  = buildLeadExportColumns();
-    const orgLabel = selectedOrgs.length === 1
-      ? selectedOrgs[0].name
-      : selectedOrgs.length > 1
-        ? `${selectedOrgs.length}-orgs`
-        : primaryOrg?.name ?? '';
     const filename = buildFilename([
-      orgLabel,
+      branchLabel,
       activeFilter === 'all' ? '' : FILTER_LABELS[activeFilter],
     ]);
     exportRows(rows, columns, filename, format);
   };
 
   const exportableCount = applyLeadFilter(leads, activeFilter).length;
-
-  const orgLabel = selectedOrgs.length === 0
-    ? 'All Branches'
-    : selectedOrgs.length === 1
-      ? selectedOrgs[0].name
-      : `${selectedOrgs.length} orgs`;
 
   // Rendered twice — inline in the toolbar on desktop, own row below it on mobile.
   const sourceRowsForFilter = statGroups[activeFilter].sources;
@@ -219,24 +178,15 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
       {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[#E2E8F0] bg-white px-4 py-1.5 sm:px-5 sm:py-2">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="shrink-0 text-sm font-semibold text-[#0F172A]">{orgLabel}</span>
+          <span className="shrink-0 text-sm font-semibold text-[#0F172A]">{branchLabel}</span>
           {!loading && (
             <span
               className="shrink-0 rounded-full border border-[#E2E8F0] bg-[#F1F5F9] px-2 py-0.5 text-xs font-medium tabular-nums text-[#64748B]"
-              title={selectedCampaignTypes.length > 0 ? 'This total already reflects the campaign type filter below' : undefined}
+              title={selectedCampaignTypes.length > 0 ? 'This total already reflects the Type filter in the top bar' : undefined}
             >
               {activeFilter === 'all' ? `${stats.serverTotal} total` : `${exportableCount} of ${stats.serverTotal}`}
               {selectedCampaignTypes.length > 0 && ' (type-filtered)'}
             </span>
-          )}
-          {campaignTypes.length > 0 && (
-            <MultiSelect
-              label="Type"
-              placeholder="All types"
-              options={campaignTypes.map((t) => ({ id: t.id, label: t.label }))}
-              selected={campaignTypes.filter((t) => selectedCampaignTypes.includes(t.id)).map((t) => ({ id: t.id, label: t.label }))}
-              onChange={(next) => setSelectedCampaignTypes(next.map((o) => String(o.id)))}
-            />
           )}
           {activeFilter !== 'all' && (
             <span className="flex shrink-0 items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-0.5 text-xs font-medium text-[#0b6cbf]">
@@ -266,7 +216,7 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
               {error}
             </span>
           )}
-          {activeFilter !== 'followUp' && (
+          {!isFollowUpView && (
             <DownloadButton onExport={exportLeads} rowCount={exportableCount} disabled={loading} />
           )}
         </div>
@@ -280,23 +230,28 @@ export default function LeadDashboardShell({ actor, enabledModules = [] }: Props
       />
 
       {/* Grid region */}
-      <div className={`flex w-full flex-1 flex-col lg:min-h-0 lg:overflow-hidden ${activeFilter === 'followUp' ? 'p-2 sm:px-5 sm:py-1.5' : 'p-2 sm:px-5 sm:py-3'}`}>
-        {activeFilter === 'followUp' ? (
+      <div className={`flex w-full flex-1 flex-col lg:min-h-0 lg:overflow-hidden ${isFollowUpView ? 'p-2 sm:px-5 sm:py-1.5' : 'p-2 sm:px-5 sm:py-3'}`}>
+        {isFollowUpView ? (
           <div className="flex w-full min-w-0 flex-1 flex-col overflow-y-auto lg:min-h-0">
-            <FollowUpsShell actor={actor} embedded />
+            <FollowUpsShell
+              actor={actor}
+              embedded
+              pipeline={followUpPipeline}
+              section={activeFilter === 'followUpDue' ? 'upcoming' : 'missed'}
+            />
           </div>
         ) : (
           <div className="flex w-full flex-1 flex-col rounded-xl border border-[#E2E8F0] bg-white shadow-sm lg:min-h-0 lg:overflow-hidden">
             <LeadsTable
               leads={leads}
-              loading={loading || orgsLoading}
+              loading={loading}
               statusFilter={activeFilter}
               onUpdate={updateLead}
               newLeadRowKeys={new Set()}
               statusOptions={statusOptions}
               statusLabelMap={statusLabelMap}
               actor={actor}
-              onAssignmentChanged={refetch}
+              onAssignmentChanged={refetchAll}
               requiresFollowupStatuses={requiresFollowupStatuses}
               rejectionStatuses={rejectionStatuses}
               stageOutcomes={stageOutcomes}

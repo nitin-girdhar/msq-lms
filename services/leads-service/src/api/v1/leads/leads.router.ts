@@ -9,7 +9,7 @@ import { LeadsController } from './leads.controller.js';
 import { FollowUpsController } from '../follow-ups/follow-ups.controller.js';
 import { WhatsAppController } from '../whatsapp/whatsapp.controller.js';
 import { listLeadsQuerySchema } from './leads.schema.js';
-import { updateFollowUpBodySchema } from '../follow-ups/follow-ups.schema.js';
+import { updateFollowUpBodySchema, listFollowUpsQuerySchema } from '../follow-ups/follow-ups.schema.js';
 
 const ctrl = new LeadsController();
 const fuCtrl = new FollowUpsController();
@@ -24,7 +24,7 @@ export async function leadsRouter(app: FastifyInstance) {
   app.get('/leads', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_VIEW), validate({ query: listLeadsQuerySchema })] }, ctrl.list);
   app.post('/leads', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_LEADS_CREATE, 'You do not have permission to create leads'), validate({ body: createLeadSchema })] }, ctrl.create);
 
-  app.get('/follow-ups', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_FOLLOWUPS_VIEW)] }, ctrl.listFollowUps);
+  app.get('/follow-ups', { preHandler: [...gate, requireCapability(CAPABILITY.LMS_FOLLOWUPS_VIEW), validate({ query: listFollowUpsQuerySchema })] }, ctrl.listFollowUps);
 
   // The three reads behind the Lead History dialog. Reachable from the Leads
   // page and from Leads History, which are separate nodes in the capability

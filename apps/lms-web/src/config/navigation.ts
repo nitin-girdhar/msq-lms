@@ -13,15 +13,15 @@ export type { NavItem };
 // tenant-defined role (which iam.user_roles now allows) matched nothing and got
 // an empty sidebar.
 export const DASHBOARD_NAV: readonly NavItem[] = [
-  { id: 'leads',         label: 'Leads',         href: '/dashboard/leads',         capability: CAPABILITY.LMS_LEADS },
-  { id: 'follow-ups',    label: 'Follow-ups',    href: '/dashboard/follow-ups',    capability: CAPABILITY.LMS_FOLLOWUPS },
-  { id: 'assignments',   label: 'Assignments',   href: '/dashboard/assignments',   capability: CAPABILITY.LMS_ASSIGNMENTS },
+  { id: 'leads',         label: 'Leads',         href: '/dashboard/leads',         icon: 'handshake',      capability: CAPABILITY.LMS_LEADS },
+  { id: 'follow-ups',    label: 'Follow-ups',    href: '/dashboard/follow-ups',    icon: 'calendar-clock', capability: CAPABILITY.LMS_FOLLOWUPS },
+  { id: 'assignments',   label: 'Assignments',   href: '/dashboard/assignments',   icon: 'user-check',     capability: CAPABILITY.LMS_ASSIGNMENTS },
   // lms.leads.assign.bulk is an OPERATION with nothing beneath it (like
   // admin.roles.manage), so it needs `exact` — holdsUsableNode() would demand
   // a granted descendant and hide this for everyone, admins included.
-  { id: 'bulk-assign',   label: 'Bulk Assign',   href: '/dashboard/bulk-assign',   capability: CAPABILITY.LMS_LEADS_ASSIGN_BULK, exact: true },
-  { id: 'analytics',     label: 'Analytics',     href: '/dashboard/analytics',     capability: CAPABILITY.LMS_ANALYTICS },
-  { id: 'leads-history', label: 'Leads History', href: '/dashboard/leads-history', capability: CAPABILITY.LMS_HISTORY },
+  { id: 'bulk-assign',   label: 'Bulk Assign',   href: '/dashboard/bulk-assign',   icon: 'fan-out',        capability: CAPABILITY.LMS_LEADS_ASSIGN_BULK, exact: true },
+  { id: 'analytics',     label: 'Analytics',     href: '/dashboard/analytics',     icon: 'chart-column',   capability: CAPABILITY.LMS_ANALYTICS },
+  { id: 'leads-history', label: 'Leads History', href: '/dashboard/leads-history', icon: 'history',        capability: CAPABILITY.LMS_HISTORY },
 ] as const;
 
 /** The CRM nav entries this user may actually open. */

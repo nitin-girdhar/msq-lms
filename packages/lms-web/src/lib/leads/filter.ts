@@ -8,7 +8,8 @@ export const FILTER_STATUSES: Record<CardFilter, string[] | null> = {
   unqualified:    ['unqualified'],
   visitScheduled: ['qualified'],
   converted:      ['converted'],
-  followUp:       null,
+  followUpDue:     null,
+  followUpOverdue: null,
   unassigned:     null,
 };
 
@@ -16,10 +17,16 @@ export function applyLeadFilter(
   leads: readonly LeadView[],
   filter: CardFilter,
 ): LeadView[] {
-  if (filter === 'followUp') {
-    // Sourced straight from marketing_leads → lead_stage.followup_required (per-row), not a
-    // separately-fetched stage-name list — the lead's own current stage is the single source.
-    return leads.filter((l) => l.followup_required);
+  if (filter === 'followUpDue' || filter === 'followUpOverdue') {
+    // The Due / Overdue cards render the Follow-ups pipeline, not this grid; this
+    // is the lead-row equivalent (followup_required stage + a scheduled time,
+    // split at now) for any caller that filters lead rows by those cards.
+    const now = Date.now();
+    return leads.filter((l) => {
+      if (!l.followup_required || !l.scheduled_at) return false;
+      const overdue = new Date(l.scheduled_at).getTime() < now;
+      return filter === 'followUpOverdue' ? overdue : !overdue;
+    });
   }
   if (filter === 'unassigned') {
     return leads.filter((l) => !l.assigned_user_id);

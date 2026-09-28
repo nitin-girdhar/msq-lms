@@ -81,6 +81,14 @@ function IconBell() {
     </svg>
   );
 }
+function IconClockAlert() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8}
+        d="M12 8v4l3 2m6-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
 function IconTrophy() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -175,8 +183,11 @@ export default function StatsCards({ stats, groups, activeFilter, onFilterChange
         <StatCard label="NEW LEADS" count={groups.new.count} total={total} iconBg="bg-blue-50" iconColor="text-[#0A6BA8]"
           icon={<IconPersonPlus />} filterId="new" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
-        <StatCard label="FOLLOW-UP REQUIRED" count={groups.followUp.count} total={total} iconBg="bg-orange-50" iconColor="text-orange-500"
-          icon={<IconBell />} filterId="followUp" activeFilter={activeFilter} onFilterChange={onFilterChange} />
+        <StatCard label="FOLLOW-UP DUE" count={groups.followUpDue.count} total={total} iconBg="bg-orange-50" iconColor="text-orange-500"
+          icon={<IconBell />} filterId="followUpDue" activeFilter={activeFilter} onFilterChange={onFilterChange} />
+
+        <StatCard label="FOLLOW-UP OVERDUE" count={groups.followUpOverdue.count} total={total} iconBg="bg-red-50" iconColor="text-red-600"
+          icon={<IconClockAlert />} filterId="followUpOverdue" activeFilter={activeFilter} onFilterChange={onFilterChange} />
 
         <StatCard label="CONTACTING" count={groups.callAttempted.count} total={total} iconBg="bg-amber-50" iconColor="text-amber-600"
           icon={<IconPhone />} filterId="callAttempted" activeFilter={activeFilter} onFilterChange={onFilterChange} />

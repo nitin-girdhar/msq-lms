@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { createApiClient } from '@platform/ui-kit';
+import { createApiClient, SpeechInputButton, appendDictation } from '@platform/ui-kit';
 
 // LMS-local view of the tasks linked to a lead. Post repo-split (Phase5 P-4) LMS
 // must not import @task/web, so instead of embedding the task-web `TaskLeadSection`
@@ -96,7 +96,7 @@ export default function LeadTasksSection({ leadId }: Props) {
       </div>
 
       {showCreate && (
-        <div className="mb-3 flex gap-2">
+        <div className="mb-3 flex items-center gap-2">
           <input
             type="text"
             value={title}
@@ -105,6 +105,7 @@ export default function LeadTasksSection({ leadId }: Props) {
             placeholder="New task about this lead…"
             className="w-full rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm text-[#0F172A] focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20"
           />
+          <SpeechInputButton onText={(t) => setTitle((p) => appendDictation(p, t))} disabled={creating} compact />
           <button
             type="button"
             onClick={() => void createTask()}

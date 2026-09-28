@@ -269,14 +269,32 @@ export interface ListFollowUpsFilters {
   overdue_only?: boolean;
   actor_rank?: number;
   minRankToViewUnassigned: number;
+  /** Actor holds a tenant/all lms.leads.view scope (resolved by the controller). */
+  tenant_wide?: boolean;
+  /** Branches to narrow to. Absent + tenant_wide = every branch in the tenant;
+   *  absent otherwise = the session org. The controller already pinned a
+   *  non-tenant-wide actor to [ctx.org_id]. */
+  org_ids?: string[];
+  campaign_type_ids?: string[];
 }
 
 export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFilters) {
-  return withRoleTx(ctx, async (tx) => {
+  // Tenant-wide readers need the tenant Postgres role, or RLS pins the read to
+  // the session branch — same reason as listLeads.
+  const tenantWide = filters.tenant_wide === true;
+  return withRoleTx({ ...ctx, ...(tenantWide ? { tenantWide: true, readOnly: true } : {}) }, async (tx) => {
+    const orgClause = filters.org_ids?.length
+      ? sql`ml.org_id = ANY(${sqlUuidArr(filters.org_ids)})`
+      : tenantWide
+        ? undefined // RLS (tenant isolation) bounds the read to this tenant
+        : sql`ml.org_id = ${ctx.org_id}::uuid`;
     const where = and(
       sql`NOT ml.is_deleted`,
       sql`ml.superseded_by IS NULL`,
-      sql`ml.org_id = ${ctx.org_id}::uuid`,
+      orgClause,
+      filters.campaign_type_ids?.length
+        ? sql`ml.campaign_type_id = ANY(${sqlUuidArr(filters.campaign_type_ids)})`
+        : undefined,
       sql`lstg.followup_required`,
       sql`ml.scheduled_at IS NOT NULL`,
       (filters.actor_rank !== undefined && filters.actor_rank < filters.minRankToViewUnassigned)

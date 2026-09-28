@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { CAPABILITY, type CapabilityKey } from '@platform/rbac';
 import { authenticate } from '../../../middleware/auth.middleware.js';
 import { authenticateSuperAdmin } from '../../../middleware/super-admin.middleware.js';
-import { requireCapability } from '../../../middleware/require-capability.middleware.js';
+import { requireCapability, requireAnyCapability } from '../../../middleware/require-capability.middleware.js';
 import { requireModule } from '../../../middleware/require-module.middleware.js';
 import { validate } from '../../../middleware/validate.middleware.js';
 import { CampaignTypesController } from './campaign-types.controller.js';
@@ -44,8 +44,13 @@ const MANAGE_DENIED = 'You do not have permission to manage campaign types';
 // silently handed their OWN tenant's types: the confirm dialog on
 // /dashboard/meta-campaigns offered ids the administered tenant's RLS then
 // refused, and lookup-admin's OrgAccessPanel wrote weight rows against them.
-function campaignTypesGate(key: CapabilityKey, message?: string) {
-  const tenantStaffGate = [authenticate, requireModule('lms'), requireCapability(key, message)];
+//
+// A key LIST is satisfied by any one of its keys (requireAnyCapability).
+function campaignTypesGate(key: CapabilityKey | readonly CapabilityKey[], message?: string) {
+  const capabilityGate = typeof key === 'string'
+    ? requireCapability(key, message)
+    : requireAnyCapability(key, message);
+  const tenantStaffGate = [authenticate, requireModule('lms'), capabilityGate];
   return async function gate(request: FastifyRequest): Promise<void> {
     const { tenant_id } = campaignTypesScopeQuerySchema.parse(request.query);
     if (tenant_id) {
@@ -60,6 +65,13 @@ export async function campaignTypesRouter(app: FastifyInstance) {
   const scope = validate({ query: campaignTypesScopeQuerySchema });
   const view = campaignTypesGate(CAPABILITY.LMS_CAMPAIGN_TYPES_VIEW);
   const manage = campaignTypesGate(CAPABILITY.LMS_CAMPAIGN_TYPES_MANAGE, MANAGE_DENIED);
+  // The bare catalog LIST also feeds the Leads page Type filter (LMS navbar),
+  // which is gated on lms.leads.view.all_types rather than on this admin page's
+  // VIEW. Only the list: rules, a single type and every write keep their gates.
+  const listTypes = campaignTypesGate([
+    CAPABILITY.LMS_CAMPAIGN_TYPES_VIEW,
+    CAPABILITY.LMS_LEADS_VIEW_ALL_TYPES,
+  ]);
 
   // Ordered rules (1.51.0). Registered BEFORE /campaign-types/:id so the static
   // `rules` segment is never captured as a type id (Fastify prefers static
@@ -74,7 +86,7 @@ export async function campaignTypesRouter(app: FastifyInstance) {
   app.patch('/campaign-types/rules/:ruleId', { preHandler: [manage, scope, ruleParams, validate({ body: updateRuleBodySchema })] }, ctrl.updateRule);
   app.delete('/campaign-types/rules/:ruleId', { preHandler: [manage, scope, ruleParams] }, ctrl.deleteRule);
 
-  app.get('/campaign-types', { preHandler: [view, scope] }, ctrl.list);
+  app.get('/campaign-types', { preHandler: [listTypes, scope] }, ctrl.list);
   app.get('/campaign-types/:id', { preHandler: [view, scope] }, ctrl.getById);
   app.post('/campaign-types', { preHandler: [manage, scope, validate({ body: createCampaignTypeBodySchema })] }, ctrl.create);
   app.patch('/campaign-types/:id', { preHandler: [manage, scope, validate({ body: updateCampaignTypeBodySchema })] }, ctrl.update);

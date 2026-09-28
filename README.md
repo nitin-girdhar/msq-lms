@@ -69,6 +69,24 @@ RLS `USING` clause — not by any service. The `campaign_type_ids` filter on
 `GET /leads` and `GET /assignments/mine` only narrows what the caller already
 sees. Do not re-implement that rule in a repository.
 
+**Departments are separated both ways (1.51.1).** Sales roles never see Hiring,
+and HR roles never see Sales: a role sees a department-bound type only when it
+sits in that department, is an anchor (super_admin / tenant_admin / org_admin),
+or holds `lms.leads.view.all_types`. The tenant's **default** type (Sales) is the
+one exception: it stays visible to roles with **no** department (read_only,
+unwired roles) so nobody loses their branch — but not to a role in another
+department. Before deploying on a server, run
+`db_scripts/one_time/report_default_type_fence_dryrun.sql` to see who loses the
+default pool.
+
+**The Leads page Type filter is capability-driven.** It sits in the LMS navbar
+beside the branch pill (`LeadTypeFilter`, AppNavbar `filterSlot`), only on
+`/dashboard/leads`, only for holders of `lms.leads.view.all_types` — the people
+who can see more than one department's pool. The selection travels as
+`?types=<id,id>`. leads-service applies `campaign_type_ids` on `GET /leads` and
+`GET /leads/follow-ups` only for that capability and silently ignores it for
+anyone else.
+
 ### Campaign lifecycle
 
 ```
@@ -97,6 +115,8 @@ owner — do not widen them.
 
 Managing the catalog itself: `GET/POST/PATCH/DELETE /campaign-types`, gated on
 `lms.campaign_types.view` / `.manage`. **By capability, never by role name.**
+The bare list (`GET /campaign-types`) also admits `lms.leads.view.all_types`, so
+the navbar Type filter can load its options.
 
 Managing the campaign → type MAPPING (meta-conversion-api, super_admin,
 explicit `?tenant_id=` on every route — never the caller's own tenant):

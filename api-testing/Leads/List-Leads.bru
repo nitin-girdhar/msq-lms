@@ -41,6 +41,10 @@ docs {
       is clamped to their own branch whatever they send. Such a caller's read
       runs under the tenant Postgres role so RLS does not pin it to the session
       branch.
+    - campaign_type_ids: CSV of campaign type UUIDs (the Leads navbar Type
+      filter). Applied only for a holder of lms.leads.view.all_types; silently
+      ignored for anyone else. Which types are visible at all is RLS
+      (lms.fn_user_sees_campaign_type), never this filter.
     - active_only: 'true' excludes leads in a terminal stage (converted /
       unqualified) in SQL. Used by the Bulk Assign screen. Only the literal
       strings 'true'/'false' are accepted.

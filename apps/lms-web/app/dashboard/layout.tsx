@@ -4,6 +4,7 @@ import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
 import { requireSession } from '@platform/ui-kit/server';
 import { DASHBOARD_NAV } from '@/src/config/navigation';
 import NotificationBell from '@/components/layout/NotificationBell';
+import { LeadTypeFilter } from '@lms/web';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
           homeHref="/dashboard/leads"
           title="Fitclass - Lead Management System"
           notificationSlot={<NotificationBell key="notification-bell" />}
+          // Leads page Type filter, beside the branch pill. Self-hides on every
+          // other page and without lms.leads.view.all_types.
+          filterSlot={<LeadTypeFilter actor={session} />}
           adminWebUrl={adminWebOrigin()}
           lookupAdminUrl={adminOrigin()}
         />

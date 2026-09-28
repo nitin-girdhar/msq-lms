@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { SessionUser } from '@platform/types';
 import type { LeadView } from '../../types/leads';
-import { followUps as followUpsApi, leads as leadsApi } from '../../lib/api/client';
+import { leads as leadsApi } from '../../lib/api/client';
+import { useFollowUps } from '../../hooks/useFollowUps';
+import { sessionBranchFilter } from '../../lib/leads/branch-scope';
 import { LeadHistoryModal } from '../LeadHistoryModal';
 import { LeadEditModal } from './LeadEditModal';
 import { MobileFollowUpCard } from './MobileFollowUpCard';
@@ -52,12 +54,20 @@ interface Props {
   // `exactOptionalPropertyTypes`, so an absent `?leadId=` cannot be passed
   // through as `undefined` without it.
   focusLeadId?: string | undefined;
+  /**
+   * The pipeline, already fetched by a parent (the Leads page, whose tiles
+   * count this same list). When absent this shell fetches its own, following
+   * the navbar's branch choice (sessionBranchFilter).
+   */
+  pipeline?: ReturnType<typeof useFollowUps> | undefined;
+  /** Show only one section — set by the Leads page's Due / Overdue tiles. */
+  section?: 'upcoming' | 'missed' | undefined;
 }
 
-export default function FollowUpsShell({ actor, embedded, focusLeadId }: Props) {
-  const [all, setAll] = useState<FollowUpItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export default function FollowUpsShell({ actor, embedded, focusLeadId, pipeline, section }: Props) {
+  // Always called (hooks can't be conditional); idle when a parent supplies the list.
+  const own = useFollowUps(actor, sessionBranchFilter(actor), undefined, pipeline === undefined);
+  const { all, upcoming, missed, loading, error, refetch } = pipeline ?? own;
   const [historyItem, setHistoryItem] = useState<FollowUpItem | null>(null);
   const [editingLead, setEditingLead] = useState<LeadView | null>(null);
   const isMobile = useIsMobile(767); // below Tailwind's md breakpoint
@@ -65,21 +75,7 @@ export default function FollowUpsShell({ actor, embedded, focusLeadId }: Props) 
   const editData = useLeadEditData(actor, editingLead?.org_id);
 
   const isSalesRep = actor.role === 'sales_representative';
-
-  const fetchData = useCallback(() => {
-    setLoading(true);
-    const params: { assignedRepId?: string } = {};
-    if (isSalesRep) params.assignedRepId = actor.id;
-    followUpsApi.list(params)
-      .then((body) => {
-        const data = (body.data ?? body.pipeline ?? []) as FollowUpItem[];
-        setAll(data);
-      })
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setLoading(false));
-  }, [isSalesRep, actor.id]);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const fetchData = useCallback(() => { void refetch(); }, [refetch]);
 
   // Open the notification's lead once the list has arrived. `focusConsumed`
   // makes this fire at most once: without it, closing the modal would re-open it
@@ -102,15 +98,6 @@ export default function FollowUpsShell({ actor, embedded, focusLeadId }: Props) 
       // Lead fetch failed — silently ignore
     }
   }, []);
-
-  const upcoming = useMemo(
-    () => all.filter((f) => f.isOverdue === false).sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime()),
-    [all],
-  );
-  const missed = useMemo(
-    () => all.filter((f) => f.isOverdue === true).sort((a, b) => (b.minutesOverdue ?? 0) - (a.minutesOverdue ?? 0)),
-    [all],
-  );
 
   const renderList = (items: FollowUpItem[], type: 'upcoming' | 'missed') =>
     isMobile ? (
@@ -143,6 +130,7 @@ export default function FollowUpsShell({ actor, embedded, focusLeadId }: Props) 
 
       {!loading && !error && (
         <>
+          {section !== 'missed' && (
           <section>
             <div className={`flex items-center justify-between ${embedded ? 'mb-1.5' : 'mb-3'}`}>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-[#0b6cbf]">Upcoming ({upcoming.length})</h2>
@@ -154,7 +142,9 @@ export default function FollowUpsShell({ actor, embedded, focusLeadId }: Props) 
               <p className="py-8 text-center text-sm text-[#94A3B8]">No upcoming follow-ups.</p>
             )}
           </section>
+          )}
 
+          {section !== 'upcoming' && (
           <section>
             <div className={`flex items-center justify-between ${embedded ? 'mb-1.5' : 'mb-3'}`}>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-red-600">Missed / Overdue ({missed.length})</h2>
@@ -166,6 +156,7 @@ export default function FollowUpsShell({ actor, embedded, focusLeadId }: Props) 
               <p className="py-8 text-center text-sm text-[#94A3B8]">No missed follow-ups.</p>
             )}
           </section>
+          )}
         </>
       )}
 
