@@ -1,0 +1,36 @@
+meta {
+  name: Public List Leads (Partner API)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/public/v1/leads?start_date=2026-09-01&end_date=2026-09-30&limit=100&offset=0
+  body: none
+  auth: none
+}
+
+params:query {
+  start_date: 2026-09-01
+  end_date: 2026-09-30
+  limit: 100
+  offset: 0
+  ~branch_id: <uuid>,<uuid>
+  ~assigned_to: <user uuid>
+  ~source: meta
+  ~stage: new
+  ~outcome: <outcome name or uuid>
+  ~include_inactive: false
+}
+
+headers {
+  Authorization: Bearer {{apiClientKey}}
+}
+
+docs {
+  Requires a key with `leads:list`. Tenant comes from the key. Every filter is
+  optional; csv values. source/stage/outcome accept the catalog uuid or its
+  machine name. start_date/end_date: YYYY-MM-DD (branch-local day, end_date
+  inclusive) or ISO timestamp with offset. branch_id outside the key's
+  branches -> 400. Response: { success, data: [...], total, limit, offset }.
+}

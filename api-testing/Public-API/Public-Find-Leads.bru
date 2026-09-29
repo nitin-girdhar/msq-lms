@@ -1,0 +1,31 @@
+meta {
+  name: Public Find Leads (Partner API)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/public/v1/leads/find
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiClientKey}}
+}
+
+body:json {
+  {
+    "phones": ["+91 98765 43210"],
+    "emails": ["someone@example.com"]
+  }
+}
+
+docs {
+  Requires a key with `leads:find`. At least one phone or email, <=100 values
+  combined. Phones match on the last 10 digits; emails case-insensitively.
+  Optional "branch_id": [uuid] narrows within the key's branches;
+  "include_inactive": true also returns superseded leads. Response:
+  { success, data: [{ ...lead, matched_on: ["phone"|"email"] }],
+    not_found: { phones: [...], emails: [...] } }.
+}
