@@ -1,0 +1,26 @@
+meta {
+  name: Test Campaign Type Rules
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/campaign-types/rules/test?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "campaign_name": "HIR_Gurugram_Trainer_Oct",
+    "form_name": "Careers form"
+  }
+}
+
+docs {
+  Which rule a set of Meta names would hit — nothing is written.
+}

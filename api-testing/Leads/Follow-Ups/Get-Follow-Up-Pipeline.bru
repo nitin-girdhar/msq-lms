@@ -17,4 +17,19 @@ headers {
 params:query {
   ~assignedRepId:
   ~overdueOnly: true
+  ~org_ids:
+  ~campaign_type_ids:
+}
+
+docs {
+  One row per lead with an open follow-up (followup_required stage + a
+  scheduled time). isOverdue = scheduled_at < NOW() — the Leads page's
+  "Follow-up Overdue" tile; the rest are its "Follow-up Due" tile.
+
+  org_ids (CSV of uuids) is honoured only for a tenant/all lms.leads.view
+  scope; anyone else is pinned to their session org whatever they send.
+  Omitted by a tenant-wide actor = every branch in the tenant.
+  campaign_type_ids (CSV) narrows further -- applied only for a holder of
+  lms.leads.view.all_types, silently ignored otherwise; type visibility itself
+  is RLS.
 }

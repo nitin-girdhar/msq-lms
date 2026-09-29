@@ -19,3 +19,11 @@ body:json {
     "comment": "Deleted via Bruno testing"
   }
 }
+
+docs {
+  Soft delete, scoped to the LEAD's branch (resolved server-side), so a
+  cross-branch delete by a tenant_admin or a mapped actor now actually deletes —
+  it previously answered 204 having changed nothing. A lead that does not resolve
+  (absent, already deleted, other tenant) → 404; a branch the caller cannot write
+  in → 403. Requires a non-empty `comment`, recorded as a lead interaction.
+}

@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/meta/page-org-map
+  url: {{baseUrl}}/meta/page-org-map?tenant_id={{tenantId}}
   body: none
   auth: none
 }
@@ -15,7 +15,22 @@ headers {
 }
 
 docs {
-  Lists all Page/Form -> org mappings for the caller's tenant. Org-level
-  users only see mappings scoped to their own org (enforced by RLS);
-  tenant admins see every mapping across the tenant.
+  Lists every Page/Form -> org mapping for the ADMINISTERED tenant — the one
+  named by ?tenant_id=, which is what the lookup-admin navbar switcher sends.
+  Requires super_admin (platform rank 1000); every other caller gets 403,
+  including on this read, which had no rank gate at all before.
+
+  tenant_id is required and is NOT defaulted to the caller's own tenant.
+  Platform staff belong to a different tenant than the one they administer, so
+  the previous behaviour — taking tenant_id from the caller's gateway-injected
+  headers — listed their own tenant's mappings, i.e. none.
+
+  Scoping is enforced in the database, not by a WHERE clause: the query runs
+  under withTenantConfigTx with app.current_tenant_id pinned to tenant_id, and
+  ext.meta_page_form_org_map's admin_tenant_config_policy fences the rows.
+
+  Tenant-scoping regression checks:
+    * omit tenant_id            -> 422 (validation)
+    * tenant_id = a bogus uuid  -> 404 Tenant not found
+    * tenant_id = tenant B      -> only tenant B's rows, never tenant A's
 }

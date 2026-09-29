@@ -1,0 +1,19 @@
+meta {
+  name: List Meta Ad Accounts
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/meta/ad-accounts
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  1.51.0, super admin. Platform-level (no tenant): ad accounts under the shared integration.
+}

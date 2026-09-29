@@ -6,7 +6,7 @@ import { can, CAPABILITY } from '@platform/rbac';
 import type { LeadView } from '../../types/leads';
 import type { StageOutcome, UpdatePayload } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
-import { Modal, UserPicker } from '@platform/ui-kit';
+import { Modal, UserPicker, SpeechInputButton, appendDictation } from '@platform/ui-kit';
 import { LeadFormDataPanel } from './LeadFormDataPanel';
 import TransferOutModal from './TransferOutModal';
 import WhatsAppSendModal from './WhatsAppSendModal';
@@ -358,7 +358,8 @@ export function LeadEditModal({
               <InfoRow label="Lead Source" value={lead.source_label ?? lead.source ?? lead.platform ?? '—'} />
               <InfoRow label="Assigned To" value={lead.assigned_rep_name ?? '—'} />
               <InfoRow label="Follow-up" value={lead.scheduled_at ? new Date(lead.scheduled_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'} />
-              <InfoRow label="Campaign" value={lead.campaign_name ?? '—'} full />
+              <InfoRow label="Campaign" value={lead.campaign_name ?? '—'} />
+              <InfoRow label="Campaign Type" value={lead.campaign_type_label ?? '—'} />
             </div>
           </div>
 
@@ -444,9 +445,15 @@ export function LeadEditModal({
                 assignment-only edit (not needed for the transfer_out path at all) */}
             {anyFieldChanged && selectedStatus !== 'transferred_out' && (
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
-                  Notes {noteRequired && <span className="text-red-500">*</span>}
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
+                    Notes {noteRequired && <span className="text-red-500">*</span>}
+                  </label>
+                  <SpeechInputButton
+                    onText={(t) => { setTransitionNote((p) => appendDictation(p, t)); setErrors(p => ({ ...p, transitionNote: '' })); }}
+                    disabled={saving}
+                  />
+                </div>
                 <textarea
                   value={transitionNote}
                   onChange={(e) => { setTransitionNote(e.target.value); setErrors(p => ({ ...p, transitionNote: '' })); }}

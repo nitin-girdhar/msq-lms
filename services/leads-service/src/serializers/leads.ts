@@ -35,6 +35,13 @@ export interface LeadView {
   updated_at: string;
   assigned_user_id: string | null;
   campaign_id: string | null;
+  // Which POOL the lead belongs to (1.49.0). Read straight off the lead's own
+  // denormalised column via lms.vw_dashboard_leads, which is also the column
+  // lms.fn_user_sees_campaign_type() decided visibility on — so what the client
+  // is told the type is cannot disagree with what it was filtered by.
+  campaign_type_id: string | null;
+  campaign_type: string | null;
+  campaign_type_label: string | null;
   is_deleted: boolean;
 }
 
@@ -76,6 +83,9 @@ export function toLeadView(row: Record<string, unknown>): LeadView {
     updated_at: String(row['updated_at'] ?? ''),
     assigned_user_id: row['assigned_user_id'] ? String(row['assigned_user_id']) : null,
     campaign_id: row['campaign_id'] ? String(row['campaign_id']) : null,
+    campaign_type_id: row['campaign_type_id'] ? String(row['campaign_type_id']) : null,
+    campaign_type: row['campaign_type'] ? String(row['campaign_type']) : null,
+    campaign_type_label: row['campaign_type_label'] ? String(row['campaign_type_label']) : null,
     is_deleted: Boolean(row['is_deleted']),
   };
 }

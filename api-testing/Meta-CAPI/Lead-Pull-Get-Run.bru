@@ -1,0 +1,58 @@
+meta {
+  name: Lead Pull - Run Status
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/meta/lead-pull/runs/{{leadPullRunId}}?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  What the screen polls while a pull is in flight, and the delta summary
+  afterwards.
+
+  Returns status, filters (as submitted), counts, the timestamps, plus:
+    verdict_summary  verdict -> count, the numbers the summary renders
+    apply_summary    applied_status -> count, once Apply has run
+    importable       how many rows Apply would act on right now
+    campaign_filter_is_post_fetch
+
+  counts carries the things a half-answer must not hide:
+    truncated / truncated_forms  a form hit the per-form Graph page cap, so
+                                 OLDER LEADS IN IT WERE NOT PULLED. Surface this
+                                 LOUDLY — it is the difference between "nothing
+                                 is missing" and "we stopped looking".
+    page_errors                  pages absent from /me/accounts, WITH the reason
+                                 (usually: the Page moved to another Business, or
+                                 the token lost access). Never swallowed.
+
+  The verdicts, in the order they are decided:
+    already_synced   meta_lead_id already in ext.meta_leads
+    test_lead        Lead Ads Testing Tool placeholder data
+    unmapped_form    no active ext.meta_page_form_org_map row (org_id IS NULL)
+    missing_contact  no phone value for any configured phone key
+    phone_duplicate  IMPORTABLE — the write path supersedes on phone
+    email_duplicate  IMPORTABLE — the write path treats it as a re-submission
+    new              IMPORTABLE
+
+  NOTE: `hiring_form` is NOT a verdict here, unlike the Python original. Since
+  campaign types (schema 1.49.0) a hiring lead has somewhere to go, so it became
+  the is_hiring_form / suggested_campaign_type_id columns instead and such leads
+  now import. See Lead-Pull-List-Run-Leads.bru.
+
+  Regression checks:
+    * already_synced count must equal
+        SELECT count(*) FROM ext.meta_leads WHERE meta_lead_id IN (<those ids>)
+    * pull a window overlapping a lead the webhook already ingested -> it
+      classifies already_synced, and is NOT offered for import
+    * a run id from tenant B, requested as tenant A -> 404, not 403 and not data
+    * a bogus tenant_id -> 404 "Tenant not found"
+    * caller below super_admin -> 403
+}

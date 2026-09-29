@@ -1,0 +1,20 @@
+meta {
+  name: List Campaign Type Rules
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/campaign-types/rules?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  1.51.0. The ORDERED rules that type a Meta lead; first match wins in rule_order.
+  Super admin with ?tenant_id=, or tenant staff (lms.campaign_types.view) without it.
+}

@@ -5,6 +5,19 @@ import { LMS_RANKS, getRulesForTenant, checkTransferLeadAccess, checkCreateLeadA
 import { ForbiddenError, BadRequestError } from '../../../lib/errors.js';
 import * as service from './leads.service.js';
 import type { ListLeadsQuery } from './leads.schema.js';
+import type { ListFollowUpsQuery } from '../follow-ups/follow-ups.schema.js';
+
+// The Leads page Type filter is capability-driven: only a holder of
+// lms.leads.view.all_types -- someone who can see more than one department's
+// pool -- may narrow by campaign type. Anyone else's campaign_type_ids is
+// ignored rather than refused, the same "the request never reshapes the scope"
+// rule org_ids follows. Which types a caller can see at all stays RLS's answer
+// (lms.fn_user_sees_campaign_type); this only decides whether the filter runs.
+function campaignTypeFilter(request: FastifyRequest, csv: string | undefined): { campaign_type_ids?: string[] } {
+  if (!csv || !can(request.auth, CAPABILITY.LMS_LEADS_VIEW_ALL_TYPES)) return {};
+  const ids = csv.split(',').filter(Boolean);
+  return ids.length ? { campaign_type_ids: ids } : {};
+}
 
 export class LeadsController {
   list = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -43,6 +56,7 @@ export class LeadsController {
         ...(q.campaign_id ? { campaign_id: q.campaign_id } : {}),
         ...(q.search ? { search: q.search } : {}),
         ...(q.platforms ? { platforms: q.platforms.split(',') } : {}),
+        ...campaignTypeFilter(request, q.campaign_type_ids),
         ...(org_ids ? { org_ids } : {}),
       },
     );
@@ -159,15 +173,29 @@ export class LeadsController {
 
   listFollowUps = async (request: FastifyRequest, reply: FastifyReply) => {
     const { org_id, user_id, role, tenant_id, rank } = request.auth;
-    const q = request.query as { assignedRepId?: string; overdueOnly?: string };
+    const q = request.query as ListFollowUpsQuery;
     const rules = getRulesForTenant(tenant_id);
+
+    // Same cross-branch rule as `list`: a follow-up is a lead row, so the reach
+    // is the lms.leads.view scope. Only 'tenant'/'all' may name branches (or
+    // omit them for the whole tenant); everyone else is held to their session
+    // org whatever they sent — the request never widens the scope.
+    const view_scope = resolveScope(request.auth, CAPABILITY.LMS_LEADS_VIEW);
+    const tenant_wide = view_scope === 'tenant' || view_scope === 'all';
+    const org_ids = tenant_wide
+      ? (q.org_ids ? q.org_ids.split(',').filter(Boolean) : undefined)
+      : [org_id];
+
     const pipeline = await service.listFollowUps(
       { org_id, user_id, role, tenant_id },
       {
         ...(q.assignedRepId !== undefined ? { assigned_rep_id: q.assignedRepId } : {}),
-        overdue_only: q.overdueOnly === 'true',
+        overdue_only: q.overdueOnly,
         actor_rank: rank,
         minRankToViewUnassigned: rules.minRankToViewUnassignedLeads,
+        tenant_wide,
+        ...(org_ids ? { org_ids } : {}),
+        ...campaignTypeFilter(request, q.campaign_type_ids),
       },
     );
     return reply.send({ success: true, data: pipeline });

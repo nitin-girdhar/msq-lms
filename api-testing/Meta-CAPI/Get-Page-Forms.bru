@@ -1,0 +1,20 @@
+meta {
+  name: Get Meta Page Forms
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/meta/pages/{{pageId}}/forms?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  1.51.0 form picker: the live leadgen forms on a page (refreshes ext.meta_forms). Refused for a page
+  mapped to another tenant.
+}

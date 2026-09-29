@@ -1,0 +1,21 @@
+meta {
+  name: List Campaign Types
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/campaign-types
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  The tenant's pool catalog. Gated on lms.campaign_types.view OR
+  lms.leads.view.all_types (the latter feeds the Leads navbar Type filter) -- a
+  role with neither gets 403, verified by CAPABILITY and not by role name.
+}

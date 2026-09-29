@@ -1,0 +1,35 @@
+meta {
+  name: Lead Pull - Latest Run
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/meta/lead-pull/runs/latest?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  The tenant's current pull run, or data: null when it has none.
+
+  Returns { run_id, status } — what /dashboard/lead-pull reopens on load. A new
+  Pull deletes the tenant's previous run, so there is at most one. Before this
+  route existed the run id lived only in the page's React state: leaving the
+  page mid-pull lost it, and a completed-but-unapplied run could not be reopened
+  at all.
+
+  Regression checks:
+    * tenant with no run ever                 -> 200, data: null (not 404)
+    * after POST /runs                        -> that run_id, status queued/running
+    * after a second POST /runs               -> the NEW run_id only
+    * as tenant A, while tenant B has a run   -> data: null (the policy hides B's)
+    * a bogus tenant_id                       -> 404 "Tenant not found"
+    * caller below super_admin                -> 403
+    * the gateway does NOT route "latest" into GET /runs/:runId (would 422 on a
+      non-uuid run id)
+}

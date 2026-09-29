@@ -74,14 +74,7 @@ export default function AssignmentSelector({
     ? createPortal(
         <div
           ref={panelRef}
-          style={{
-            position: 'fixed',
-            top: rect.top,
-            left: rect.left,
-            width: rect.width,
-            maxHeight: rect.maxHeight,
-            zIndex: 1000,
-          }}
+          style={rect.style}
           className="flex flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white shadow-lg"
         >
           <div className="shrink-0 border-b border-[#F1F5F9] p-2">

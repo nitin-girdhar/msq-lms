@@ -1,0 +1,22 @@
+meta {
+  name: Get Push Public Key
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/notifications/push/public-key
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Returns the VAPID public key the client needs to build a PushSubscription.
+
+  Authenticated but NOT capability-gated — /notifications is ungated
+  platform/shared surface (see api-gateway/src/lib/product-map.ts).
+}

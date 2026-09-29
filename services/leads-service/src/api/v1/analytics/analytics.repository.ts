@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { withRoleTx, withServiceTx } from '@platform/db';
 import { organizationsTable } from '@platform/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { METRIC_KEYS, toBranchRow, toUserRow, zeroMetrics } from '../../../lib/reports/lead-report.types.js';
 import type {
   BranchReportRow, LeadReportMetrics, TenantReport, UserReportRow,
@@ -40,7 +40,9 @@ async function resolveTenantId(orgId: string): Promise<string> {
     const [row] = await tx
       .select({ tenantId: organizationsTable.tenantId })
       .from(organizationsTable)
-      .where(eq(organizationsTable.id, orgId))
+      // Service-tx bypasses RLS, which is what would otherwise exclude a
+      // soft-deleted branch — so say it here.
+      .where(and(eq(organizationsTable.id, orgId), eq(organizationsTable.isDeleted, false)))
       .limit(1);
     if (!row) throw new Error(`Organization not found: ${orgId}`);
     return row.tenantId;
@@ -58,9 +60,12 @@ async function resolveTenantId(orgId: string): Promise<string> {
 export async function getUserOrgIds(userId: string): Promise<string[]> {
   return withServiceTx(async (tx) => {
     const rows = (await tx.execute(sql`
-      SELECT DISTINCT org_id::text AS org_id
-      FROM iam.user_org_mapping
-      WHERE user_id = ${userId}::uuid AND is_active
+      SELECT DISTINCT uom.org_id::text AS org_id
+      FROM iam.user_org_mapping uom
+      -- Service-tx bypasses RLS, so the join is what keeps a mapping to a
+      -- soft-deleted branch out of the caller's scope list.
+      JOIN entity.organizations o ON o.id = uom.org_id AND NOT o.is_deleted
+      WHERE uom.user_id = ${userId}::uuid AND uom.is_active
     `)) as Array<{ org_id: string }>;
     return rows.map((r) => r.org_id);
   });
@@ -545,7 +550,12 @@ function sourceBranchQuery(tenantId: string, orgId?: string, range?: DateRange) 
         ml.source_id,
         ${METRIC_COUNTERS}
       FROM lms.marketing_leads ml
-      JOIN entity.organizations o ON o.id = ml.org_id
+      -- NOT o.is_deleted belongs HERE, not only on the outer join below: the
+      -- ALL BRANCHES rollup sums this CTE directly, so without it a soft-deleted
+      -- branch's leads were absent from every per-branch row yet still counted
+      -- in the tenant total — and, under withServiceTx (public report + the
+      -- daily email + the snapshot it persists), RLS was not there to hide them.
+      JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
       LEFT JOIN lms.lead_stage         ls ON ls.id = ml.stage_id AND ls.tenant_id = o.tenant_id
       LEFT JOIN lms.lead_stage_outcome lo ON lo.id = ml.outcome_id
       WHERE NOT ml.is_deleted AND ml.is_active AND o.tenant_id = ${tenantId}::uuid

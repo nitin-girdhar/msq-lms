@@ -2,7 +2,8 @@ import Fastify from 'fastify';
 import { ZodError } from 'zod';
 import { config } from './config/index.js';
 import { v1Router } from './api/v1/index.js';
-import { AppError } from './lib/errors.js';
+import { AppError, translatePgError } from './lib/errors.js';
+import { startLeadPullPoller, stopLeadPullPoller } from './workers/pull-poller.js';
 import { closeAllPools } from '@platform/db';
 import { assertInternalServiceSecret } from '@platform/service-auth';
 import { createLoggerOptions } from '@platform/logger';
@@ -33,12 +34,19 @@ app.addContentTypeParser(
 );
 
 app.setErrorHandler((error, request, reply) => {
-  if (error instanceof AppError) {
-    const level = error.statusCode >= 500 ? 'error' : 'warn';
-    request.log[level]({ evt: 'request.failed', err: error, statusCode: error.statusCode }, error.message);
-    const body: Record<string, unknown> = { success: false, error: error.message };
-    if (error.details !== undefined) body['details'] = error.details;
-    return reply.status(error.statusCode).send(body);
+  // A raw constraint violation that no call site translated is still a 4xx, not
+  // a 500 whose body would carry drizzle's "Failed query: ...params: ..." — and
+  // those params are lead/tenant identifiers. Resolved before the AppError
+  // branch reads `error`, so the rest of the handler sees one shape.
+  const translated = translatePgError(error);
+  const err = translated ?? error;
+
+  if (err instanceof AppError) {
+    const level = err.statusCode >= 500 ? 'error' : 'warn';
+    request.log[level]({ evt: 'request.failed', err, statusCode: err.statusCode }, err.message);
+    const body: Record<string, unknown> = { success: false, error: err.message };
+    if (err.details !== undefined) body['details'] = err.details;
+    return reply.status(err.statusCode).send(body);
   }
   if (error instanceof ZodError) {
     const fieldErrors = error.flatten().fieldErrors;
@@ -63,6 +71,15 @@ const start = async () => {
     // and in production a placeholder value is refused outright.
     assertInternalServiceSecret({ nodeEnv: config.nodeEnv, logPrefix: '[meta-conversion-api] ' });
     await app.listen({ port: config.port, host: '0.0.0.0' });
+
+    // The Meta lead-pull worker. Started AFTER listen so a failure to bind the
+    // port is not competing with a claimed run for the shutdown path, and so
+    // /health is answering before the first tick does any Graph work.
+    //
+    // Its first act on every tick is the REAPER, which is what recovers runs
+    // this very deploy just interrupted: without it a run stranded in 'running'
+    // blocks that tenant behind POST /runs' 409 guard forever.
+    startLeadPullPoller(app.log);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -71,6 +88,10 @@ const start = async () => {
 
 const stop = async () => {
   app.log.info('Graceful shutdown initiated');
+  // Stops the timer, not an in-flight pull: a run mid-walk is abandoned and the
+  // reaper fails it once its heartbeat goes stale, which is the designed
+  // recovery. Waiting for it here would hold the container open for minutes.
+  stopLeadPullPoller();
   await app.close();
   await closeAllPools();
   process.exit(0);

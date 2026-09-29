@@ -1,0 +1,35 @@
+meta {
+  name: Create Page-Level Org Mapping (no form_id)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/meta/page-org-map?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "org_id": "00000000-0000-0000-0000-000000000000",
+    "page_id": "123456789",
+    "platform": "fb"
+  }
+}
+
+docs {
+  The page-level catch-all: no form_id, so EVERY leadgen form on this page
+  routes to org_id unless a more specific form_id row exists for that same
+  page. Kept as its own request because it is the case the API could not
+  express at all until now, and the one the admin screen will create most.
+
+  Expect 201 with form_id NULL on the created row. A second ACTIVE page-level
+  row for the same page is refused with 409
+  (uq_meta_page_form_org_map_page_level) — deactivate or edit the existing one
+  instead.
+}

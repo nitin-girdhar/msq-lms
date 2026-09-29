@@ -22,7 +22,8 @@ leads created at/after --since, and for every lead not already present in
 ext.meta_leads (deduped on meta_lead_id, same as the webhook path):
   1. writes the canonical lms.marketing_leads row via common.lead_writer
      (bare SQL port of intake.repository.ts::createWebhookLead, including
-     dedup/auto-assign/lead_links and, when known, campaign_id)
+     dedup/auto-assign/lead_links and campaign + campaign-TYPE resolution —
+     see common/campaign_resolution.py)
   2. writes ext.meta_leads + address/professional/demographics/custom_fields
      children, mirroring lead-sync.service.ts exactly
 
@@ -194,7 +195,13 @@ def process_lead(cur, mapping, raw_lead: Dict[str, Any], mappings, dry_run: bool
     lead_created_at = parse_meta_created_time(created_time)
 
     org_id = mapping["org_id"]
-    ad_campaign_id = resolve_ad_campaign_id(cur, org_id, safe_bigint(raw_lead.get("campaign_id")))
+    meta_campaign_id = safe_bigint(raw_lead.get("campaign_id"))
+    # A read-only preview of what the real (non-dry-run, non-debug) path would
+    # resolve — the actual write path below calls
+    # campaign_resolution.resolve_campaign_for_lead itself, which may also
+    # CREATE the ad_campaigns/ext.meta_campaigns rows; dry-run/debug must not
+    # write, so they only show an existing row if one is already there.
+    ad_campaign_id = resolve_ad_campaign_id(cur, org_id, meta_campaign_id)
     source = PLATFORM_TO_LEAD_SOURCE.get(raw_lead["platform"])
 
     if dry_run:
@@ -252,7 +259,14 @@ def process_lead(cur, mapping, raw_lead: Dict[str, Any], mappings, dry_run: bool
         city=address["city"],
         address_line1=address["street_address"],
         pincode=address["postal_code"] or address["zip_code"],
-        campaign_id=ad_campaign_id,
+        # No pre-resolved campaign_id: create_lead resolves the campaign AND
+        # its type itself via campaign_resolution.resolve_campaign_for_lead,
+        # exactly as intake.repository.ts does. meta_campaign_name is not
+        # available from the /{form-id}/leads edge — that's fine, a later
+        # sync_campaigns.py run backfills the real name and re-types the row.
+        meta_campaign_id=meta_campaign_id,
+        meta_platform=raw_lead["platform"],
+        form_default_campaign_type_id=mapping.get("default_campaign_type_id"),
         metadata={"meta_lead_id": str(meta_lead_id), "form_id": raw_lead.get("form_id"), "platform": source},
         raw_webhook_data={"field_data": raw_lead["field_data"]},
         created_at=lead_created_at,

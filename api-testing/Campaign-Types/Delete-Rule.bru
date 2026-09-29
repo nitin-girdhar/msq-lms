@@ -1,0 +1,19 @@
+meta {
+  name: Delete Campaign Type Rule
+  type: http
+  seq: 9
+}
+
+delete {
+  url: {{baseUrl}}/campaign-types/rules/{{ruleId}}?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Soft delete (trg_campaign_type_rules_soft_delete). 204.
+}

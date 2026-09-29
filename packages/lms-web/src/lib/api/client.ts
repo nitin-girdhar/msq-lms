@@ -13,6 +13,9 @@ export interface LeadsListParams {
   assigned_to?: string;
   assigned_user_id?: string;
   campaign_id?: string;
+  // CSV of campaign type uuids — a filter only, narrowing what the caller may
+  // already see (see lms.fn_user_sees_campaign_type in the row policy).
+  campaign_type_ids?: string;
   search?: string;
   platforms?: string;
   org_ids?: string;
@@ -183,6 +186,12 @@ export const campaigns = {
     request<void>(`/campaigns/${id}`, { method: 'DELETE' }),
 };
 
+// ── Campaign Types ────────────────────────────────────────────────────────────
+
+export const campaign_types = {
+  list: () => request<{ success: true; data: import('../../types/leads').CampaignType[] }>('/campaign-types'),
+};
+
 // ── Lead Sources ─────────────────────────────────────────────────────────────
 
 export const lead_sources = {
@@ -268,7 +277,9 @@ export const activities = {
 // ── Follow-Ups ───────────────────────────────────────────────────────────────
 
 export const followUps = {
-  list: (params: { assignedRepId?: string; overdueOnly?: string } = {}) => {
+  // org_ids / campaign_type_ids: CSV, same contract as leads.list — the server
+  // honours org_ids only for a tenant/all lms.leads.view scope.
+  list: (params: { assignedRepId?: string; overdueOnly?: string; org_ids?: string; campaign_type_ids?: string } = {}) => {
     const qs = new URLSearchParams(
       Object.fromEntries(
         Object.entries(params)

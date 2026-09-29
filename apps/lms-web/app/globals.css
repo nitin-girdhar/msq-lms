@@ -44,6 +44,19 @@ html, body { min-height: 100%; }
   }
 }
 
+/* ── Safe-area insets (installed PWA / iPhone standalone) ────────────────────
+   Pairs with viewport-fit=cover in the shared viewport metadata: that lets the
+   page fill the screen under the notch and the home indicator, this keeps real
+   content clear of them. env() resolves to 0 in a browser tab and on
+   non-notched hardware, so the rule is inert everywhere except an install that
+   actually needs it. */
+body.dashboard-shell {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
 /* Prevent iOS Safari from rubber-banding the body horizontally when an
    overflowing child (e.g. the org-tab strip) needs to scroll. */
 body { overflow-x: hidden; }

@@ -1,0 +1,15 @@
+meta {
+  name: Get Campaign Type
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/campaign-types/{{campaignTypeId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

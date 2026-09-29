@@ -38,7 +38,7 @@ interface UseLeadsReturn {
   removeLeadById: (leadId: string) => void;
 }
 
-export function useLeads(orgIds?: string[], platforms?: string[]): UseLeadsReturn {
+export function useLeads(orgIds?: string[], platforms?: string[], campaignTypeIds?: string[]): UseLeadsReturn {
   const [leads, setLeads]           = useState<LeadView[]>([]);
   const [serverTotal, setServerTotal] = useState(0);
   const [loading, setLoading]       = useState(true);
@@ -53,21 +53,24 @@ export function useLeads(orgIds?: string[], platforms?: string[]): UseLeadsRetur
   const [stageOutcomes, setStageOutcomes]           = useState<StageOutcome[]>([]);
   const [stageIdToName, setStageIdToName]           = useState<Record<string, string>>({});
 
-  const orgIdsRef        = useRef(orgIds);
-  const platformsRef     = useRef(platforms);
-  const pageRef          = useRef(page);
-  const pageSizeRef      = useRef(pageSize);
-  const stageNameToIdRef = useRef<Record<string, string>>({});
-  orgIdsRef.current    = orgIds;
-  platformsRef.current = platforms;
-  pageRef.current      = page;
-  pageSizeRef.current  = pageSize;
+  const orgIdsRef          = useRef(orgIds);
+  const platformsRef       = useRef(platforms);
+  const campaignTypeIdsRef = useRef(campaignTypeIds);
+  const pageRef            = useRef(page);
+  const pageSizeRef        = useRef(pageSize);
+  const stageNameToIdRef   = useRef<Record<string, string>>({});
+  orgIdsRef.current          = orgIds;
+  platformsRef.current       = platforms;
+  campaignTypeIdsRef.current = campaignTypeIds;
+  pageRef.current            = page;
+  pageSizeRef.current        = pageSize;
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const ids   = orgIdsRef.current;
       const plats = platformsRef.current;
+      const types = campaignTypeIdsRef.current;
 
       // Empty array = location filter active but no orgs match → show nothing
       if (ids !== undefined && ids.length === 0) {
@@ -83,6 +86,7 @@ export function useLeads(orgIds?: string[], platforms?: string[]): UseLeadsRetur
       };
       if (ids?.length)   params.org_ids   = ids.join(',');
       if (plats?.length) params.platforms = plats.join(',');
+      if (types?.length) params.campaign_type_ids = types.join(',');
       const data = await leadsApi.list(params);
 
       const rawStages = (data.stage_options ?? []) as StageOption[];
@@ -121,20 +125,21 @@ export function useLeads(orgIds?: string[], platforms?: string[]): UseLeadsRetur
     }
   }, []);
 
-  const orgIdsKey    = orgIds?.join(',') ?? '';
-  const platformsKey = platforms?.join(',') ?? '';
+  const orgIdsKey          = orgIds?.join(',') ?? '';
+  const platformsKey       = platforms?.join(',') ?? '';
+  const campaignTypeIdsKey = campaignTypeIds?.join(',') ?? '';
 
   // Reset to page 1 whenever filters change
   useEffect(() => {
     setPage(1);
-  }, [orgIdsKey, platformsKey]);
+  }, [orgIdsKey, platformsKey, campaignTypeIdsKey]);
 
   useEffect(() => {
     setLeads([]);
     setLoading(true);
     setLastUpdated(null);
     fetchData(false);
-  }, [orgIdsKey, platformsKey, page, pageSize, fetchData]);
+  }, [orgIdsKey, platformsKey, campaignTypeIdsKey, page, pageSize, fetchData]);
 
   const updateLead = useCallback(
     async (payload: UpdatePayload) => {

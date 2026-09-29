@@ -1,0 +1,15 @@
+meta {
+  name: Ignore Meta Lead Inbox Entry
+  type: http
+  seq: 36
+}
+
+post {
+  url: {{baseUrl}}/meta/lead-inbox/{{inboxId}}/ignore?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}

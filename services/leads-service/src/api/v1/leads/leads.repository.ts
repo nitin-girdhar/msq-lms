@@ -2,7 +2,10 @@ import { sql, and, eq, asc, isNull } from 'drizzle-orm';
 import { withRoleTx, withServiceTx, sqlUuidArr, sqlTextArr } from '@platform/db';
 import type { RoleTxContext } from '@platform/db';
 import type { ScopeName } from '@platform/rbac';
-import { resolveAutoAssignedUser } from '../../../lib/assignment.js';
+import { createLogger } from '@platform/logger';
+import { config } from '../../../config/index.js';
+import { resolveAutoAssignedUser, storedAutoAssignReason } from '../../../lib/assignment.js';
+import { resolveCampaignForLead } from '../../../lib/campaign-resolution.js';
 import {
   leadStageTable,
   leadStageOutcomeTable,
@@ -18,6 +21,11 @@ import { resolveLeadWriteScope, effectiveInOrgActor } from '../../../lib/lead-wr
 import { insertFollowUpTx } from '../follow-ups/follow-ups.repository.js';
 import type { CreateLeadInput, UpdateLeadInput } from '@lms/validation';
 
+// For the auto-assignment skip reason on the manual-create and transfer paths —
+// the same structured `lead.autoassign_skipped` line intake emits, so "this pool
+// has nobody weighted" is visible whichever door a lead came through.
+const log = createLogger({ service: 'leads-service', nodeEnv: config.nodeEnv });
+
 function coerceTags(val: unknown): string[] {
   if (!val) return [];
   if (Array.isArray(val)) return val.map(String);
@@ -30,6 +38,8 @@ export interface ListLeadsFilters {
   assigned_to?: string;
   assigned_user_id?: string;
   campaign_id?: string;
+  /** Narrows to these pools. Visibility itself is the row policy's answer, not this. */
+  campaign_type_ids?: string[];
   search?: string;
   platforms?: string[];
   page: number;
@@ -102,6 +112,12 @@ export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
       filters.status ? sql`stage = ${filters.status}` : undefined,
       assignedFilter ? sql`assigned_user_id = ${assignedFilter}::uuid` : undefined,
       filters.campaign_id ? sql`campaign_id = ${filters.campaign_id}::uuid` : undefined,
+      // sqlUuidArr, never a bare JS array: Drizzle expands one into a parameter
+      // LIST, so `ANY(${ids}::uuid[])` compiles to `ANY(($1)::uuid[])` and fails
+      // at runtime with "malformed array literal".
+      filters.campaign_type_ids?.length
+        ? sql`campaign_type_id = ANY(${sqlUuidArr(filters.campaign_type_ids)})`
+        : undefined,
       filters.search ? sql`full_name ILIKE ${`%${filters.search}%`}` : undefined,
       filters.platforms?.length ? sql`platform = ANY(${sqlTextArr(filters.platforms)})` : undefined,
     );
@@ -253,14 +269,32 @@ export interface ListFollowUpsFilters {
   overdue_only?: boolean;
   actor_rank?: number;
   minRankToViewUnassigned: number;
+  /** Actor holds a tenant/all lms.leads.view scope (resolved by the controller). */
+  tenant_wide?: boolean;
+  /** Branches to narrow to. Absent + tenant_wide = every branch in the tenant;
+   *  absent otherwise = the session org. The controller already pinned a
+   *  non-tenant-wide actor to [ctx.org_id]. */
+  org_ids?: string[];
+  campaign_type_ids?: string[];
 }
 
 export async function listFollowUps(ctx: RoleTxContext, filters: ListFollowUpsFilters) {
-  return withRoleTx(ctx, async (tx) => {
+  // Tenant-wide readers need the tenant Postgres role, or RLS pins the read to
+  // the session branch — same reason as listLeads.
+  const tenantWide = filters.tenant_wide === true;
+  return withRoleTx({ ...ctx, ...(tenantWide ? { tenantWide: true, readOnly: true } : {}) }, async (tx) => {
+    const orgClause = filters.org_ids?.length
+      ? sql`ml.org_id = ANY(${sqlUuidArr(filters.org_ids)})`
+      : tenantWide
+        ? undefined // RLS (tenant isolation) bounds the read to this tenant
+        : sql`ml.org_id = ${ctx.org_id}::uuid`;
     const where = and(
       sql`NOT ml.is_deleted`,
       sql`ml.superseded_by IS NULL`,
-      sql`ml.org_id = ${ctx.org_id}::uuid`,
+      orgClause,
+      filters.campaign_type_ids?.length
+        ? sql`ml.campaign_type_id = ANY(${sqlUuidArr(filters.campaign_type_ids)})`
+        : undefined,
       sql`lstg.followup_required`,
       sql`ml.scheduled_at IS NOT NULL`,
       (filters.actor_rank !== undefined && filters.actor_rank < filters.minRankToViewUnassigned)
@@ -401,7 +435,32 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
       if (existing) duplicateLeadId = existing.id;
     }
 
-    const assignedUserId = data.assigned_user_id ?? await resolveAutoAssignedUser(tx, targetOrgId);
+    // A manually created lead carries no Meta campaign, so it lands in the
+    // tenant's default pool — which is what resolveCampaignForLead returns when
+    // given nothing more specific, and what the 1.49.0 backfill stamped on the
+    // whole existing pipeline.
+    const resolvedCampaign = await resolveCampaignForLead(tx, targetOrgId, {});
+    let assignedUserId: string | null = data.assigned_user_id ?? null;
+    let autoAssignReason: ReturnType<typeof storedAutoAssignReason> = null;
+    if (!assignedUserId) {
+      const pick = await resolveAutoAssignedUser(tx, targetOrgId, resolvedCampaign.campaign_type_id);
+      assignedUserId = pick.userId;
+      autoAssignReason = storedAutoAssignReason(pick.reason);
+      // Same silent-failure guard as intake: a manually created lead that finds
+      // nobody weighted in its pool must say so, not just arrive unassigned.
+      if (pick.reason !== 'assigned') {
+        log.warn(
+          {
+            event: 'lead.autoassign_skipped',
+            path: 'manual_create',
+            org_id: targetOrgId,
+            campaign_type_id: resolvedCampaign.campaign_type_id,
+            reason: pick.reason,
+          },
+          'Lead created unassigned: no eligible user in this pool',
+        );
+      }
+    }
 
     const [inserted] = await tx
       .insert(marketingLeadsTable)
@@ -418,8 +477,14 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
         pincode: data.pincode ?? null,
         sourceId: data.source_id ?? null,
         campaignId: data.campaign_id ?? null,
+        // Stamped explicitly. lms.sync_lead_campaign_type() only fills a NULL
+        // type FROM the campaign, and a manually created lead usually has no
+        // campaign at all — without this it would be born untyped and invisible
+        // to every type-scoped query.
+        campaignTypeId: resolvedCampaign.campaign_type_id,
         stageId: data.stage_id ?? defaultStage.id,
         assignedUserId,
+        autoAssignReason,
         cityId: data.city_id ?? null,
         stateId: data.state_id ?? null,
         countryId: data.country_id ?? null,
@@ -549,7 +614,13 @@ async function assertOutcomeCommentIsKeepable(
   }
 }
 
-export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput) {
+/**
+ * `leadOrgId` is the LEAD's own branch, resolved by the service via
+ * resolveLeadOrgId/leadWriteCtx — not ctx.org_id, the branch the caller happens to
+ * be switched into. Every statement below is fenced on it, so an elevated
+ * (tenantWide) context can only ever touch this one lead's branch.
+ */
+export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput, leadOrgId: string) {
   return withRoleTx(ctx, async (tx) => {
     if (data.assigned_user_id !== undefined && data.assigned_user_id !== null) {
       // Scope to the LEAD's org, not ctx.org_id — the branch the caller happens
@@ -592,7 +663,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
              scheduled_at,
              (SELECT name FROM lms.lead_sources WHERE id = ml.source_id) AS source_name
       FROM lms.marketing_leads ml
-      WHERE id = ${leadId}::uuid AND org_id = ${ctx.org_id}::uuid AND NOT is_deleted
+      WHERE id = ${leadId}::uuid AND org_id = ${leadOrgId}::uuid AND NOT is_deleted
       FOR UPDATE
     `)) as unknown as CurrentLeadRow[];
     const current = currentRows[0];
@@ -664,7 +735,9 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
           'follow_up_scheduled_at must accompany a lead change. Use POST /leads/:id/follow-ups to schedule one on its own.',
         );
       }
-      return null;
+      // Nothing to write is not a missing lead. Returning null here made the
+      // service report "Lead not found" for a lead it had just read.
+      throw new BadRequestError('No changes to save');
     }
 
     // The row is already locked and version-checked above, so a plain guarded
@@ -674,7 +747,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
       .set(updateData as Parameters<typeof tx.update>[0] extends infer U ? Record<string, unknown> : never)
       .where(and(
         eq(marketingLeadsTable.id, leadId),
-        eq(marketingLeadsTable.orgId, ctx.org_id),
+        eq(marketingLeadsTable.orgId, leadOrgId),
         eq(marketingLeadsTable.isDeleted, false),
       ))
       .returning({ id: marketingLeadsTable.id, assignedUserId: marketingLeadsTable.assignedUserId });
@@ -688,9 +761,9 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
     if (data.follow_up_scheduled_at !== undefined) {
       const assignedUserId = data.follow_up_assigned_user_id
         ?? updated.assignedUserId
-        ?? await effectiveInOrgActor(tx, ctx.user_id, { orgId: ctx.org_id, assignedUserId: null });
+        ?? await effectiveInOrgActor(tx, ctx.user_id, { orgId: leadOrgId, assignedUserId: null });
       await insertFollowUpTx(tx, {
-        orgId: ctx.org_id,
+        orgId: leadOrgId,
         leadId,
         assignedUserId,
         scheduledAt: new Date(data.follow_up_scheduled_at),
@@ -720,7 +793,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
 
     if (data.note?.trim()) {
       await tx.insert(leadInteractionsTable).values({
-        orgId: ctx.org_id,
+        orgId: leadOrgId,
         leadId,
         userId: ctx.user_id,
         notes: data.note.trim(),
@@ -731,19 +804,24 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
   });
 }
 
-export async function deleteLead(ctx: RoleTxContext, leadId: string, comment: string) {
+/** `leadOrgId`: the lead's own branch — see updateLead. Scoping the soft delete to
+ *  ctx.org_id instead made a cross-branch delete update ZERO rows and still answer
+ *  204, as if it had worked. */
+export async function deleteLead(ctx: RoleTxContext, leadId: string, comment: string, leadOrgId: string) {
   return withRoleTx(ctx, async (tx) => {
     await tx.insert(leadInteractionsTable).values({
-      orgId: ctx.org_id,
+      orgId: leadOrgId,
       leadId,
       userId: ctx.user_id,
       notes: `Deletion reason: ${comment}`,
     });
-    await tx.execute(sql`
+    const deleted = (await tx.execute(sql`
       UPDATE lms.marketing_leads
       SET is_deleted = TRUE, deleted_at = CLOCK_TIMESTAMP(), deleted_by = ${ctx.user_id}::uuid
-      WHERE id = ${leadId} AND org_id = ${ctx.org_id}
-    `);
+      WHERE id = ${leadId}::uuid AND org_id = ${leadOrgId}::uuid AND NOT is_deleted
+      RETURNING id
+    `)) as Array<{ id: string }>;
+    return deleted.length > 0;
   });
 }
 
@@ -758,7 +836,7 @@ export async function transferLead(
     const sourceRows = (await tx.execute(sql`
       SELECT id, org_id, first_name, middle_name, last_name, phone, email,
              address_line1, address_line2, pincode, city, city_id, state_id,
-             country_id, source_id, campaign_id, tags, metadata, raw_webhook_data
+             country_id, source_id, campaign_id, campaign_type_id, tags, metadata, raw_webhook_data
       FROM lms.marketing_leads
       WHERE id = ${sourceLeadId}::uuid
         AND org_id = ${ctx.org_id}::uuid
@@ -800,7 +878,24 @@ export async function transferLead(
       throw new Error('Required lead stages not found for this tenant');
     }
 
-    const autoAssignedUserId = await resolveAutoAssignedUser(tx, targetOrgId);
+    // The lead keeps its TYPE across the branch move — a hiring lead is still a
+    // hiring lead in the receiving branch — so the pick runs against the TARGET
+    // branch's rotation for that same type, never a cross-type fallback.
+    const transferredTypeId = (src['campaign_type_id'] as string | null) ?? null;
+    const transferPick = await resolveAutoAssignedUser(tx, targetOrgId, transferredTypeId);
+    const autoAssignedUserId = transferPick.userId;
+    if (transferPick.reason !== 'assigned') {
+      log.warn(
+        {
+          event: 'lead.autoassign_skipped',
+          path: 'transfer',
+          org_id: targetOrgId,
+          campaign_type_id: transferredTypeId,
+          reason: transferPick.reason,
+        },
+        'Transferred lead arrived unassigned: no eligible user in this pool in the target branch',
+      );
+    }
 
     const [newLead] = await tx
       .insert(marketingLeadsTable)
@@ -820,8 +915,10 @@ export async function transferLead(
         countryId:     src['country_id'] as string | null,
         sourceId:      src['source_id'] as string | null,
         campaignId:    src['campaign_id'] as string | null,
+        campaignTypeId: transferredTypeId,
         stageId:       newStageRow.id,
         assignedUserId: autoAssignedUserId,
+        autoAssignReason: storedAutoAssignReason(transferPick.reason),
         tags:          coerceTags(src['tags']),
         metadata:      { ...(src['metadata'] as Record<string, unknown> ?? {}), transferred_from: sourceLeadId },
         rawWebhookData: (src['raw_webhook_data'] as Record<string, unknown> ?? {}),

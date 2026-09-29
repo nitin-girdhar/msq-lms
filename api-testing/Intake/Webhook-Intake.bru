@@ -23,6 +23,29 @@ body:json {
     "phone": "9998887777",
     "city": "Mumbai",
     "source": "facebook",
-    "campaign_id": "{{campaignId}}"
+    "campaign_id": "{{campaignId}}",
+    "meta_campaign_id": "23851234567890123",
+    "meta_campaign_name": "HIR_Gurugram_Trainer_Sep26",
+    "meta_platform": "fb",
+    "campaign_type_id": "{{campaignTypeId}}"
   }
+}
+
+docs {
+  Routing fields (1.49.0):
+
+  campaign_type_id -- the POOL this lead routes to, resolved by
+  meta-conversion-api, which owns the ext.meta_campaigns mapping. leads-service
+  never reads ext.* itself. Absent, it falls back to default_campaign_type_id
+  (the page/form default, also passed in) and then to the tenant's is_default
+  type. A type belonging to another tenant is a 400, never silently swapped for
+  the default.
+
+  meta_campaign_id -- a STRING of digits, not a number: Meta campaign ids run
+  past Number.MAX_SAFE_INTEGER. On first sight of one, leads-service creates
+  this branch's marketing.ad_campaigns projection carrying the type.
+
+  When no eligible user exists in the (branch x type) pool, the lead is still
+  created, lands unassigned, and leads-service logs lead.autoassign_skipped with
+  { org_id, campaign_type, reason }. It does NOT fall back to another pool.
 }

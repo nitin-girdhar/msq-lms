@@ -7,6 +7,7 @@ import { fireCapiAutoTrigger, META_LEAD_SOURCE_NAMES } from '../../../lib/meta-c
 import * as repo from './leads.repository.js';
 import type { ListLeadsFilters, ListFollowUpsFilters } from './leads.repository.js';
 import { getTeamMemberIds } from '../assignments/assignments.repository.js';
+import { resolveLeadOrgId, leadWriteCtx } from '../../../lib/lead-write-scope.js';
 
 export async function listLeads(ctx: RoleTxContext, filters: ListLeadsFilters) {
   // Unassigned visibility stays a rank rule (minRankToViewUnassignedLeads is a
@@ -125,7 +126,17 @@ export async function createLead(ctx: RoleTxContext, data: CreateLeadInput) {
 
 export async function updateLead(ctx: RoleTxContext, leadId: string, data: UpdateLeadInput) {
   try {
-    const result = await repo.updateLead(ctx, leadId, data);
+    // The write lands in the LEAD's branch, not the one the caller is switched
+    // into. The dashboard lists leads across branches (listLeads elevates a
+    // tenant-scoped reader), so pinning the write to ctx.org_id made every
+    // cross-branch edit match zero rows and report "Lead not found" for a lead
+    // the grid had just shown. A lead outside the caller's tenant — or absent —
+    // still resolves to null, and 404 is then the truth.
+    const leadOrgId = await resolveLeadOrgId(ctx, leadId);
+    if (!leadOrgId) throw new NotFoundError('Lead not found');
+    const txCtx = await leadWriteCtx(ctx, leadOrgId);
+
+    const result = await repo.updateLead(txCtx, leadId, data, leadOrgId);
     if (!result) throw new NotFoundError('Lead not found');
 
     if (data.stage_id) {
@@ -133,7 +144,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
         action_type: 'status_change',
         performed_by: ctx.user_id,
         lead_id: leadId,
-        org_id: ctx.org_id,
+        org_id: leadOrgId,
         new_value: { stage_id: data.stage_id, outcome_id: data.outcome_id },
       });
 
@@ -145,7 +156,7 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
       const shouldReportToMeta = data.stage_id !== result.previousStageId
         && META_LEAD_SOURCE_NAMES.includes(result.sourceName ?? '');
       if (shouldReportToMeta) {
-        fireCapiAutoTrigger(leadId, ctx.org_id, data.stage_id);
+        fireCapiAutoTrigger(leadId, leadOrgId, data.stage_id);
       }
     }
 
@@ -157,17 +168,17 @@ export async function updateLead(ctx: RoleTxContext, leadId: string, data: Updat
         action_type: 'follow_up_created',
         performed_by: ctx.user_id,
         lead_id: leadId,
-        org_id: ctx.org_id,
+        org_id: leadOrgId,
       });
       publishEvent('followup:created', {
-        lead_id: leadId, org_id: ctx.org_id, tenant_id: ctx.tenant_id,
+        lead_id: leadId, org_id: leadOrgId, tenant_id: ctx.tenant_id,
         assigned_user_id: data.follow_up_assigned_user_id ?? result.assignedUserId ?? ctx.user_id,
         actor_id: ctx.user_id,
       });
     }
 
     publishEvent('lead:updated', {
-      lead_id: leadId, org_id: ctx.org_id, tenant_id: ctx.tenant_id,
+      lead_id: leadId, org_id: leadOrgId, tenant_id: ctx.tenant_id,
       assigned_user_id: result.assignedUserId ?? null,
       actor_id: ctx.user_id,
       changes: data,
@@ -221,10 +232,17 @@ export async function transferLead(
 }
 
 export async function deleteLead(ctx: RoleTxContext, leadId: string, comment: string) {
-  await repo.deleteLead(ctx, leadId, comment);
-  await logActivity({ action_type: 'lead_deleted', performed_by: ctx.user_id, lead_id: leadId, org_id: ctx.org_id });
+  // Same branch resolution as updateLead: scoped to ctx.org_id, a cross-branch
+  // delete updated nothing and still answered 204.
+  const leadOrgId = await resolveLeadOrgId(ctx, leadId);
+  if (!leadOrgId) throw new NotFoundError('Lead not found');
+  const txCtx = await leadWriteCtx(ctx, leadOrgId);
+
+  const deleted = await repo.deleteLead(txCtx, leadId, comment, leadOrgId);
+  if (!deleted) throw new NotFoundError('Lead not found');
+  await logActivity({ action_type: 'lead_deleted', performed_by: ctx.user_id, lead_id: leadId, org_id: leadOrgId });
   publishEvent('lead:deleted', {
-    lead_id: leadId, org_id: ctx.org_id, tenant_id: ctx.tenant_id,
+    lead_id: leadId, org_id: leadOrgId, tenant_id: ctx.tenant_id,
     assigned_user_id: null,
     actor_id: ctx.user_id,
   });

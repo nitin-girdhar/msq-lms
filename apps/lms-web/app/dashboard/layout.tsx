@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation';
-import { NotificationProvider, productOrigins, authOrigin, adminWebOrigin, usableProducts, landingFor } from '@platform/ui-kit';
+import { NotificationProvider, productOrigins, authOrigin, adminWebOrigin, adminOrigin, usableProducts, landingFor } from '@platform/ui-kit';
 import { AppNavbar, AppSidebar, MobileSidebar } from '@platform/ui-kit/shell';
 import { requireSession } from '@platform/ui-kit/server';
 import { DASHBOARD_NAV } from '@/src/config/navigation';
 import NotificationBell from '@/components/layout/NotificationBell';
+import { LeadTypeFilter } from '@lms/web';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +43,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
           homeHref="/dashboard/leads"
           title="Fitclass - Lead Management System"
           notificationSlot={<NotificationBell key="notification-bell" />}
+          // Leads page Type filter, beside the branch pill. Self-hides on every
+          // other page and without lms.leads.view.all_types.
+          filterSlot={<LeadTypeFilter actor={session} />}
           adminWebUrl={adminWebOrigin()}
+          lookupAdminUrl={adminOrigin()}
         />
         <MobileSidebar actor={session} items={DASHBOARD_NAV} />
         <div className="flex w-full flex-1 lg:min-h-0 lg:overflow-hidden">

@@ -1,11 +1,11 @@
 meta {
   name: Update Page/Form Org Mapping
   type: http
-  seq: 10
+  seq: 11
 }
 
 patch {
-  url: {{baseUrl}}/meta/page-org-map/{{mappingId}}
+  url: {{baseUrl}}/meta/page-org-map/{{mappingId}}?tenant_id={{tenantId}}
   body: json
   auth: none
 }
@@ -22,7 +22,16 @@ body:json {
 }
 
 docs {
-  Reassigns a Page/Form mapping to a different org, or disables it —
-  requires tenant_admin rank or higher. Both fields are optional (COALESCE
-  semantics server-side).
+  Reassigns a mapping to a different branch, or disables it. Requires
+  super_admin. Both fields are optional (COALESCE semantics server-side).
+
+  Regression checks:
+    * mappingId belonging to ANOTHER tenant -> 404, NOT 204. Before this phase
+      the statement had no RETURNING and no row-count check, so RLS filtered the
+      row out, the UPDATE matched nothing, and the API answered 204 as though
+      the edit had been applied.
+    * mappingId that does not exist at all  -> 404, the same answer. The two are
+      indistinguishable on purpose: telling them apart would confirm the
+      existence of another tenant's row.
+    * caller below super_admin              -> 403
 }

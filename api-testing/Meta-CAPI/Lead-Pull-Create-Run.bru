@@ -1,0 +1,68 @@
+meta {
+  name: Lead Pull - Start Run
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/meta/lead-pull/runs?tenant_id={{tenantId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "org_ids": [],
+    "page_ids": [],
+    "campaign_ids": [],
+    "since": "2026-07-28"
+  }
+}
+
+docs {
+  Starts a pull: the backfill for leads the live webhook missed (an integration
+  that was down, a page mapped late, a form nobody knew about). Replaces the
+  three-stage Python CLI in msq-lms/meta-sync-scripts.
+
+  Answers 202 with { run_id } from ONE FAST TRANSACTION. The pull itself takes
+  minutes and is run by a poller inside meta-conversion-api, so nothing rides on
+  the gateway timeout — poll Lead-Pull-Get-Run.bru for progress.
+
+  SCOPE CONTRACT. Three of these default to "all":
+    tenant_id     REQUIRED (?tenant_id=, never the caller's own)
+    org_ids[]     optional, empty = every org in the tenant
+    page_ids[]    optional, empty = every page mapped to those orgs (SERVER-SIDE)
+    campaign_ids[] optional, empty = every campaign (applied POST-FETCH)
+    since         REQUIRED, "2026-07-28" or a full ISO timestamp (post-fetch)
+    until         optional, defaults to now (post-fetch)
+
+  `since` is required even though download_page_leads.py defaults it: an
+  unbounded pull across every page of a large tenant is exactly the operation
+  that hits Meta throttling from a button press, and the person pressing it has
+  no way to know that in advance.
+
+  Starting a pull DELETES this tenant's previous run and, by cascade, its staged
+  rows — nothing from the last pull survives into the next.
+
+  Regression checks:
+    * start a run, then start another while it is queued/running/applying -> 409,
+      and the LIVE RUN MUST STILL EXIST afterwards (the 409 check happens before
+      the DELETE, so a second click cannot delete a run out from under the worker)
+    * start a second run after the first completed -> 202, and the first run's
+      rows are gone
+    * since omitted, or unparseable          -> 422
+    * until earlier than since               -> 422
+    * a page_id that is not 17-or-fewer digits -> 422 (Meta ids are STRINGS; a JS
+      number would corrupt the low digits and pull the wrong page)
+    * a bogus tenant_id                      -> 404 "Tenant not found"
+    * caller below super_admin               -> 403
+    * KILL THE SERVICE MID-RUN: the run must land `failed` via the reaper within
+      META_LEAD_PULL_STALE_MINUTES, not sit in `running` forever — otherwise the
+      409 guard above locks that tenant out permanently. Look for
+      evt: lead_pull.runs_reaped on restart.
+}

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { withServiceTx, withRoleTx, type RoleTxContext } from '@platform/db';
+import { withServiceTx } from '@platform/db';
 import type { MetaLeadPlatform } from './lead-sync.service.js';
 
 export interface ResolvedOrgMapping {
@@ -9,9 +9,24 @@ export interface ResolvedOrgMapping {
 
 // Routes a webhook event to the owning org. form_id is authoritative (a form
 // belongs to exactly one Page, and form_id is globally unique in Meta's
-// system); page_id is used only as a fallback default so a brand-new form
-// created on an already-mapped Page is attributed automatically without
-// requiring a manual mapping entry first.
+// system); the PAGE-LEVEL row (form_id IS NULL) is the catch-all used when no
+// exact form match exists, so a brand-new form created on an already-mapped
+// Page is attributed automatically without a manual mapping entry first.
+//
+// The fallback is restricted to `form_id IS NULL`. It previously took the most
+// recently created ACTIVE row for the page whatever its form_id, which meant an
+// unknown form landed in whichever branch happened to have been mapped last —
+// a FORM-level row for some unrelated form, if that row was newer than the
+// page-level one. That contradicted this table's own documented precedence
+// (db_scripts/02_tables_core.sql) and disagreed with the Python twin,
+// common/mappings.py::resolve(), which has always gone exact-form -> page-level
+// -> unmapped and never considers an unrelated form's row. The two paths read
+// the same table and so could route the same lead to different branches.
+// Restricting it here makes an unmatched form on a page with no page-level row
+// UNMAPPED — logged and skipped — rather than silently attributed to a branch
+// nobody chose, which is the safer of the two failures and what the Python
+// already does. At most one ACTIVE page-level row per page is guaranteed by
+// uq_meta_page_form_org_map_page_level, so the result is deterministic.
 export async function resolveOrgId(
   tenantId: string,
   pageId: string,
@@ -28,10 +43,11 @@ export async function resolveOrgId(
       if (row) return { orgId: row.org_id, platform: row.platform };
     }
 
-    // Fallback: any known org mapping for this page (most recently active one).
+    // Fallback: this page's page-level catch-all row, if it has one.
     const pageRows = await tx.execute(
       sql`SELECT org_id, platform FROM ext.meta_page_form_org_map
-          WHERE tenant_id = ${tenantId}::uuid AND page_id = ${pageId}::bigint AND is_active = true
+          WHERE tenant_id = ${tenantId}::uuid AND page_id = ${pageId}::bigint
+            AND form_id IS NULL AND is_active = true
           ORDER BY created_at DESC
           LIMIT 1`,
     );
@@ -64,10 +80,11 @@ export async function resolveTenantAndOrg(
       if (row) return { tenantId: row.tenant_id, orgId: row.org_id, platform: row.platform };
     }
 
-    // Fallback: any known org mapping for this page (most recently active one).
+    // Fallback: this page's page-level catch-all row — same precedence rule as
+    // resolveOrgId above, and for the same reason.
     const pageRows = await tx.execute(
       sql`SELECT tenant_id, org_id, platform FROM ext.meta_page_form_org_map
-          WHERE page_id = ${pageId}::bigint AND is_active = true
+          WHERE page_id = ${pageId}::bigint AND form_id IS NULL AND is_active = true
           ORDER BY created_at DESC
           LIMIT 1`,
     );
@@ -76,74 +93,32 @@ export async function resolveTenantAndOrg(
   });
 }
 
-export interface PageFormOrgMapping {
-  id: string;
-  tenant_id: string;
-  org_id: string;
-  page_id: string;
-  form_id: string;
-  platform: MetaLeadPlatform;
-  is_active: boolean;
+/**
+ * Stamps last_synced_at on the mapping row(s) a lead just arrived through
+ * (1.51.0): the exact form row when there is one, the page-level row otherwise.
+ * The admin grid reads it as "last lead received" -- the only signal that a
+ * mapping is live. Best-effort on the webhook path; a failure costs a stale
+ * timestamp, never a lead. withServiceTx for the same reason as the resolvers.
+ */
+export async function touchMappingLastLead(pageId: string, formId: string | null | undefined): Promise<void> {
+  await withServiceTx((tx) => tx.execute(sql`
+    UPDATE ext.meta_page_form_org_map
+    SET last_synced_at = NOW()
+    WHERE is_active
+      AND page_id = ${pageId}::bigint
+      AND (
+        (${formId ?? null}::text IS NOT NULL AND form_id = ${formId ?? null}::bigint)
+        OR (form_id IS NULL AND NOT EXISTS (
+              SELECT 1 FROM ext.meta_page_form_org_map f
+              WHERE f.is_active AND f.page_id = ${pageId}::bigint AND f.form_id = ${formId ?? null}::bigint))
+      )
+  `));
 }
 
-export async function listPageFormOrgMappings(tenantId: string): Promise<PageFormOrgMapping[]> {
-  return withServiceTx(async (tx) => {
-    const rows = await tx.execute(
-      sql`SELECT id, tenant_id, org_id, page_id::text as page_id, form_id::text as form_id, platform, is_active
-          FROM ext.meta_page_form_org_map
-          WHERE tenant_id = ${tenantId}::uuid
-          ORDER BY created_at DESC`,
-    );
-    return rows as unknown as PageFormOrgMapping[];
-  });
-}
-
-export interface CreatePageFormOrgMappingInput {
-  org_id: string;
-  page_id: string;
-  form_id: string;
-  platform: MetaLeadPlatform;
-}
-
-export async function createPageFormOrgMapping(
-  ctx: RoleTxContext,
-  data: CreatePageFormOrgMappingInput,
-): Promise<{ id: string }> {
-  return withRoleTx(ctx, async (tx) => {
-    const rows = await tx.execute(
-      sql`INSERT INTO ext.meta_page_form_org_map (tenant_id, org_id, page_id, form_id, platform)
-          VALUES (${ctx.tenant_id}::uuid, ${data.org_id}::uuid, ${data.page_id}::bigint, ${data.form_id}::bigint, ${data.platform})
-          RETURNING id`,
-    );
-    return (rows as unknown as Array<{ id: string }>)[0]!;
-  });
-}
-
-export interface UpdatePageFormOrgMappingInput {
-  org_id?: string | undefined;
-  is_active?: boolean | undefined;
-}
-
-export async function updatePageFormOrgMapping(
-  ctx: RoleTxContext,
-  mappingId: string,
-  data: UpdatePageFormOrgMappingInput,
-): Promise<void> {
-  await withRoleTx<void>(ctx, async (tx) => {
-    await tx.execute(
-      sql`UPDATE ext.meta_page_form_org_map
-          SET updated_at = NOW(),
-              org_id    = COALESCE(${data.org_id ?? null}::uuid, org_id),
-              is_active = COALESCE(${data.is_active ?? null}, is_active)
-          WHERE id = ${mappingId}::uuid AND tenant_id = ${ctx.tenant_id}::uuid`,
-    );
-  });
-}
-
-export async function deletePageFormOrgMapping(ctx: RoleTxContext, mappingId: string): Promise<void> {
-  await withRoleTx<void>(ctx, async (tx) => {
-    await tx.execute(
-      sql`DELETE FROM ext.meta_page_form_org_map WHERE id = ${mappingId}::uuid AND tenant_id = ${ctx.tenant_id}::uuid`,
-    );
-  });
-}
+// The admin CRUD that used to live below moved to page-org-map.admin.service.ts.
+// The two resolvers above are the webhook path: an inbound Meta delivery carries
+// no session, so they run on withServiceTx (BYPASSRLS) as a documented system
+// operation. The admin surface is the opposite — an authenticated super_admin
+// acting on one selected tenant, fully RLS-scoped through withTenantConfigTx —
+// and keeping both in one module is how the read path ended up on withServiceTx
+// beneath a comment claiming RLS scoped it.

@@ -1,0 +1,39 @@
+meta {
+  name: Create Campaign Type
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/campaign-types
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "name": "partnerships",
+    "label": "Partnerships",
+    "description": "Corporate tie-up campaigns",
+    "match_keywords": ["partner", "tieup", "corporate"],
+    "match_priority": 60,
+    "sort_order": 30
+  }
+}
+
+docs {
+  Gated on lms.campaign_types.manage. The tenant comes from the verified
+  session, never the body.
+
+  1.51.0: match_keywords / match_priority are DEPRECATED and no longer read.
+  Typing is done by the ordered rules (Create-Rule.bru); the type only needs a
+  department_id, which decides whose pool its leads route to.
+
+  `name` cannot be changed afterwards and `is_default` is not settable here:
+  the name is what weight rows and the Python sync refer to a pool by, and the
+  default type is unconditionally visible to everyone.
+}

@@ -11,8 +11,9 @@ Use these scripts to:
 - backfill historical leads when Meta integration is turned on for a tenant
   that already has leads sitting in Meta
 - discover new Lead Ads forms on a Page automatically
-- resolve Meta campaign metadata so the "Campaign" field on the lead edit
-  screen is populated for Meta-sourced leads
+- repair/backfill Meta campaign metadata and campaign **types** for
+  campaigns the live paths (webhook, or the admin "Fetch campaigns" button)
+  have not — see `sync_campaigns.py`'s own docstring
 
 ## No new APIs, no new secrets
 
@@ -81,9 +82,32 @@ Run in this order, or all together via `run_all.py`:
 | Script | What it does |
 |---|---|
 | `sync_forms.py` | Discovers Lead Ads forms on every Page already referenced in `ext.meta_page_form_org_map`, caches them in `ext.meta_forms`, and auto-creates a mapping row for a newly-seen form when its Page already has an unambiguous org mapping. Forms with no page fallback are logged as needing a manual mapping. |
-| `sync_campaigns.py` | Finds every `(org, meta campaign_id)` pair seen in `ext.meta_leads` that isn't yet in `marketing.ad_campaigns`, resolves name/status via the Graph API, upserts it, and backfills `lms.marketing_leads.campaign_id` on any already-existing Meta leads missing it. |
-| `sync_leads.py` | The main puller — for every Page in scope, discovers its live forms, pages through `GET /{form_id}/leads` since `--since` for each **mapped** one, skips anything already in `ext.meta_leads` (dedup on `meta_lead_id`), and writes new leads through the same logic `intake.repository.ts::createWebhookLead` uses (dedup by phone/email, weighted auto-assign, `campaign_id` when resolvable), then the `ext.meta_leads` + child rows. Unmapped forms are counted and logged. |
+| `sync_campaigns.py` | **Repair/backfill, not campaign creation** — see its own docstring. For every `(org, meta campaign_id)` pair seen in `ext.meta_leads` with no `marketing.ad_campaigns` row yet (this includes campaigns that predate campaign types entirely), fetches name/objective/status via the Graph API, upserts `ext.meta_campaigns` (re-running the keyword matcher, **never** overwriting a `confirmed` mapping), upserts `marketing.ad_campaigns` carrying the resolved `campaign_type_id`, and backfills `lms.marketing_leads.campaign_id` on any already-existing Meta leads missing it. |
+| `sync_leads.py` | The main puller — for every Page in scope, discovers its live forms, pages through `GET /{form_id}/leads` since `--since` for each **mapped** one, skips anything already in `ext.meta_leads` (dedup on `meta_lead_id`), and writes new leads through the same logic `intake.repository.ts::createWebhookLead` uses (dedup by phone/email, campaign + campaign-**type** resolution via `common/campaign_resolution.py`, weighted auto-assign scoped to that type's pool), then the `ext.meta_leads` + child rows. Unmapped forms are counted and logged. |
 | `run_all.py` | Runs the three in order (forms → campaigns → leads) — the single entry point for a cron job. |
+
+### Campaign + type resolution (`common/campaign_resolution.py`)
+
+Statement-for-statement port of `campaign-mapping.service.ts::resolveCampaignType`
+(meta-conversion-api) combined with `campaign-resolution.ts::resolveCampaignForLead`
+(leads-service) — the two TypeScript services split this by ownership boundary
+(one holds the Graph token and `ext.*`, the other never reads `ext.*`); this
+package has no such boundary, so one module does both. `common/lead_writer.py`
+calls it before auto-assignment: which **pool** a lead belongs to is an input
+to who receives it, not a label applied afterwards.
+
+The actual type-matching decision — does this campaign name imply `sales`,
+`hiring`, or something else — is made **exclusively** by calling
+`marketing.fn_match_campaign_type()` in SQL. That function exists precisely so
+this Python path and the TypeScript path cannot drift on what "a hiring
+campaign" means; nothing here reimplements keyword matching.
+
+A brand-new campaign discovered via `sync_leads.py` / `import_downloaded_leads.py`
+rarely has a name available (`GET /{form-id}/leads` doesn't return one), so it
+is seeded into `ext.meta_campaigns` as `unmapped` with a placeholder name —
+exactly the same degraded-but-safe path the TypeScript takes when its own
+Graph metadata lookup fails or is skipped. A later `sync_campaigns.py` run
+fetches the real name and re-types it.
 
 ### Reviewable backfill (download → check → import)
 
@@ -111,16 +135,33 @@ gets written:
 
 ### What never reaches the org
 
-Three filters in `common/reconcile.py::classify` decide this once, so the
+Two filters in `common/reconcile.py::classify` decide this once, so the
 preview and the import can never disagree:
 
 | Verdict | Rule |
 | --- | --- |
 | `test_lead` | Any field value matching `/test lead:/i` — Meta stamps this placeholder in when someone uses the Lead Ads Testing Tool. Mirrors `isMetaTestLead()` in `services/meta-conversion-api/src/services/lead-sync.service.ts`. The webhook always skipped these; this path did not, which is how 20 of them reached production as real leads. |
-| `hiring_form` | Form name matching `/hiring|recruit|vacancy|career|job application|sales exe/i`. Recruitment campaigns share Pages with sales campaigns, and a job applicant is not a sales lead. Kept deliberately narrow: a bare `trainer` or `PT` also matches genuine personal-training SALES forms, and dropping a real lead is worse than letting an oddly-named hiring form through to the review CSV. |
 | `unmapped_form` | No active `ext.meta_page_form_org_map` row — never guessed into an org. |
 
-None of the three is in `IMPORTABLE`, so stage 3 skips them.
+Neither is in `IMPORTABLE`, so stage 3 skips them.
+
+**Recruitment-form leads are no longer a third filter.** Before campaign
+types, a `hiring_form` verdict (a regex on the form name — `hiring`,
+`recruit`, `vacancy`, `career`, `job application`, `sales exe`) dropped these
+leads outright, because there was nowhere to route them. Campaign types close
+that gap: a hiring lead is now classified and imported like any other lead,
+routed to the branch's HR pool by `common/campaign_resolution.py` (via the
+campaign name's keyword match, or the form's own
+`default_campaign_type_id`). The old regex survives as
+`reconcile.is_hiring_form()` — no longer a skip, now a display-only signal —
+and every row in `reconciliation.csv` also carries
+`suggested_campaign_type_id` (`marketing.fn_match_campaign_type()` run
+against the form name), so a reviewer can see which forms look like
+recruitment and set `default_campaign_type_id` on them accordingly. A
+TypeScript port of this same module
+(`services/meta-conversion-api/src/services/lead-reconcile.service.ts`, for
+the admin "Meta lead pull" screen) made the identical change first; this
+brings the Python CLI path in step with it.
 
 ### Tenant-scoped lookups — always resolve via `org_id`
 
@@ -236,7 +277,8 @@ read-only, so they never enter this discussion at all.
 Every write is a check-then-skip or `ON CONFLICT` upsert keyed on an
 existing (or newly added) unique constraint — `uq_meta_leads_meta_lead_id`,
 `uq_meta_page_form_org_map`, `uix_ad_campaigns_org_meta_campaign_id`,
-`ext.meta_forms.form_id`. Running any script (or `run_all.py`) twice in a
+`uq_meta_campaigns_campaign_id`, `ext.meta_forms.form_id`. Running any script
+(or `run_all.py`) twice in a
 row, or two overlapping cron runs firing at once, produces **zero**
 duplicate leads/forms/campaigns. Each script logs a `skipped (already
 exists)` line per record it declines to (re)create.

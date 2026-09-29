@@ -63,6 +63,7 @@ function followUpToLeadView(item: FollowUpEnriched): LeadView {
     assigned_rep_email: item.assignedRepEmail, tags: [], metadata: {},
     created_at: new Date(), updated_at: new Date(), is_deleted: false,
     assigned_user_id: null, campaign_id: null,
+    campaign_type_id: null, campaign_type: null, campaign_type_label: null,
   };
 }
 

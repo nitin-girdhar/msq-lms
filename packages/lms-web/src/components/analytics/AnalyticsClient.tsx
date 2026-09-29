@@ -15,7 +15,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { MultiSelect, type SelectOption } from '@platform/ui-kit';
+import { FilterField, MultiSelect, type SelectOption } from '@platform/ui-kit';
 import { analytics } from '../../lib/api/client';
 import { METRIC_KEYS } from '../../types/analytics';
 import type {
@@ -149,11 +149,16 @@ export default function AnalyticsClient(_props: Props) {
   // The range is part of every SWR key: without it a filter change would be
   // served the previous window's cached response.
   const range = { start, end };
+  // keepPreviousData: the branch/source filter options are derived from the
+  // response below, so without it a date change empties them mid-flight and the
+  // two dropdowns unmount and remount under the user's cursor.
   const { data: pipelineData, isLoading: pipelineLoading } = useSWR(
-    ['analytics/pipeline', start, end], () => analytics.pipeline(range), { revalidateOnFocus: false },
+    ['analytics/pipeline', start, end], () => analytics.pipeline(range),
+    { revalidateOnFocus: false, keepPreviousData: true },
   );
   const { data: sourceData, isLoading: sourceLoading } = useSWR(
-    ['analytics/report/sources', start, end], () => analytics.sourceReport(range), { revalidateOnFocus: false },
+    ['analytics/report/sources', start, end], () => analytics.sourceReport(range),
+    { revalidateOnFocus: false, keepPreviousData: true },
   );
   // `/report/users` is no longer fetched: its (branch, assignee) grain is a
   // strict subset of `/report/sources`.users, which carries the same metrics at
@@ -169,6 +174,11 @@ export default function AnalyticsClient(_props: Props) {
   const [openSources, setOpenSources] = useState<ReadonlySet<string>>(() => new Set());
 
   const isLoading = pipelineLoading || sourceLoading;
+  // False only before the very first response (keepPreviousData holds the rest).
+  // The filter controls render disabled rather than absent until then — gating
+  // them on the derived option counts alone made them appear out of nowhere once
+  // the fetch landed, reflowing the row.
+  const hasLoaded = sourceData !== undefined;
   const pipeline = (pipelineData?.data ?? []) as PipelineStage[];
   const sourceBranches = (sourceData?.data?.branches ?? []) as SourceBranchRow[];
   const sourceUsers = (sourceData?.data?.users ?? []) as SourceUserRow[];
@@ -441,25 +451,20 @@ export default function AnalyticsClient(_props: Props) {
           <FilterField label="To">
             <input type="date" lang="en-GB" min={start} max={today()} value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
           </FilterField>
-          <button
-            type="button"
-            onClick={() => { setStart(monthStart()); setEnd(today()); }}
-            className="rounded-lg border border-[#E2E8F0] px-2.5 py-1.5 text-xs font-semibold text-[#475569] hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
-          >
-            This month
-          </button>
-
           {/* Hidden for a single-branch actor: one option is not a choice.
               Gated on the option list, not on the current selection, so it
-              cannot vanish once the user narrows it. */}
-          {isTenantWide && (
+              cannot vanish once the user narrows it — and rendered anyway until
+              the first response arrives, so the row does not reflow. */}
+          {(!hasLoaded || isTenantWide) && (
             <div className="w-52">
               <MultiSelect
                 label="Branch"
-                placeholder="None selected"
+                placeholder={hasLoaded ? 'None selected' : 'Loading…'}
                 allLabel="All branches"
                 selectAllLabel="Select all"
                 maxChips={2}
+                loading={!hasLoaded}
+                disabled={!hasLoaded}
                 options={branchOptions}
                 selected={branchSelected}
                 onChange={(next) => setBranchPick(next.map((o) => String(o.id)))}
@@ -467,14 +472,16 @@ export default function AnalyticsClient(_props: Props) {
             </div>
           )}
 
-          {sourceOptions.length > 1 && (
+          {(!hasLoaded || sourceOptions.length > 1) && (
             <div className="w-52">
               <MultiSelect
                 label="Source"
-                placeholder="None selected"
+                placeholder={hasLoaded ? 'None selected' : 'Loading…'}
                 allLabel="All sources"
                 selectAllLabel="Select all"
                 maxChips={2}
+                loading={!hasLoaded}
+                disabled={!hasLoaded}
                 options={sourceOptions}
                 selected={sourceSelected}
                 onChange={(next) => setSourcePick(next.map((o) => String(o.id)))}
@@ -482,17 +489,28 @@ export default function AnalyticsClient(_props: Props) {
             </div>
           )}
 
-          {/* Back to null — "every option, including ones a later window
-              introduces" — rather than to the current full id list. */}
-          {(branchPick || sourcePick) && (
+          {/* Shortcuts sit at the end of the row rather than between the dates
+              and the dropdowns, which split the two halves of the bar. */}
+          <div className="ml-auto flex items-end gap-2">
+            {/* Back to null — "every option, including ones a later window
+                introduces" — rather than to the current full id list. */}
+            {(branchPick || sourcePick) && (
+              <button
+                type="button"
+                onClick={() => { setBranchPick(null); setSourcePick(null); }}
+                className="rounded-lg border border-[#E2E8F0] px-2.5 py-1.5 text-xs font-semibold text-[#475569] hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
+              >
+                Reset filters
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => { setBranchPick(null); setSourcePick(null); }}
+              onClick={() => { setStart(monthStart()); setEnd(today()); }}
               className="rounded-lg border border-[#E2E8F0] px-2.5 py-1.5 text-xs font-semibold text-[#475569] hover:border-[#0b6cbf] hover:text-[#0b6cbf]"
             >
-              Reset filters
+              This month
             </button>
-          )}
+          </div>
         </div>
       </div>
 
@@ -844,21 +862,11 @@ function DrillDownTable({
 // renders directly below the table for every actor, so it was dropped rather
 // than shown twice.
 
-// Mirrors the filter styling in leads-history/LeadsHistoryShell.tsx, where both
-// are module-local. Restated rather than exported from there: this file already
-// keeps its own copy of PENDING_ACTION_BANDS for the same reason, and a shared
-// UI kit for two call sites isn't worth the coupling yet.
+// Mirrors the filter styling in leads-history/LeadsHistoryShell.tsx, where it is
+// module-local. FilterField itself moved to @platform/ui-kit once team-web became
+// the third call site; this input class stays here until a fourth wants it.
 const inputCls =
-  'rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20';
-
-function FilterField({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">{label}</span>
-      {children}
-    </div>
-  );
-}
+  'h-[34px] rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-xs text-[#0F172A] shadow-sm focus:border-[#0b6cbf] focus:outline-none focus:ring-2 focus:ring-[#0b6cbf]/20';
 
 function PipelineTable({ pipeline }: { pipeline: PipelineStage[] }) {
   if (!pipeline.length) return null;

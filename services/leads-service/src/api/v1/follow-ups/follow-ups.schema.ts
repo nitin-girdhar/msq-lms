@@ -1,8 +1,21 @@
 import { z } from 'zod';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const csvOfUuids = z.string().max(20_000).refine(
+  (s) => s.split(',').filter(Boolean).every((t) => UUID_RE.test(t)),
+  { message: 'must be a comma-separated list of UUIDs' },
+);
+
 export const listFollowUpsQuerySchema = z.object({
   assignedRepId: z.string().uuid().optional(),
   overdueOnly: z.string().optional().transform((v: string | undefined) => v === 'true'),
+  // Branch narrowing, same contract as GET /leads: honoured only for a
+  // tenant/all lms.leads.view scope — the controller pins everyone else to
+  // their session org whatever they send.
+  org_ids: csvOfUuids.optional(),
+  // A filter only; which campaign types are visible at all is the row
+  // policy's answer (lms.fn_user_sees_campaign_type).
+  campaign_type_ids: csvOfUuids.optional(),
 });
 
 export const updateFollowUpBodySchema = z.object({

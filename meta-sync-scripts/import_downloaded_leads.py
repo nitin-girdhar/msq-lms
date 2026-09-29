@@ -73,7 +73,11 @@ def import_lead(cur, page: dict, form: dict, raw_lead: dict, verdict: dict, mapp
         "platform": resolved_platform,
     }
     source = PLATFORM_TO_LEAD_SOURCE.get(enriched["platform"])
-    ad_campaign_id = resolve_ad_campaign_id(cur, org_id, reconcile.safe_bigint(raw_lead.get("campaign_id")))
+    meta_campaign_id = reconcile.safe_bigint(raw_lead.get("campaign_id"))
+    # Read-only preview for the debug-CSV path only — see the identical note
+    # in sync_leads.py's process_lead(). The real write path below resolves
+    # (and may create) the campaign/type itself.
+    ad_campaign_id = resolve_ad_campaign_id(cur, org_id, meta_campaign_id)
 
     if debug_writers is not None:
         debug_writers["marketing_leads"].write(
@@ -121,7 +125,12 @@ def import_lead(cur, page: dict, form: dict, raw_lead: dict, verdict: dict, mapp
         city=address["city"],
         address_line1=address["street_address"],
         pincode=address["postal_code"] or address["zip_code"],
-        campaign_id=ad_campaign_id,
+        # No pre-resolved campaign_id: create_lead resolves the campaign AND
+        # its type itself (common/campaign_resolution.py), exactly as
+        # sync_leads.py's write path does.
+        meta_campaign_id=meta_campaign_id,
+        meta_platform=enriched["platform"],
+        form_default_campaign_type_id=form.get("default_campaign_type_id"),
         metadata={"meta_lead_id": str(verdict["meta_lead_id"]), "form_id": form["form_id"], "platform": source},
         raw_webhook_data={"field_data": field_data},
         created_at=lead_created_at,

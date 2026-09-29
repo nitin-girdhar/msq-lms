@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Modal } from "@platform/ui-kit";
+import { Modal, SpeechInputButton, appendDictation } from "@platform/ui-kit";
 import type { LeadView } from "../types/leads";
 import { leads as leadsApi } from '../lib/api/client';
 import { LeadFormDataPanel } from "./leads/LeadFormDataPanel";
@@ -740,20 +740,26 @@ function FollowUpActionModal({
           )}
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-[#475569]">
-              {action === "add_note" ? (
-                <>
-                  <>Note</> <span className="text-red-500">*</span>
-                </>
-              ) : (
-                <>
-                  <>Notes</>{" "}
-                  <span className="text-xs font-normal text-[#94A3B8]">
-                    (optional)
-                  </span>
-                </>
-              )}
-            </label>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="block text-xs font-semibold text-[#475569]">
+                {action === "add_note" ? (
+                  <>
+                    <>Note</> <span className="text-red-500">*</span>
+                  </>
+                ) : (
+                  <>
+                    <>Notes</>{" "}
+                    <span className="text-xs font-normal text-[#94A3B8]">
+                      (optional)
+                    </span>
+                  </>
+                )}
+              </label>
+              <SpeechInputButton
+                onText={(t) => setNotes((p) => appendDictation(p, t))}
+                disabled={loading}
+              />
+            </div>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -842,6 +848,12 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
           {lead.email}
         </a>
       )}
+      {lead?.campaign_name && (
+        <span className="w-full text-xs text-[#64748B]">
+          Came from <span className="font-medium text-[#0F172A]">{lead.campaign_name}</span>
+          {lead.campaign_type_label && <> ({lead.campaign_type_label})</>}
+        </span>
+      )}
     </div>
   );
 
@@ -886,7 +898,8 @@ export function LeadHistoryModal({ lead: leadProp, statusLabelMap = {}, onClose 
                   <InfoRow label="Lead Source" value={lead.source_label ?? lead.source ?? lead.platform ?? "—"} />
                   <InfoRow label="Assigned To" value={lead.assigned_rep_name ?? "—"} />
                   <InfoRow label="Follow-up" value={lead.scheduled_at ? formatDate(lead.scheduled_at) : "—"} />
-                  <InfoRow label="Campaign" value={lead.campaign_name ?? "—"} full />
+                  <InfoRow label="Campaign" value={lead.campaign_name ?? "—"} />
+                  <InfoRow label="Campaign Type" value={lead.campaign_type_label ?? "—"} />
                 </div>
               </div>
             )}

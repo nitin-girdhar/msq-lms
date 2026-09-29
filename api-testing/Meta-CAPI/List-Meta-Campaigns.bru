@@ -1,0 +1,37 @@
+meta {
+  name: List Meta Campaigns
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/meta/campaigns?tenant_id={{tenantId}}&mapping_status=unmapped
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Backs the three admin grids. `mapping_status` is optional — omit it for every
+  campaign, or pass unmapped / suggested / confirmed for one grid.
+
+  Each row carries lead_count: how many leads that campaign has actually
+  brought in, across every branch. It is the column that makes the grid usable,
+  since an ad account holds years of dead campaigns and "which of these matter"
+  is answerable only by volume.
+
+  Requires super_admin and an explicit ?tenant_id= — never the caller's own
+  tenant, since platform staff administer a tenant other than their own.
+
+  Regression checks:
+    * as tenant A, no row from tenant B appears. The scoping is
+      ext.meta_campaigns' admin_tenant_config_policy, not a WHERE clause —
+      there is deliberately no literal tenant_id filter in the query, so this
+      test actually exercises the policy.
+    * a bogus tenant_id            -> 404 "Tenant not found", not an empty list
+    * missing tenant_id            -> 422
+    * caller below super_admin     -> 403
+}

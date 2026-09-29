@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Modal } from '@platform/ui-kit';
+import { Modal, SpeechInputButton, appendDictation } from '@platform/ui-kit';
 import type { LeadView } from '../../types/leads';
 import { leads as leadsApi } from '../../lib/api/client';
 import { useAllOrgs } from '../../hooks/useAllOrgs';
@@ -131,9 +131,12 @@ export default function TransferOutModal({ open, onClose, lead, onTransferred }:
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="transfer-notes" className="text-xs font-semibold text-[#0F172A]">
-            Notes
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="transfer-notes" className="text-xs font-semibold text-[#0F172A]">
+              Notes
+            </label>
+            <SpeechInputButton onText={(t) => setNotes((p) => appendDictation(p, t))} disabled={pending} />
+          </div>
           <textarea
             id="transfer-notes"
             value={notes}

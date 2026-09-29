@@ -1,0 +1,40 @@
+meta {
+  name: Subscribe Push
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/notifications/push/subscribe
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+body:json {
+  {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/bruno-test-endpoint-001",
+    "keys": {
+      "p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+      "auth": "tBHItJI5svbpez7KI4CCXg"
+    },
+    "user_id": "00000000-0000-0000-0000-000000000000"
+  }
+}
+
+docs {
+  The body carries ONLY the browser's PushSubscription. user/org/tenant come from
+  the gateway-injected headers via parseAuthContext.
+
+  `user_id` above is deliberately present and deliberately bogus: re-run this,
+  then check that the stored row's user_id is the AUTHENTICATED user, not the
+  forged one. Zod strips the unknown key before the handler ever sees it.
+
+    SELECT user_id, org_id, endpoint FROM notify.push_subscriptions
+    WHERE endpoint = 'https://fcm.googleapis.com/fcm/send/bruno-test-endpoint-001';
+
+  Re-sending the same endpoint must UPDATE in place — one row, never two.
+}

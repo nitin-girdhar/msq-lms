@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
-import type { DrizzleTx } from '@platform/db';
+import { withRoleTx } from '@platform/db';
+import type { DrizzleTx, RoleTxContext } from '@platform/db';
+import { ForbiddenError } from './errors.js';
 
 // ── Cross-org write scoping for lead sub-resources (follow-ups, interactions) ──
 //
@@ -81,4 +83,91 @@ export async function effectiveInOrgActor(
 ): Promise<string> {
   if (await actorMapsToOrg(tx, actorUserId, scope.orgId)) return actorUserId;
   return scope.assignedUserId ?? actorUserId;
+}
+
+// ── Which branch a lead write actually lands in ────────────────────────────────
+//
+// The grid and the write path used to disagree about branches: `listLeads`
+// promotes a tenant-scoped reader to the `tenant_admin` PG role, so the dashboard
+// lists every branch's leads, while every write was pinned to `ctx.org_id` — the
+// branch the actor happens to be switched into. Editing a lead the grid had just
+// shown therefore matched zero rows and surfaced as "Lead not found" for a lead
+// that plainly exists. Resolve the lead's OWN org and run the write there.
+
+/**
+ * The lead's branch, fenced to the caller's tenant.
+ *
+ * Reads under the tenant role deliberately: the whole point is to see a lead in a
+ * sibling branch, which `app_user` RLS would hide. `readOnly: true` makes the
+ * transaction physically incapable of writing, and the `o.tenant_id` join is what
+ * stops this from ever reaching across tenants — the id comes from the verified
+ * session, never from the request. Same query as
+ * assignments.repository.getLeadOrgId, which has served the Assignments grid.
+ *
+ * Returns null for a lead that does not exist, is deleted, or belongs to another
+ * tenant — all of which the caller reports as a plain 404.
+ */
+export async function resolveLeadOrgId(ctx: RoleTxContext, leadId: string): Promise<string | null> {
+  return withRoleTx({ ...ctx, tenantWide: true, readOnly: true }, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT ml.org_id
+      FROM lms.marketing_leads ml
+      JOIN entity.organizations o ON o.id = ml.org_id AND NOT o.is_deleted
+      WHERE ml.id = ${leadId}::uuid AND NOT ml.is_deleted
+        AND o.tenant_id = ${ctx.tenant_id}::uuid
+    `)) as Array<{ org_id: string }>;
+    return rows[0] ? String(rows[0].org_id) : null;
+  });
+}
+
+/** The branches this actor manages: their own active mappings, tenant-fenced. The
+ *  same set the header's branch switcher is built from. */
+export async function getCoveredOrgIds(ctx: RoleTxContext): Promise<string[]> {
+  return withRoleTx(ctx, async (tx) => {
+    const rows = (await tx.execute(sql`
+      SELECT DISTINCT uom.org_id
+      FROM iam.user_org_mapping uom
+      JOIN entity.organizations o ON o.id = uom.org_id AND NOT o.is_deleted
+      WHERE uom.user_id = ${ctx.user_id}::uuid
+        AND uom.is_active
+        AND o.tenant_id = ${ctx.tenant_id}::uuid
+    `)) as Array<{ org_id: string }>;
+    const ids = rows.map((r) => String(r.org_id));
+    return ids.length ? ids : [ctx.org_id];
+  });
+}
+
+/**
+ * The transaction context a write against `leadOrgId` must run under, plus the
+ * assertion that this actor may write there at all.
+ *
+ * Cross-branch reach is NOT taken from the lms.leads.edit ladder: its widest rung
+ * is `.any`, which resolveScope reports as 'all' but which means org-wide — a
+ * branch admin holding it must not become tenant-wide. The two signals that do
+ * mean cross-branch are the platform role (tenant_admin/super_admin) and the
+ * actor's own active org mappings.
+ *
+ * The elevated context also carries the LEAD's org, so `app.current_org_id` — and
+ * with it every audit trigger (audit.marketing_leads_history, lms.lead_status_log,
+ * lms.lead_assignment_log) — records the branch the row actually lives in rather
+ * than the branch the actor was sitting in. user_id/tenant_id are untouched: the
+ * acting user is always the verified session user.
+ *
+ * `tenantWide` is not an RLS bypass — tenant_isolation_policy still fences every
+ * row to app.current_tenant_id. It widens BRANCH reach inside one tenant, which is
+ * why callers keep an explicit `org_id = leadOrgId` predicate on each statement
+ * rather than leaning on RLS alone. Same trade-off assignments.service.writeCtxForOrg
+ * already makes for Bulk Assign.
+ */
+export async function leadWriteCtx(ctx: RoleTxContext, leadOrgId: string): Promise<RoleTxContext> {
+  if (leadOrgId === ctx.org_id) return ctx;
+  // super_admin already runs on the BYPASSRLS service connection; org_id only
+  // feeds the audit GUC, so point it at the lead's branch like the others.
+  if (ctx.role === 'super_admin') return { ...ctx, org_id: leadOrgId };
+  if (ctx.role === 'tenant_admin') return { ...ctx, org_id: leadOrgId, tenantWide: true };
+  const covered = await getCoveredOrgIds(ctx);
+  if (!covered.includes(leadOrgId)) {
+    throw new ForbiddenError('This lead belongs to a branch you cannot edit in');
+  }
+  return { ...ctx, org_id: leadOrgId, tenantWide: true };
 }

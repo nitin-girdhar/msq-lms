@@ -1,0 +1,19 @@
+meta {
+  name: List Meta Lead Inbox
+  type: http
+  seq: 34
+}
+
+get {
+  url: {{baseUrl}}/meta/lead-inbox?tenant_id={{tenantId}}&status=open
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Webhook leads that did not land. Omit tenant_id to list the tenant-less rows (unmapped pages).
+}

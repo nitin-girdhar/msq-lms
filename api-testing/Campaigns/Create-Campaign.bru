@@ -21,6 +21,18 @@ body:json {
     "status_name": "active",
     "budget": 50000,
     "started_at": "2026-06-01",
-    "ended_at": "2026-09-30"
+    "ended_at": "2026-09-30",
+    "campaign_type_id": "{{campaignTypeId}}"
   }
+}
+
+docs {
+  campaign_type_id is optional and CRM-only. Classifying a META campaign is not
+  done here -- that mapping is per Meta campaign and tenant-wide, so it lives in
+  meta-conversion-api, while this endpoint edits ONE BRANCH's record.
+
+  Changing it relabels the campaign only; existing leads keep the type they were
+  routed under. Moving the leads too is the reclassify fan-out's job.
+
+  A campaign_type_id from another tenant is rejected with 400, never resolved.
 }

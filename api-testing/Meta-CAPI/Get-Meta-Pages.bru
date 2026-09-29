@@ -1,0 +1,35 @@
+meta {
+  name: List Managed Meta Pages
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/meta/pages?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  Every Meta Page the selected tenant's stored token manages, as
+  { page_id, name } — so the mapping screen can offer pages by name instead of
+  asking an admin to paste raw numeric Meta Page ids.
+
+  Wraps the Graph API GET /me/accounts, cursor-paged. A TypeScript port of
+  meta-sync-scripts/common/graph_api.py::get_managed_pages, which was the only
+  implementation until now.
+
+  Requires super_admin and an explicit ?tenant_id=: the call spends that
+  tenant's stored Meta credentials.
+
+  Regression checks:
+    * response contains no access_token at ANY nesting level. The Graph request
+      asks for fields=id,name and never requests the token, so there is no
+      secret in scope to leak — not merely one that is stripped on the way out.
+    * tenant with no integration, or an inactive one -> 404
+    * caller below super_admin                       -> 403
+}

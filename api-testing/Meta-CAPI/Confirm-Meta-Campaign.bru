@@ -1,0 +1,54 @@
+meta {
+  name: Confirm Meta Campaign Type
+  type: http
+  seq: 16
+}
+
+patch {
+  url: {{baseUrl}}/meta/campaigns/{{metaCampaignId}}?tenant_id={{tenantId}}&dry_run=true
+  body: json
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "campaign_type_id": "{{campaignTypeId}}",
+    "learn_keyword": false
+  }
+}
+
+docs {
+  Confirm or correct a campaign -> type mapping, then re-route the leads that
+  campaign already has.
+
+  Writes campaign_type_id, mapping_status='confirmed', confirmed_by and
+  confirmed_at, then calls leads-service POST /internal/campaign-reclassify and
+  returns its counts (leads relabelled, reassigned, left unassigned, by branch).
+
+  learn_keyword: appends a token taken from THIS campaign's name to the type's
+  match_keywords, so the next similarly-named campaign auto-matches. Opt-in on
+  purpose — 'HIR_Gurugram_Trainer_Sep26' offers 'gurugram' as readily as
+  'trainer', and a wrong keyword silently mistypes every future campaign
+  containing it.
+
+  dry_run=true RETURNS THE PREVIEW AND WRITES NOTHING — not the mapping, not the
+  keyword, not the reclassification.
+
+  Regression checks:
+    * dry_run=true  -> impact counts returned; the ext.meta_campaigns row and
+      every lead are provably unchanged afterwards. Re-run List-Meta-Campaigns
+      and confirm mapping_status is still what it was.
+    * dry_run=false -> mapping written, then leads fan out.
+    * `?dry_run=false` must actually WRITE. It is parsed as a real boolean, not
+      via z.coerce.boolean(), under which the string "false" is truthy and the
+      Confirm button would silently do nothing.
+    * a campaign belonging to another tenant -> 404, never 403: distinguishing
+      the two would confirm that tenant's campaign exists.
+    * a campaign_type_id from another tenant -> 400
+    * caller below super_admin               -> 403
+}

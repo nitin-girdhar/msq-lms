@@ -1,0 +1,20 @@
+meta {
+  name: Remap Lead Pull Run
+  type: http
+  seq: 37
+}
+
+post {
+  url: {{baseUrl}}/meta/lead-pull/runs/{{runId}}/remap?tenant_id={{tenantId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Cookie: auth_token={{authToken}}
+}
+
+docs {
+  After mapping a page/form inline: re-resolves the branch of the run's unmapped staged rows and
+  re-classifies. Apply then accepts the run again (even if already applied) while it has pending rows.
+}

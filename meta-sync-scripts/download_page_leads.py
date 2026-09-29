@@ -114,6 +114,12 @@ def download_page(
                 "org_id": str(mapping["org_id"]) if mapping else None,
                 "org_name": mapping["org_name"] if mapping else None,
                 "platform": mapping["platform"] if mapping else "fb",
+                "tenant_id": str(mapping["tenant_id"]) if mapping and mapping.get("tenant_id") else None,
+                "default_campaign_type_id": (
+                    str(mapping["default_campaign_type_id"])
+                    if mapping and mapping.get("default_campaign_type_id")
+                    else None
+                ),
                 "truncated": truncated,
                 "leads": leads,
             }
