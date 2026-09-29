@@ -60,8 +60,11 @@ export default function LeadTypeFilter({ actor }: Props) {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
+  // 'chip': a navbar pill like the branch switcher beside it, not the labelled
+  // form field the page filter bars use.
   return (
     <MultiSelect
+      variant="chip"
       label="Type"
       placeholder="All types"
       options={options}
